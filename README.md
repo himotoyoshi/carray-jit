@@ -1,50 +1,43 @@
 # carray-jit
 
-JIT compilation of per-cell CArray kernels. Write the loop in Ruby, and it
-runs at the speed of C.
+JIT compilation of CArray kernels written in Ruby.
+
+This library was written so that an algorithm CArray alone cannot express --
+one that leaves no choice but a Ruby loop -- runs fast. The loop is written as
+a block in a carefully chosen subset of Ruby, compiled to a C kernel over
+CArray arrays, and run at native C speed: a cell that reads its neighbours, a
+recurrence, a loop written out. CArray already has C kernels for arithmetic,
+reductions, sorts and scans, and those remain faster than the same thing
+written here. Combining them with a kernel for the part that has no array
+form is what makes a whole algorithm fast.
+
+The block is read with Prism, translated to C if it falls inside that subset,
+compiled with the system C compiler and called through Fiddle. The compiled
+object is cached on disk, so a kernel is compiled once.
 
 ## Status
 
 Prototype.
 
-## What it is for
-
-CArray has kernels for the operations someone already wrote in C: arithmetic,
-reductions, sorts, scans. Those are fast, and this does not replace them --
-`sum(axis: 1)` beats a hand-written sum here, and BLAS beats a hand-written
-matrix multiply.
-
-What this is for is the operations nobody wrote in C. A tridiagonal solve, a
-domain-specific recurrence, a stencil with the boundary rule your problem
-actually has. Until now those left two choices: write the loop in Ruby and
-accept 100x, or write a C extension gem. There was nothing in between.
-
-The Thomas algorithm is fifteen lines of Ruby here, and runs at 9.3 ns per
-element -- against 700 ns for the same loop interpreted, and within a factor
-of two of LAPACK's `?gtsv`, which solves a harder problem. That is the whole
-claim: not a faster CArray, but a shorter road from an algorithm to a fast
-one.
-
 ## Features
 
-- **recurrences** -- each cell from the ones before it, in whichever direction
-  the dependencies require
-- **stencils** -- each cell from its neighbours, at any rank, with the edge
-  named rather than left out: `jit_stencil(image) { |a| a[-1,0] + a[0,1] }`
-- **reductions** -- inner loops per output cell, so sum, maximum, product and
-  a matrix multiply are all just loops
-- **contractions** -- `CArray.contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }`,
-  Einstein's convention: an index appearing twice is summed
-- **element-wise expressions** -- `jit_each { out = a + b * c }`, or
-  `jit_map { a + b * c }` for the value back, in one pass, no intermediate
-  arrays
-- **views** -- a matrix column, a transpose, a slice of a slice, written in
-  place without a copy
-- **masks** -- propagated as CArray propagates them, and testable outright
-  with `a[i] == UNDEF`
-- **C functions** -- `j0.call(x)` inside the kernel, bound from any library
-  Fiddle can open, called at C speed rather than through Fiddle; or written in
-  Ruby and compiled, which gives a pure-C function pointer to hand back out
+- **The block is ordinary Ruby**, read with Prism rather than evaluated or
+  assembled from a DSL, and every operation in it means what Ruby means by it.
+- **It covers the shapes an array expression has no form for** -- recurrences,
+  in whichever direction the dependencies require; stencils at any rank, with
+  the edge named rather than left out; reductions as an inner loop per output
+  cell; contractions in Einstein's convention; and element-wise passes in one
+  go, with no intermediate arrays.
+- **Views and masks are cells like any other.** A matrix column, a transpose,
+  a slice of a slice, written in place without a copy. Masks propagate as
+  CArray propagates them, and `a[i] == UNDEF` asks outright.
+- **C functions are called by address.** `j0.call(x)` inside a kernel, bound
+  from any library Fiddle can open, or written in Ruby and compiled to a pure
+  C function pointer to hand back out.
+- **A kernel is compiled once.** The shared object is cached on disk, keyed by
+  the generated C, the compiler and its flags.
+- **Nothing happens silently.** A block outside the subset raises rather than
+  running as a Ruby loop, and the C that ran is there to read.
 
 ## Install
 
@@ -80,50 +73,27 @@ CArray.jit_for(2...24) { |i|
 }
 ```
 
-The block is parsed with Prism, translated to C if it falls inside a
-recognized subset, compiled with the system C compiler and called through
-Fiddle. It runs one to two orders of magnitude faster than the same loop
-written in Ruby, and **every operation in it means what Ruby means by it** --
-integer division floors, `%` is not `fmod`, a Complex divides by Smith's
-method in the order `complex.c` writes it. What an implementation is free to
-choose is the order a *reduction* takes its terms in, and it does: an
-accumulator is split into partial sums, which is faster and usually the more
-accurate answer. `reassociate: false` asks for the serial order instead, and
-then the kernel agrees with the Ruby loop bit for bit. (`**` on a Complex is
-the one documented exception; see
-[Complex arrays](docs/12_Types.md#complex-arrays).)
+Every operation in the block means what Ruby means by it -- integer division
+floors, `%` is not `fmod`, a Complex divides by Smith's method in the order
+`complex.c` writes it. The exception is the order a reduction takes its terms
+in: the accumulator is split into partial sums, which is faster and usually
+more accurate. `reassociate: false` asks for the serial order, and then the
+kernel agrees with the Ruby loop bit for bit. (`**` on a Complex is the one
+documented exception; see [Complex arrays](docs/03_Blocks.md#complex-arrays).)
 
-`CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are named by CArray, and say so
-without this gem: called with no compiler installed they raise, and point at
-`CArray.fuse`, which computes an array expression without one. What this gem
-installs is the compiler. The `jit_` in the name is the warning that the
-block goes to it, and that there are rules about what may be in it.
-
-An expression over whole arrays wants `CArray.fuse` and not these -- it needs
-no compiler, has no subset to stay inside, and gets compiled anyway where this
-gem is installed. What these are for is what an expression cannot say: a cell
-that reaches its neighbours, a recurrence, a loop written out.
+`CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are CArray's own
+names: without this gem they raise and point at `CArray.fuse`, which computes
+an array expression without a compiler. This gem is the compiler. An
+expression over whole arrays wants `CArray.fuse` and not these, and gets
+compiled anyway where this gem is installed.
 
 ## Documentation
 
-* [Getting started](docs/01_GettingStarted.md) — the block, its extents, what the three methods return, and where they come from
-* [Four ways to compute an expression](docs/02_FourWays.md) — where a kernel stands beside `a + b * c` and `CArray.fuse`, in time and in memory
-* [Extents, steps and subscripts](docs/03_Extents.md) — which cells the loop touches and in which order, and what is checked before it runs
-* [Stencils](docs/04_Stencil.md) — every cell from the ones around it, with the loop implied and the edge said at the call
-* [Reductions](docs/05_Reductions.md) — an inner loop per output cell, and the order it takes its terms in
-* [Contraction](docs/06_Contraction.md) — Einstein's convention: an index appearing twice is summed
-* [`jit_each` and `jit_map`](docs/07_ElementWise.md) — the spellings for work that reaches no neighbour, a `CScalar`, and who drives the loop
-* [Locals, types and postfix math](docs/08_Locals.md) — what Ruby having no types costs, and what it does not
-* [Calling a C function](docs/09_CFunctions.md) — one bound from a library, or one of your own compiled from a block
-* [Branches, and asking whether a cell is missing](docs/10_Branches.md) — `if` in statement position, and `a[i] == UNDEF`
-* [Raising from a kernel](docs/11_Raising.md) — `raise "..."` in a block, and how the message gets back
-* [Booleans, complex numbers, unsigned 64-bit and masks](docs/12_Types.md) — the types that are not just a number
-* [The recognized subset](docs/13_Subset.md) — what may be in a block, and what is refused by name
-* [Known limitations](docs/14_Limitations.md) — what it does not do, and why
-* [Inspecting a kernel](docs/15_Inspecting.md) — reading the generated C, the `carray-jit` command, the environment variables
-* [What compiling costs](docs/16_Compiling.md) — the first call, the cache, and where the objects are kept
-* [Design notes](docs/17_DesignNotes.md) — decisions that were not obvious, and why
-* [Testing](docs/18_Testing.md) — what the suite checks a kernel against, and the tridiagonal case it is built around
+* [Getting started](docs/01_GettingStarted.md) — the block, its extents, what the three methods return, and where a kernel stands beside `a + b * c` and `CArray.fuse`
+* [The shapes a kernel takes](docs/02_Shapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and Einstein's convention
+* [What may be in a block](docs/03_Blocks.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
+* [Compiling, caching and inspecting](docs/04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
+* [Design notes](docs/05_DesignNotes.md) — decisions that were not obvious, and why
 
 [examples/applications/](examples/applications) holds small programs that use
 this to do something -- a Game of Life, an implicit heat equation, edge
@@ -140,7 +110,7 @@ rake benchmark
 ```
 
 What the suite checks a kernel against, and why the float comparisons are
-exact rather than within a tolerance, is in [Testing](docs/18_Testing.md).
+exact rather than within a tolerance, is in [Testing](docs/04_Compiling.md#testing).
 
 ## Contributing
 

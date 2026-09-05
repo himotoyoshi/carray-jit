@@ -49,7 +49,7 @@ it is about twice as fast now that it is.
 `uint64` is neither: it is the width that cannot fold into `int64_t` at all,
 since the values it holds above 2^63 are the ones `int64_t` cannot carry, so
 it computes in a `uint64_t` of its own. See
-[Types](12_Types.md#unsigned-64-bit).
+[Types](03_Blocks.md#unsigned-64-bit).
 
 **A value with no data type follows Ruby.** A literal and a captured Numeric
 have no width of their own, so `2.0` is a double and `2` an Integer -- until
@@ -57,7 +57,7 @@ they meet an array of their own kind, which lends them its width: `f32 * 2.0`
 is float32. What an array can lend is a width, never a kind, so `i32 * 2.0`
 is a float64 and `f32 * 1i` a cmplx128. A local that wants a particular type
 is seeded from a `CScalar`, which is a value with a data type. See
-[Locals](08_Locals.md).
+[Locals](03_Blocks.md#locals-types-and-postfix-math).
 
 `CArray.float` is float32; `CArray.double` is float64.
 

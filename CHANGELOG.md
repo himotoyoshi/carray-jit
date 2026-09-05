@@ -35,7 +35,8 @@ Releases are recorded here from 0.1.0, which is the first.
   the construct and where it is, rather than falling back to a Ruby loop.
   Nobody calls these methods except to make a per-cell computation fast, so
   quietly doing the slow thing would answer a question that was not asked.
-  What the subset holds is in [docs/13_Subset.md](docs/13_Subset.md).
+  What the subset holds is in
+  [docs/03_Blocks.md](docs/03_Blocks.md#the-recognized-subset).
 
 - New: every operation in a kernel means what Ruby means by it -- integer
   division floors, `%` is not `fmod`, a Complex divides by Smith's method in
