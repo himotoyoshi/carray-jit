@@ -1,0 +1,12 @@
+*.o
+*.so
+*.bundle
+*.dSYM/
+ext/**/Makefile
+ext/**/mkmf.log
+lib/carray/jit/access.*
+.yard-html/
+.yardoc/
+
+# Private development notes
+/devel

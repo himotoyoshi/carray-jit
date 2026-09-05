@@ -1,0 +1,194 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Cache management for carray-jit.
+#
+# Loads only what it needs -- the compiler and its cache -- so that inspecting
+# or clearing the cache works without CArray or the compiled extension being
+# loadable.
+
+require "optparse"
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "carray/jit/version"
+require "carray/jit/errors"
+require "carray/jit/compiler"
+
+module CArrayJITCommand
+
+  Compiler = CArray::JIT::Compiler
+
+  BANNER = <<~TEXT
+    Usage: carray-jit <command> [options]
+
+    Commands:
+        status            where the cache is and how big it is (default)
+        list              the kernels cached for this environment
+        show <prefix>     the C source of one cached kernel
+        clear             remove this environment's kernels
+        clear --all       remove every environment's kernels
+
+    Options:
+  TEXT
+
+  class << self
+
+    def run (argv)
+      options = { :all => false }
+      parser = OptionParser.new do |option|
+        option.banner = BANNER
+        option.on("--all", "clear every version and architecture") {
+          options[:all] = true
+        }
+        option.on("-v", "--version", "print the carray-jit version") do
+          puts CArray::JIT::VERSION
+          return 0
+        end
+        option.on("-h", "--help", "print this message") do
+          puts option
+          return 0
+        end
+      end
+      arguments = parser.parse(argv)
+
+      case arguments.shift
+      when nil, "status" then status
+      when "list"        then list
+      when "show"        then show(arguments.shift)
+      when "clear"       then clear(options[:all])
+      else
+        warn(parser.to_s)
+        1
+      end
+    rescue OptionParser::ParseError => error
+      warn("carray-jit: #{error.message}")
+      1
+    rescue CArray::JIT::Error => error
+      warn("carray-jit: #{error.message}")
+      1
+    end
+
+    private
+
+    def status
+      puts "root         #{Compiler.cache_root}"
+      puts "environment  #{File.basename(Compiler.cache_directory)}"
+      puts "kernels      #{Compiler.entry_count}"
+      puts "size         #{human(Compiler.byte_size)}"
+      puts "limit        #{Compiler.entry_limit} kernels"
+
+      others = Compiler.stale_environments
+      unless others.empty?
+        puts
+        puts "other environments:"
+        others.sort.each do |path|
+          puts format("  %-32s %8s  %s",
+                      File.basename(path), human(directory_size(path)),
+                      last_used(path))
+        end
+      end
+      0
+    end
+
+    def list
+      entries = Compiler.entries.sort_by { |path| File.mtime(path) }.reverse
+      if entries.empty?
+        puts "no kernels cached for #{File.basename(Compiler.cache_directory)}"
+        return 0
+      end
+      entries.each do |path|
+        key = File.basename(path).sub(/\.[^.]+\z/, "")
+        puts format("%-12s %8s  %s  %s",
+                    key[0, 12], human(File.size(path)),
+                    File.mtime(path).strftime("%Y-%m-%d %H:%M"),
+                    origin(path))
+      end
+      0
+    end
+
+    def show (prefix)
+      unless prefix
+        warn("carray-jit: show needs the start of a kernel's key")
+        return 1
+      end
+      matches = Compiler.entries.select { |path|
+        File.basename(path).start_with?(prefix)
+      }
+      case matches.size
+      when 0
+        warn("carray-jit: no cached kernel starts with #{prefix}")
+        1
+      when 1
+        source = source_path(matches.first)
+        unless File.exist?(source)
+          warn("carray-jit: the source for #{prefix} is missing")
+          return 1
+        end
+        puts File.read(source)
+        0
+      else
+        warn("carray-jit: #{prefix} matches #{matches.size} kernels")
+        1
+      end
+    end
+
+    def clear (everything)
+      removed = Compiler.clear(:everything => everything)
+      scope = everything ? "every environment" : File.basename(Compiler.cache_directory)
+      puts "removed #{removed} kernel#{'s' unless removed == 1} from #{scope}"
+      0
+    end
+
+    # Where the kernel was written, which is what identifies it to whoever is
+    # looking: a hash names a kernel, a file and a line explain it.  The
+    # generated signature is the fallback, for a kernel compiled from a
+    # `source:` string that has no file behind it.
+    def origin (object_path)
+      source = source_path(object_path)
+      return "(source missing)" unless File.exist?(source)
+      lines = File.readlines(source).first(20)
+      found = lines.find { |text| text =~ %r{\A \*\s+(\S+:\d+)\s*\z} }
+      return Regexp.last_match(1) if found
+      # A kernel compiled from a `source:` string has no file behind it, so
+      # the first line of the block stands in for one.
+      body = lines.find { |text| text.start_with?(" *    ") }
+      return body[6..].strip[0, 60] if body
+      "(no origin recorded)"
+    rescue StandardError
+      "(unreadable)"
+    end
+
+    def source_path (object_path)
+      object_path.sub(/\.[^.]+\z/, ".c")
+    end
+
+    def directory_size (path)
+      Dir[File.join(path, "*")].sum { |entry|
+        File.file?(entry) ? File.size(entry) : 0
+      }
+    end
+
+    def last_used (path)
+      newest = Dir[File.join(path, "*")].map { |entry|
+        File.mtime(entry) rescue Time.at(0)
+      }.max
+      newest ? "last used #{newest.strftime('%Y-%m-%d')}" : "empty"
+    end
+
+    def human (bytes)
+      return "#{bytes} B" if bytes < 1024
+      units = ["KB", "MB", "GB"]
+      value = bytes.to_f
+      units.each do |unit|
+        value /= 1024
+        return format("%.1f %s", value, unit) if value < 1024
+      end
+      format("%.1f TB", value / 1024)
+    end
+
+  end
+
+end
+
+exit(CArrayJITCommand.run(ARGV))

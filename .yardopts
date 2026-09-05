@@ -1,0 +1,10 @@
+--markup markdown
+--output-dir .yard-html
+--markup-provider redcarpet
+--no-private
+--readme README.md
+--files CHANGELOG.md
+lib/carray/jit.rb
+lib/carray/jit/errors.rb
+lib/carray/jit/kernel.rb
+lib/carray/jit/c_function.rb
