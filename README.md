@@ -119,7 +119,7 @@ that reaches its neighbours, a recurrence, a loop written out.
 * [Raising from a kernel](docs/11_Raising.md) — `raise "..."` in a block, and how the message gets back
 * [Booleans, complex numbers, unsigned 64-bit and masks](docs/12_Types.md) — the types that are not just a number
 * [The recognized subset](docs/13_Subset.md) — what may be in a block, and what is refused by name
-* [Known limitations](docs/14_Limitations.md) — what it does not do, and the one thing worth doing next
+* [Known limitations](docs/14_Limitations.md) — what it does not do, and why
 * [Inspecting a kernel](docs/15_Inspecting.md) — reading the generated C, the `carray-jit` command, the environment variables
 * [What compiling costs](docs/16_Compiling.md) — the first call, the cache, and where the objects are kept
 * [Design notes](docs/17_DesignNotes.md) — decisions that were not obvious, and why

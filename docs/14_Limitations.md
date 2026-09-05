@@ -2,8 +2,7 @@
 
 - **Integer overflow wraps**, as CArray's own operators wrap. Ruby's Integer
   is arbitrary precision; the generated C uses `int64_t`, so a kernel that
-  would grow past 2^63 wraps instead. This is the same trade numba makes.
-  Float kernels are unaffected.
+  would grow past 2^63 wraps instead. Float kernels are unaffected.
 - **Object arrays are not handled.** `CA_OBJECT` holds Ruby values rather
   than numbers, and reaching into Ruby from inside a kernel would give up
   what compiling it was for.
@@ -68,13 +67,3 @@
 - **Nothing existing is replaced.** `jit_for` is a new method, not a faster
   `each_index`: the two differ in what they reject, and a caller should be
   able to choose.
-
-
-## Where this could go next
-
-One of the limitations above is worth more than a line, because it would
-change what can be written rather than tidy what already can.
-
-**Unsigned 64-bit** was here, and is done: `uint64` now computes in a
-`uint64_t` of its own rather than being refused. See
-[Types](12_Types.md#unsigned-64-bit).
