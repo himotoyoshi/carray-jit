@@ -1,4 +1,4 @@
-# What may be in a block
+# Supported features
 
 ## Locals, types and postfix math
 
@@ -335,7 +335,7 @@ CArray.jit_for(1) { |i|
 }
 ```
 
-See [Locals](#locals-types-and-postfix-math) for what a local's type is otherwise, and [CScalar](02_Shapes.md#jit_each-and-jit_map-when-nothing-reaches-a-neighbour) for what else one is good for.
+See [Locals](#locals-types-and-postfix-math) for what a local's type is otherwise, and [CScalar](02_KernelShapes.md#jit_each-and-jit_map-when-nothing-reaches-a-neighbour) for what else one is good for.
 
 ## Calling a C function
 

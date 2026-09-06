@@ -31,8 +31,8 @@ Installing this gem also puts the compiler behind `CArray.fuse`. An array expres
 ## How this guide is arranged
 
 * [Getting started](01_GettingStarted.md) — the block, its extents, what the three methods return, and where a kernel stands beside `a + b * c` and `CArray.fuse`
-* [The shapes a kernel takes](02_Shapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and contraction over a repeated index
-* [What may be in a block](03_Blocks.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
+* [The shapes a kernel takes](02_KernelShapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and contraction over a repeated index
+* [Supported features](03_SupportedFeatures.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
 * [Compiling, caching and inspecting](04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
 * [Design notes](05_DesignNotes.md) — decisions that were not obvious, and why
 * [Cheatsheet](06_Cheatsheet.md) — the seven `jit_` methods and `CArray.fuse` on one page, to look up rather than to read

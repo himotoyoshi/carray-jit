@@ -67,8 +67,8 @@ legendre[0..5].to_a
 
 * [Introduction](docs/00_Introduction.md) — what carray-jit is: the gap it fills beside CArray, the subset a block is written in, and where a kernel gets its data
 * [Getting started](docs/01_GettingStarted.md) — the block, its extents, what the three methods return, and where a kernel stands beside `a + b * c` and `CArray.fuse`
-* [The shapes a kernel takes](docs/02_Shapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and contraction over a repeated index
-* [What may be in a block](docs/03_Blocks.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
+* [The shapes a kernel takes](docs/02_KernelShapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and contraction over a repeated index
+* [Supported features](docs/03_SupportedFeatures.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
 * [Compiling, caching and inspecting](docs/04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
 * [Design notes](docs/05_DesignNotes.md) — decisions that were not obvious, and why
 * [Cheatsheet](docs/06_Cheatsheet.md) — the seven `jit_` methods and `CArray.fuse` on one page, to look up rather than to read

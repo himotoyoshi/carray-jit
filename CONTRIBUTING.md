@@ -46,7 +46,7 @@ For a bug, include:
 Two kinds of problem live here, and they want different things:
 
 **A block that is refused** — say what you were trying to write. The
-subset is documented in [What may be in a block](docs/03_Blocks.md), and
+subset is documented in [Supported features](docs/03_SupportedFeatures.md), and
 a refusal is either the subset working as intended, in which case the
 message should have pointed somewhere useful, or a gap. Either way the
 block itself is the report.

@@ -7,7 +7,7 @@
 Contiguity is not one of them. What is:
 
 - **not an object array** -- `CA_OBJECT` holds Ruby values, not numbers
-- **not a size-reinterpreting view carrying a mask** -- see [Masks](03_Blocks.md#masks)
+- **not a size-reinterpreting view carrying a mask** -- see [Masks](03_SupportedFeatures.md#masks)
 - **writable**, when the kernel writes to it
 
 ### What compiling costs

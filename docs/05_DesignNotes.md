@@ -25,9 +25,9 @@ Ruby's answer for that loop is 9.99e-09, because Ruby has no float32 arithmetic 
 
 Narrowing them was tried and dropped, because it would change the answer and buy nothing. Truncation commutes with add, subtract and multiply, so a compiler can prove the wide computation equals the narrow one and emits the narrow vectors by itself: `int16` multiplication comes out as `mul.8h` on arm64 and `pmullw` on x86 whether the C says `int16_t` or `int64_t`, with no widening instruction anywhere. Floating point has no such property -- each step rounds -- which is exactly why it has to be narrow to be narrow, and why it is about twice as fast now that it is.
 
-`uint64` is neither: it is the width that cannot fold into `int64_t` at all, since the values it holds above 2^63 are the ones `int64_t` cannot carry, so it computes in a `uint64_t` of its own. See [Types](03_Blocks.md#unsigned-64-bit).
+`uint64` is neither: it is the width that cannot fold into `int64_t` at all, since the values it holds above 2^63 are the ones `int64_t` cannot carry, so it computes in a `uint64_t` of its own. See [Types](03_SupportedFeatures.md#unsigned-64-bit).
 
-**A value with no data type follows Ruby.** A literal and a captured Numeric have no width of their own, so `2.0` is a double and `2` an Integer -- until they meet an array of their own kind, which lends them its width: `f32 * 2.0` is float32. What an array can lend is a width, never a kind, so `i32 * 2.0` is a float64 and `f32 * 1i` a cmplx128. A local that wants a particular type is seeded from a `CScalar`, which is a value with a data type. See [Locals](03_Blocks.md#locals-types-and-postfix-math).
+**A value with no data type follows Ruby.** A literal and a captured Numeric have no width of their own, so `2.0` is a double and `2` an Integer -- until they meet an array of their own kind, which lends them its width: `f32 * 2.0` is float32. What an array can lend is a width, never a kind, so `i32 * 2.0` is a float64 and `f32 * 1i` a cmplx128. A local that wants a particular type is seeded from a `CScalar`, which is a value with a data type. See [Locals](03_SupportedFeatures.md#locals-types-and-postfix-math).
 
 `CArray.float` is float32; `CArray.double` is float64.
 
