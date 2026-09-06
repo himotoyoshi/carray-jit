@@ -43,7 +43,7 @@ The tour
 | [03_recurrence.rb](features/03_recurrence.rb) | Legendre polynomials; upward sweeps, Ruby's division, a refused range |
 | [04_thomas.rb](features/04_thomas.rb) | a tridiagonal solver; the downward sweep and why it is `step(0, -1)` |
 | [05_reduction.rb](features/05_reduction.rb) | sum, maximum, count and a matrix multiply, all as inner loops |
-| [06_jit_contract.rb](features/06_jit_contract.rb) | Einstein's convention; matmul, trace, outer product, the shape check |
+| [06_jit_contract.rb](features/06_jit_contract.rb) | Contraction over a repeated index; matmul, trace, outer product, the shape check |
 | [07_masks.rb](features/07_masks.rb) | `a[i] == UNDEF`, filling holes, and implicit propagation |
 | [08_views.rb](features/08_views.rb) | a column, a slice of a slice, a transpose, written in place |
 | [09_inspecting.rb](features/09_inspecting.rb) | the generated C, the cost of compiling, and what is refused |

@@ -1,6 +1,6 @@
 require_relative "test_helper"
 
-# Einstein's convention: an index that appears twice in the term is summed.
+# The contraction convention: an index that appears twice in the term is summed.
 #
 #   CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
 #

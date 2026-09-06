@@ -75,8 +75,9 @@ class TestReductions < Minitest::Test
   end
 
   # A whole-array reduction is the same thing with a one-cell box.
-  # Subscripts bind indices to axes by name, which is how Einstein notation
-  # is written: which index walks which axis, and which ones are summed over.
+  # Subscripts bind indices to axes by name, which is how the contraction
+  # convention is written: which index walks which axis, and which ones are
+  # summed over.
   # Inner loops nest, so a contraction over several indices is several loops.
   def test_a_double_contraction
     ni, nk, nl, nj = 3, 4, 3, 2

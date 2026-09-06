@@ -216,7 +216,8 @@ class CArray
     JIT.run_stencil(arrays, block, border, type, into)
   end
 
-  # Returns the contraction the block writes, in Einstein's convention.
+  # Returns the contraction the block writes: an index that appears twice
+  # is summed.
   #
   #   CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
   #

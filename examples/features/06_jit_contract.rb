@@ -1,4 +1,4 @@
-# Contractions, in Einstein's convention.
+# Contractions: an index that appears twice is summed.
 #
 # An index that appears twice in the term is summed -- the repetition is what
 # stands in for the sigma.  No extents are given, because each index's extent
@@ -15,11 +15,11 @@ p = CArray.double(3).seq!(1.0)
 r = CArray.double(2).seq!(10.0, 10.0)
 q = CArray.double(3, 3).seq!(1.0)
 
-matmul = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }   # "ik,kj->ij"
-matvec = CArray.jit_contract { |i, k|    a[i,k] * v[k]    }  # "ik,k->i"
-dot    = CArray.jit_contract { |i, k|    a[i,k] * a[i,k]  }  # "ik,ik->", one cell
-trace  = CArray.jit_contract { |i|       q[i,i]           }  # "ii->"
-outer  = CArray.jit_contract { |i, j|    p[i] * r[j]      }  # "i,j->ij", nothing summed
+matmul = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }  # k is summed
+matvec = CArray.jit_contract { |i, k|    a[i,k] * v[k]    }  # k is summed
+dot    = CArray.jit_contract { |i, k|    a[i,k] * a[i,k]  }  # both, one cell
+trace  = CArray.jit_contract { |i|       q[i,i]           }  # one array, twice
+outer  = CArray.jit_contract { |i, j|    p[i] * r[j]      }  # nothing summed
 
 puts "contractions"
 puts "  a . b     #{matmul.to_a.inspect}"

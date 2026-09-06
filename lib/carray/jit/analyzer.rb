@@ -221,8 +221,8 @@ class CArray
       # `steps` is the stride each outer index advances by, which decides
       # whether an offset is a dependency at all: with a step of two, reading
       # `a[i-1]` touches a cell this loop never writes.
-      # `contract` puts the block in Einstein's convention: every parameter is
-      # an index, the ones that do not appear on the left are summed over, and
+      # `contract` puts the block in the contraction convention: every parameter
+      # is an index, the ones that do not appear on the left are summed over, and
       # every extent comes from the arrays' own shapes.
       # `contract` is true for a contraction, or :probe to stop before the
       # rewrite -- which is how the returned form learns the summand's type
