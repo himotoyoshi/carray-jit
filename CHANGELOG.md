@@ -19,7 +19,7 @@ Releases are recorded here from 0.1.0, which is the first.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 - New: `CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` compile their
   block rather than running it. The block is read with Prism, translated to C
