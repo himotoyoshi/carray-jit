@@ -10,3 +10,6 @@ lib/carray/jit/access.*
 
 # Private development notes
 /devel
+
+# Built gems
+*.gem
