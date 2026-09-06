@@ -1,7 +1,7 @@
 # Rotating a point cloud, then projecting it onto a basis
 #
 # Both are sums over an index that appears twice, which is what
-# `CArray.contract` is: the repeated index is summed, so the notation is the
+# `CArray.jit_contract` is: the repeated index is summed, so the notation is the
 # formula.
 #
 #   rotated[p,i] = sum_j R[i,j] x[p,j]           rotate every point
@@ -35,7 +35,7 @@ rotation[2, nil] = [0.0, 0.0, 1.0]
 
 # j is summed because it appears twice; p and i are free, and they come out as
 # the result's axes in the order the block named them.
-rotated = CArray.contract { |p, i, j| points[p, j] * rotation[i, j] }
+rotated = CArray.jit_contract { |p, i, j| points[p, j] * rotation[i, j] }
 
 puts "#{count} points, rotated by #{(angle * 180 / Math::PI).round} degrees"
 puts "  spread per axis, before  #{points.stddev(axis: 0).to_a.map { |v| v.round(4) }.inspect}"
@@ -45,24 +45,24 @@ puts "  after                    #{rotated.stddev(axis: 0).to_a.map { |v| v.roun
 # the sum over points.  The same axis of the same array is read at two
 # independent positions, a and b, which is the whole shape of the thing.
 centred = rotated - rotated.mean(axis: 0).reshape(1, 3)
-covariance = CArray.contract { |a, b, p| centred[p, a] * centred[p, b] } / count
+covariance = CArray.jit_contract { |a, b, p| centred[p, a] * centred[p, b] } / count
 puts "  covariance"
 covariance.to_a.each { |row| puts "    " + row.map { |v| format('%9.5f', v) }.join }
 
 # Its trace does not change under a rotation, which checks both contractions
 # at once.
 original = points - points.mean(axis: 0).reshape(1, 3)
-before = CArray.contract { |a, b, p| original[p, a] * original[p, b] } / count
+before = CArray.jit_contract { |a, b, p| original[p, a] * original[p, b] } / count
 puts format("  trace %.8f before the rotation, %.8f after",
-            CArray.contract { |a| before[a, a] }[0],
-            CArray.contract { |a| covariance[a, a] }[0])
+            CArray.jit_contract { |a| before[a, a] }[0],
+            CArray.jit_contract { |a| covariance[a, a] }[0])
 
 # The plane the blob lies in, in the rotated frame: the two rows of the
 # rotation are an orthonormal basis for it.
 basis = rotation[0..1, nil]
 
-coefficients = CArray.contract { |p, m, k| rotated[p, k] * basis[m, k] }
-reconstructed = CArray.contract { |p, k, m| coefficients[p, m] * basis[m, k] }
+coefficients = CArray.jit_contract { |p, m, k| rotated[p, k] * basis[m, k] }
+reconstructed = CArray.jit_contract { |p, k, m| coefficients[p, m] * basis[m, k] }
 
 residual = ((rotated - reconstructed) ** 2).sum / count
 puts format("  dropping the third direction costs %.2e per point", residual)
@@ -94,7 +94,7 @@ end
 interpreted = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
 started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-CArray.contract { |p, i, j| points[p, j] * rotation[i, j] }
+CArray.jit_contract { |p, i, j| points[p, j] * rotation[i, j] }
 compiled = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
 puts format("  rotation: %.1f ms compiled, %.0f ms as a Ruby loop (%.0fx)",
@@ -104,7 +104,7 @@ puts "  identical: #{rotated.to_a == reference.to_a}"
 # An index whose axes disagree is the mistake this notation exists to catch.
 begin
   wrong = CArray.double(4, 4).seq!(1.0)
-  CArray.contract { |p, i, j| points[p, j] * wrong[i, j] }
+  CArray.jit_contract { |p, i, j| points[p, j] * wrong[i, j] }
 rescue CArray::JIT::Unsupported => error
   puts "  refused:  #{error.message.lines.first.strip}"
 end

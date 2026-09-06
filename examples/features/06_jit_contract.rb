@@ -15,11 +15,11 @@ p = CArray.double(3).seq!(1.0)
 r = CArray.double(2).seq!(10.0, 10.0)
 q = CArray.double(3, 3).seq!(1.0)
 
-matmul = CArray.contract { |i, j, k| a[i,k] * b[k,j] }   # "ik,kj->ij"
-matvec = CArray.contract { |i, k|    a[i,k] * v[k]    }  # "ik,k->i"
-dot    = CArray.contract { |i, k|    a[i,k] * a[i,k]  }  # "ik,ik->", one cell
-trace  = CArray.contract { |i|       q[i,i]           }  # "ii->"
-outer  = CArray.contract { |i, j|    p[i] * r[j]      }  # "i,j->ij", nothing summed
+matmul = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }   # "ik,kj->ij"
+matvec = CArray.jit_contract { |i, k|    a[i,k] * v[k]    }  # "ik,k->i"
+dot    = CArray.jit_contract { |i, k|    a[i,k] * a[i,k]  }  # "ik,ik->", one cell
+trace  = CArray.jit_contract { |i|       q[i,i]           }  # "ii->"
+outer  = CArray.jit_contract { |i, j|    p[i] * r[j]      }  # "i,j->ij", nothing summed
 
 puts "contractions"
 puts "  a . b     #{matmul.to_a.inspect}"
@@ -31,20 +31,20 @@ puts "  p (x) r   #{outer.to_a.inspect}"
 # The result's axes are the free indices in the order the block named them, so
 # the parameter list is where the axis order is stated -- and swapping two
 # parameters transposes.
-transposed = CArray.contract { |j, i, k| a[i,k] * b[k,j] }
+transposed = CArray.jit_contract { |j, i, k| a[i,k] * b[k,j] }
 puts "  swapped   #{transposed.dim.inspect} vs #{matmul.dim.inspect}"
 
 # Assigning into an array of your own says where to put it instead.  It must
 # name exactly the free indices, and still does not decide what is summed.
 destination = CArray.double(3, 2)
-CArray.contract { |i, j, k| destination[i,j] = a[i,k] * b[k,j] }
+CArray.jit_contract { |i, j, k| destination[i,j] = a[i,k] * b[k,j] }
 puts "  into mine #{destination.to_a == matmul.to_a}"
 
 # A sum along an axis is not a contraction: there is nothing in a[i,k]
 # standing in for a sigma.
 begin
   total = CArray.double(3)
-  CArray.contract { |i, k| total[i] = a[i,k] }
+  CArray.jit_contract { |i, k| total[i] = a[i,k] }
 rescue CArray::JIT::Unsupported => error
   puts "  refused:  #{error.message.lines.first.strip}"
 end
@@ -52,7 +52,7 @@ end
 # Nor is a shape mismatch let through.
 begin
   wrong = CArray.double(5, 2)
-  CArray.contract { |i, j, k| a[i,k] * wrong[k,j] }
+  CArray.jit_contract { |i, j, k| a[i,k] * wrong[k,j] }
 rescue CArray::JIT::Unsupported => error
   puts "  refused:  #{error.message.lines.first.strip}"
 end

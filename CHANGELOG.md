@@ -51,8 +51,9 @@ Releases are recorded here from 0.1.0, which is the first.
 - New: `CArray.jit_stencil` runs a block over windows onto its arrays, with
   `border:` saying what happens at the edge -- `:mask` by default, because
   CArray can say "not computed" and a border of zeros cannot be told from
-  zeros that were computed. `CArray.contract` runs a contraction in Einstein's
-  convention, summing over the indices that do not appear on the left.
+  zeros that were computed. `CArray.jit_contract` runs a contraction in
+  Einstein's convention, summing over the indices that do not appear on the
+  left.
 
 - New: `CArray.jit_extern` names a C function someone else compiled by quoting
   its declaration, and `CArray.jit_function` compiles a body of your own. Both

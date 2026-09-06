@@ -457,7 +457,7 @@ class TestComplex < Minitest::Test
   def test_a_contraction_over_complex_arrays
     left = CArray.cmplx128(3, 4) { |i, j| Complex(i + 1.0, j * 0.25) }
     right = CArray.cmplx128(4) { |j| Complex(j * 0.5, -1.0) }
-    result = CArray.contract { |i, j| left[i, j] * right[j] }
+    result = CArray.jit_contract { |i, j| left[i, j] * right[j] }
     assert_equal("cmplx128", result.data_type_name)
     expected = (0...3).map { |i|
       total = Complex(0.0, 0.0)

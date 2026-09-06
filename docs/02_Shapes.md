@@ -472,7 +472,7 @@ on the order -- which is what the extent states. So the kernel runs the order
 it was given and means what the same Ruby loop means.
 
 Written out, a contraction is loops; but the loops are the *definition*
-rewritten, so `contract` writes the definition instead -- see
+rewritten, so `jit_contract` writes the definition instead -- see
 [Contraction](#contraction).
 
 An offset may be an integer the block closed over -- `a[i - window]` for a
@@ -489,32 +489,32 @@ kernel serves every value -- which is what lets a contraction be taken row by
 row from an ordinary Ruby loop:
 
 ```ruby
-n.times { |i| out[i] = CArray.contract { |k| a[i, k] * b[i, k] }[0] }
+n.times { |i| out[i] = CArray.jit_contract { |k| a[i, k] * b[i, k] }[0] }
 ```
 
 Whether that is a good idea depends on how much work each call does. A call
 costs 20-40 us before the kernel starts, and against that:
 
 ```
-64 dot products, inner length     Ruby loop    loop of contract    one jit_for
-                            4       0.04 ms             1.22 ms         0.03 ms
-                           64       0.56 ms             1.41 ms         0.02 ms
-                        1,000       8.38 ms             1.51 ms         0.07 ms
-                       10,000      83.17 ms             2.00 ms         0.60 ms
-                      100,000     839.73 ms             7.17 ms         5.92 ms
+64 dot products, inner length  Ruby loop    loop of jit_contract    one jit_for
+                            4    0.04 ms             1.22 ms         0.03 ms
+                           64    0.56 ms             1.41 ms         0.02 ms
+                        1,000    8.38 ms             1.51 ms         0.07 ms
+                       10,000   83.17 ms             2.00 ms         0.60 ms
+                      100,000  839.73 ms             7.17 ms         5.92 ms
 ```
 
-Below a few hundred elements the loop of `contract` is **slower than the Ruby
-loop it replaces** -- at an inner length of four, thirty times slower -- because
-the per-call cost dwarfs an inner loop the interpreter gets through quickly.
-Past a thousand it wins, and by a hundred thousand the overhead has
+Below a few hundred elements the loop of `jit_contract` is **slower than the
+Ruby loop it replaces** -- at an inner length of four, thirty times slower --
+because the per-call cost dwarfs an inner loop the interpreter gets through
+quickly. Past a thousand it wins, and by a hundred thousand the overhead has
 disappeared and the loop form is simply the more readable one.
 
 How many times the outer loop runs does not enter into it: both sides scale
-with it, so the ratio holds. At an inner length of 64 the loop of `contract`
-is 0.12x, 0.33x and 0.40x the Ruby loop for 4, 64 and 1024 outer iterations;
-at 10,000 it is 48x, 41x and 41x. The only question is whether one call's
-worth of work is worth its 20-30 us.
+with it, so the ratio holds. At an inner length of 64 the loop of
+`jit_contract` is 0.12x, 0.33x and 0.40x the Ruby loop for 4, 64 and 1024
+outer iterations; at 10,000 it is 48x, 41x and 41x. The only question is
+whether one call's worth of work is worth its 20-30 us.
 
 Writing the whole thing as one kernel has no such threshold: it beats the Ruby
 loop at every size on this table, and by two orders of magnitude once there is
@@ -606,16 +606,16 @@ So this is not a faster `sum`. It is a way to write the reduction that has no
 
 ## Contraction
 
-`CArray.contract` puts the block in Einstein's convention: **an index that
+`CArray.jit_contract` puts the block in Einstein's convention: **an index that
 appears twice in the term is summed**. The repetition is the notation -- it is
 what stands in for the sigma.
 
 ```ruby
-c = CArray.contract { |i, j, k| a[i,k] * b[k,j] }   # "ik,kj->ij"
-m = CArray.contract { |i, k|    a[i,k] * v[k]   }   # "ik,k->i"
-s = CArray.contract { |i, k|    a[i,k] * b[i,k] }   # "ik,ik->", a one-cell result
-t = CArray.contract { |i|       q[i,i]          }   # "ii->"
-o = CArray.contract { |i, j|    p[i] * r[j]     }   # "i,j->ij", nothing summed
+c = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }   # "ik,kj->ij"
+m = CArray.jit_contract { |i, k|    a[i,k] * v[k]   }   # "ik,k->i"
+s = CArray.jit_contract { |i, k|    a[i,k] * b[i,k] }   # "ik,ik->", a one-cell result
+t = CArray.jit_contract { |i|       q[i,i]          }   # "ii->"
+o = CArray.jit_contract { |i, j|    p[i] * r[j]     }   # "i,j->ij", nothing summed
 ```
 
 The result is allocated and returned, its axes being the free indices in the
@@ -624,7 +624,7 @@ stated, and `{ |j, i, k| ... }` gives the transpose. Assigning into an array of
 your own says where to put it instead:
 
 ```ruby
-CArray.contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
+CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
 ```
 
 which must name exactly the free indices, and still does not decide what is
@@ -642,7 +642,7 @@ Neither form decides what is summed. So a sum along an axis is not a
 contraction, and is refused:
 
 ```ruby
-CArray.contract { |i, k| total[i] = a[i,k] }
+CArray.jit_contract { |i, k| total[i] = a[i,k] }
 #=> `k` appears once, so it is free and must be on the left. A contraction
 #   sums the indices that appear twice; to sum one that does not, write the
 #   loop with jit_for, or use sum(axis:)
@@ -660,6 +660,6 @@ compiles to a plain nest of loops and is slower than a tuned GEMM, but it is
 one line and it exists.
 
 Its sum is serial. `jit_for`'s reduction takes partial sums by default and
-`contract`'s does not, which is the wrong way round -- a contraction is a sum
-with no loop written anywhere for it to agree with -- and stays that way only
-until `contract` has a meaning in the core to be licensed against.
+`jit_contract`'s does not, which is the wrong way round -- a contraction is a
+sum with no loop written anywhere for it to agree with -- and stays that way
+only until `jit_contract` has a meaning in the core to be licensed against.

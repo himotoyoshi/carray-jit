@@ -91,7 +91,7 @@ class TestCScalar < Minitest::Test
     left = CArray.double(3).seq!(1.0)
     right = CArray.double(3).seq!(1.0)
     weight = CScalar.double() { 2.0 }
-    assert_equal([28.0], CArray.contract { |k| left[k] * right[k] * weight[] }.to_a)
+    assert_equal([28.0], CArray.jit_contract { |k| left[k] * right[k] * weight[] }.to_a)
   end
 
   def test_a_masked_cell_survives_a_cscalar_operand

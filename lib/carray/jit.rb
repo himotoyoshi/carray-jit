@@ -218,7 +218,7 @@ class CArray
 
   # Returns the contraction the block writes, in Einstein's convention.
   #
-  #   CArray.contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
+  #   CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
   #
   # Every block parameter is an index.  The ones that appear on the left are
   # the cells written; the rest -- `k` here -- are summed over.
@@ -230,7 +230,7 @@ class CArray
   # With no assignment the result is allocated and returned, with the free
   # indices as its axes in the order the block named them:
   #
-  #   c = CArray.contract { |i, j, k| a[i,k] * b[k,j] }
+  #   c = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }
   #
   # Assigning into an array of your own says where to put it, and in what
   # order its axes lie; it does not decide what is summed.
@@ -241,9 +241,9 @@ class CArray
   #   assigns into nothing, otherwise the compiled kernel.
   # @raise [CArray::JIT::Unsupported] when the block falls outside the
   #   recognized subset, or an index's axes disagree.
-  def self.contract (&block)
+  def self.jit_contract (&block)
     unless block
-      raise JIT::Unsupported, "contract needs a block"
+      raise JIT::Unsupported, "jit_contract needs a block"
     end
     JIT.run_contraction(block)
   end

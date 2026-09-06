@@ -62,7 +62,7 @@ puts
 left = CArray.double(3).seq!(1.0)
 right = CArray.double(3).seq!(1.0)
 weight = CScalar.double() { 2.0 }
-puts "weighted dot product  #{CArray.contract { |k| left[k] * right[k] * weight[] }[0]}"
+puts "weighted dot product  #{CArray.jit_contract { |k| left[k] * right[k] * weight[] }[0]}"
 puts
 
 # What it will not do is take an expression wider than itself, because there
