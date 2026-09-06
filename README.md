@@ -8,7 +8,7 @@ The block is read with Prism, translated to C if it falls inside that subset, co
 
 ## Status
 
-A companion gem to CArray, and it follows CArray. The surface is not settled until CArray 3.1.
+In development, ahead of a 0.1.0 release. A companion gem to CArray: it follows CArray's surface, which is not settled until CArray 3.1.
 
 ## Features
 
