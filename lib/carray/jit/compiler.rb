@@ -50,10 +50,14 @@ class CArray
       # of operands, reads past the pointers it was given, and the process
       # segfaults.  -Wl,-Bsymbolic binds each object's own definitions before
       # the global scope, which is what one object per kernel assumed all
-      # along.  Mach-O's two-level namespace already does this, and its linker
-      # rejects the flag, so it is only named where it means something.
+      # along.  Nothing else needs saying so: Mach-O binds within each dylib's
+      # own two-level namespace and PE within each DLL, so the flag is named
+      # only where it means something -- and Apple's linker rejects it
+      # outright, which would trade a Linux crash for a macOS build that never
+      # compiles at all.
       SYMBOLIC =
-        (RbConfig::CONFIG["host_os"] =~ /darwin|mswin|mingw/ ? [] : ["-Wl,-Bsymbolic"]).freeze
+        (RbConfig::CONFIG["host_os"] =~ /darwin|mswin|mingw|cygwin/ ?
+           [] : ["-Wl,-Bsymbolic"]).freeze
 
       FLAGS = ["-O3", "-fPIC", "-shared", "-ffp-contract=off", *SYMBOLIC].freeze
 
