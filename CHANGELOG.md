@@ -39,6 +39,17 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- Fix: a contraction with nothing to assign into is collected into the type its
+  summand computes in. `CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }` over
+  float32 arrays came back int64 with every value truncated; over uint64 it came
+  back int64 and wrapped; over cmplx64 it raised. The assigned form -- the same
+  contraction written `c[i,j] = ...` -- was right throughout, and `jit_for`,
+  `jit_each` and `jit_stencil` were never affected.
+
+- Fix: `CArray.jit_map` collects a cmplx64 value into a cmplx64 array rather
+  than refusing to allocate one. Nothing else changes type: a block whose value
+  is cmplx128 still gives cmplx128.
+
 - Change: `CArray.jit_contract` sums an index that repeats however often it
   repeats, rather than refusing more than two positions. `q[i,i,i]` is the sum
   along a cube's long diagonal, and `a[i,k] * a[k,k]` sums `k` at three

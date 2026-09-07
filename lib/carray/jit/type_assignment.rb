@@ -60,11 +60,14 @@ class CArray
       # the reason KINDS gives: a table of names kept somewhere else keeps
       # answering after a computation type is added, and answers wrongly.
       RESULT_STORAGE_TYPES = {
-        :int64   => :int64,
-        :uint64  => :uint64,
-        :float   => :float32,
-        :double  => :float64,
-        :complex => :cmplx128,
+        :int64         => :int64,
+        :uint64        => :uint64,
+        :float         => :float32,
+        :double        => :float64,
+        # cmplx64 is to cmplx128 what float32 is to float64: the value was
+        # computed narrow, and cmplx64 holds it without widening or losing it.
+        :float_complex => :cmplx64,
+        :complex       => :cmplx128,
       }.freeze
 
       # Raises rather than falling back, because there is no type to fall back

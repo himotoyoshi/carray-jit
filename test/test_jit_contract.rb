@@ -59,6 +59,29 @@ class TestContract < Minitest::Test
     assert_equal([[22, 28], [49, 64]], c.to_a)
   end
 
+  # The type a contraction is collected into is the type its summand computes
+  # in, which is the same question `jit_map` answers -- and it is answered by
+  # the same table now.  It was not: a second copy at the allocation site knew
+  # float64, cmplx128 and nothing else, so these three came back int64.
+  def test_the_returned_form_takes_the_type_the_summand_computes_in
+    singles = CArray.float32(2, 2).seq!(1.5)
+    product = CArray.jit_contract { |i, j, k| singles[i,k] * singles[k,j] }
+    assert_equal("float32", product.data_type_name)
+    expected = (0...2).map { |i|
+      (0...2).map { |j| (0...2).sum { |k| singles[i,k] * singles[k,j] } } }
+    assert_equal(expected, product.to_a)
+
+    large = CArray.uint64(2) { |i| i.zero? ? 2**63 : 5 }
+    unit = CArray.uint64(2).seq!(1, 0)
+    total = CArray.jit_contract { |k| large[k] * unit[k] }
+    assert_equal("uint64", total.data_type_name)
+    assert_equal(2**63 + 5, total[0], "the value wrapped")
+
+    complexes = CArray.cmplx64(2, 2) { |i, j| Complex(i + 1, j) }
+    squared = CArray.jit_contract { |i, j, k| complexes[i,k] * complexes[k,j] }
+    assert_equal("cmplx64", squared.data_type_name)
+  end
+
   def test_the_returned_and_assigned_forms_agree
     a = CArray.double(3, 4).seq!(1)
     b = CArray.double(4, 2).seq!(1)

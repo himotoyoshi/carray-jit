@@ -473,9 +473,13 @@ class CArray
             end
           end
         end
+        # The type the value was computed in decides the array it is collected
+        # into, and that table lives with the computation types rather than
+        # here -- a copy kept at the allocation site answers after a type is
+        # added, and answers wrongly.  This one did: float32 and cmplx64 fell
+        # through its default and a float contraction came back int64.
         [analyzer.probe_free_names, axes,
-         { :double => :float64, :complex => :cmplx128 }
-           .fetch(summand.type, :int64)]
+         TypeAssignment.result_storage_type(summand.type)]
       end
 
       # Each index's extent comes from the axes it addresses.  Where it

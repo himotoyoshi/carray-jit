@@ -257,6 +257,17 @@ class TestWholeArrays < Minitest::Test
     assert(result.to_a.all? { |value| value > 2**63 }, "the values wrapped")
   end
 
+  # cmplx64 computes in `float _Complex`, as float32 computes in `float`, and
+  # cmplx64 holds that without widening it.  There was no array named for the
+  # type, so a block whose value was one had nowhere to be collected and the
+  # allocation refused outright.
+  def test_a_cmplx64_value_is_collected_into_a_cmplx64_array
+    singles = CArray.cmplx64(3) { |i| Complex(i + 0.5, i) }
+    result = CArray.jit_map { singles * 2 }
+    assert_equal("cmplx64", result.data_type_name)
+    assert_equal((singles * 2).to_a, result.to_a)
+  end
+
   def test_shapes_are_broadcast_and_the_rank_comes_from_them
     matrix = CArray.double(2, 3).seq!
     row = CArray.double(1, 3).seq!(10.0, 10.0)
