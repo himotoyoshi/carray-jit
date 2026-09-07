@@ -25,7 +25,7 @@ class CArray
                   # How far a stencil's windows reach on each axis, as
                   # [lowest, highest] per axis: what the caller walks the
                   # interior by.  Empty for a kernel that has no windows.
-                  :window_reach,
+                  :window_reach, :window_reaches,
                   # What a cell that stopped can have been raising about --
                   # the block's own `raise`s, and those of the bodies pasted
                   # into this kernel, by the code each reports.
@@ -63,6 +63,7 @@ class CArray
 
         @masked = generator.masked
         @window_reach = analyzer.window_reach
+        @window_reaches = analyzer.window_reaches
         # What `raise` in the block said, by the code the cell that raised
         # writes into the error slot.  The message does not travel: C has
         # nothing to carry it in, and it was known when this was compiled.

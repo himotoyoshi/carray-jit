@@ -190,6 +190,51 @@ class TestContractTerms < Minitest::Test
     end
   end
 
+  # Naming no axes is not the same statement as naming none of them: the
+  # first is the convention, where an index at one position is free, and the
+  # second says the result is a single number.  `free: []` is the second.
+  def test_naming_an_empty_list_of_axes
+    q = square
+    assert_equal([(0...3).sum { |d| q[d,d] }],
+                 CArray::JIT.contract_terms([[q, [:d, :d]]], free: []).to_a)
+
+    a, b = operands
+    assert_match(/appear once, so they are free rather than summed/,
+                 refusal {
+                   CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
+                                              free: [])
+                 })
+  end
+
+  # The accumulator the compiler writes is a local of its own, and an index
+  # by that name shared the identifier with it: the sum came out zero, with
+  # nothing said.  These names arrive as data here, so they cannot be avoided
+  # by not typing them.
+  def test_an_index_named_after_the_accumulator
+    a, b = operands
+    expected = CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
+                                          free: [:i, :j])
+    [:contraction, :contraction_].each do |name|
+      result = CArray::JIT.contract_terms([[a, [:i, name]], [b, [name, :j]]],
+                                          free: [:i, :j])
+      assert_equal(expected.to_a, result.to_a, "`#{name}` collided")
+    end
+  end
+
+  # An index becomes a variable in the generated C, where the kernel's own
+  # parameters and C's keywords are already taken.
+  def test_an_index_named_after_something_the_c_uses
+    a, b = operands
+    [:int, :double, :switch, :bounds, :strides].each do |name|
+      assert_match(/is a name the kernel's own C uses/,
+                   refusal {
+                     CArray::JIT.contract_terms([[a, [name, :k]], [b, [:k, :j]]],
+                                                free: [name, :j])
+                   },
+                   "`#{name}` was accepted")
+    end
+  end
+
   # ---------- contraction_of ----------
 
   def test_what_a_block_is_a_product_of

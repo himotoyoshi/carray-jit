@@ -365,6 +365,27 @@ class TestContract < Minitest::Test
     assert_match(/are the same array/, error.message)
   end
 
+  # An index is the loop's, and the C would assign to the counter -- walking
+  # the loop somewhere else, and out of the array for a value outside its
+  # extent.  Ruby reads the same line as rebinding the parameter and runs the
+  # loop unchanged, so the two do not mean the same thing.
+  def test_assigning_to_an_index
+    out = CArray.double(3)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(3) { |i| i = 2; out[i] = 9.0 }
+    end
+    assert_match(/`i` is a loop index, and assigning to it here would move the loop/,
+                 error.message)
+  end
+
+  def test_an_index_named_after_something_the_c_uses
+    a = CArray.double(3, 3).seq!(1)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract { |int, j, k| a[int,k] * a[k,j] }
+    end
+    assert_match(/`int` is a name the kernel's own C uses/, error.message)
+  end
+
   def test_a_block_is_required
     error = assert_raises(CArray::JIT::Unsupported) { CArray.jit_contract }
     assert_match(/needs a block/, error.message)

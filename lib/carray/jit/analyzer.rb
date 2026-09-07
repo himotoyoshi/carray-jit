@@ -179,6 +179,9 @@ class CArray
       # radius, kept per side because a window need not be symmetric.  It is
       # what the caller walks the interior by.
       attr_reader :window_reach
+      # The same, per window: what one array is reached into, rather than the
+      # widest reach over all of them.
+      attr_reader :window_reaches
       # The names the block gave its windows, which are the arrays a border
       # rule applies to: the ones the block reaches away from the cell in.
       attr_reader :windows
@@ -236,12 +239,15 @@ class CArray
       # `free_indices` are the result's axes, named at the call site rather
       # than taken from the block's parameters.  Naming them puts the
       # contraction in its explicit form: these are free however often they
-      # appear, every parameter left is summed, and nothing is counted.
+      # appear, and a parameter is summed by repeating as it is under the
+      # convention.  Nil is "nothing was named" and an empty list is "named,
+      # and none of them are free" -- which is a contraction to a single
+      # number, and is not the same statement.
       def initialize (source, node: nil, array_names: [], c_functions: {}, rank: nil,
                       steps: nil, contract: false, result: nil, function: false,
                       pointers: {}, map: false, cell_names: [],
                       recursion: nil, windows: [], returns: true,
-                      free_indices: [])
+                      free_indices: nil)
         @source = source
         @node = node
         @array_names = array_names
@@ -282,6 +288,12 @@ class CArray
         @whole_array = false
         # How far the windows reach on each axis, filled in as they are read.
         @window_reach = Array.new(rank.to_i) { [0, 0] }
+        # And how far each window reaches on its own.  The kernel walks the
+        # interior by the widest of them, but whether one array may be written
+        # in place is a question about that array's window alone.
+        @window_reaches = Hash.new { |reaches, name|
+          reaches[name] = Array.new(rank.to_i) { [0, 0] }
+        }
         @uses_undef = false
         @calls_for_effect = false
         @outer_names = []
@@ -666,7 +678,7 @@ class CArray
         # trace -- while a parameter is summed by repeating, here as under the
         # convention.  One that appears once is free and was not named, which
         # is a sum along an axis and is not a contraction.
-        if @free_indices.any?
+        if @free_indices
           parameters = @index_names - @free_indices
           alone = parameters.select { |name| counts[name] == 1 }
           unless alone.empty?
@@ -751,9 +763,16 @@ class CArray
 
       private
 
+      # The accumulator is a local this writes rather than one the block
+      # named, so it has to avoid every name that is already something: the
+      # block's locals, and the indices -- an index called `contraction` would
+      # have shared the identifier with the accumulator and the sum would have
+      # come out zero, with nothing said.
       def free_local_name
+        taken = @local_names + @index_names + @outer_names + @inner_names +
+                @contracted_names
         name = :contraction
-        name = :"#{name}_" while @local_names.include?(name)
+        name = :"#{name}_" while taken.include?(name)
         name
       end
 
@@ -814,7 +833,7 @@ class CArray
           return
         end
 
-        if @contract && @free_indices.any?
+        if @contract && @free_indices
           # The explicit form: the result's axes were named at the call site,
           # so what the block names are the indices that are summed -- and a
           # contraction may now take no parameters at all, which is how the
@@ -830,6 +849,7 @@ class CArray
               "summed")
           end
           @index_names = @free_indices + summed
+          refuse_reserved_indices
           @outer_names = @index_names.dup
           return
         end
@@ -855,7 +875,21 @@ class CArray
         else
           @index_names = requireds.map(&:name)
         end
+        refuse_reserved_indices
         @outer_names = @index_names.dup
+      end
+
+      # An index becomes a variable in the C this writes, alongside the
+      # kernel's own parameters, so a name C has taken already is refused
+      # here rather than by the compiler -- which would complain about a
+      # source the block's author never saw.
+      def refuse_reserved_indices
+        taken = @index_names & CGenerator::RESERVED_NAMES
+        return if taken.empty?
+        raise Unsupported.new(
+          "#{taken.map { |name| "`#{name}`" }.join(', ')} " \
+          "#{taken.size == 1 ? 'is a name' : 'are names'} the kernel's own C " \
+          "uses, so #{taken.size == 1 ? 'it cannot be an index' : 'they cannot be indices'}")
       end
 
       # `printf` writes to the terminal from inside the loop, which is what
@@ -929,6 +963,19 @@ class CArray
           # it is anywhere else.
           if @whole_array && @array_names.include?(node.name)
             return whole_array_write(node.name, expression, node.location)
+          end
+          # An index is the loop's, not the block's.  Ruby reads `i = 2` as
+          # rebinding the parameter and leaves the loop alone; the C would
+          # assign to the counter, so the loop would walk somewhere else --
+          # to cells outside the array, given a value outside its extent.
+          # The two do not mean the same thing, so this is not compiled.
+          if index_in_scope?(node.name)
+            raise Unsupported.new(
+              "`#{node.name}` is a loop index, and assigning to it here would " \
+              "move the loop rather than the value: in Ruby the same line " \
+              "rebinds the parameter and the loop runs on. Use a local of " \
+              "another name",
+              node.location)
           end
           @local_names << node.name unless @local_names.include?(node.name)
           Assignment.new(node.name, expression, node.location)
@@ -1699,6 +1746,9 @@ class CArray
           end
           @window_reach[axis] = [[@window_reach[axis][0], offset].min,
                                  [@window_reach[axis][1], offset].max]
+          own = @window_reaches[array][axis]
+          @window_reaches[array][axis] = [[own[0], offset].min,
+                                          [own[1], offset].max]
           [@outer_names[axis], offset]
         }
       end

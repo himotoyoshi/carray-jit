@@ -68,6 +68,18 @@ class CArray
         "double *reals, int64_t *integers, void **functions, void **data, " \
         "char **mask_pointers, int64_t *mask_strides, int32_t *error)".freeze
 
+      # Names an index may not take, because the C it becomes is written with
+      # them: the kernel's own parameters above, and the words C keeps for
+      # itself.  A name from either list compiles to something else or to
+      # nothing, and the compiler's complaint is about a source the block's
+      # author did not write.
+      RESERVED_NAMES =
+        (SIGNATURE.scan(/\*?(\w+)[,)]/).flatten +
+         %w[auto break case char const continue default do double else enum
+            extern float for goto if inline int long register restrict return
+            short signed sizeof static struct switch typedef union unsigned
+            void volatile while]).map(&:to_sym).freeze
+
       ARGUMENTS =
         "pointers, strides, bounds, reals, integers, functions, data, " \
         "mask_pointers, mask_strides, error".freeze

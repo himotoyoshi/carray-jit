@@ -289,7 +289,9 @@ class CArray
             "#{repeated.map { |name| "`#{name}`" }.join(', ')} names more than " \
             "one axis of the result; each axis is one index"
     end
-    JIT.run_contraction(block, free_indices)
+    # Nothing named is the convention; naming none of them is a contraction
+    # to a single number, and the two are different statements.
+    JIT.run_contraction(block, free_indices.empty? ? nil : free_indices)
   end
 
   # @!endgroup
@@ -371,12 +373,12 @@ class CArray
       RESULT = :__contraction_result
 
       # @private
-      def run_contraction (block, free_indices = [])
+      def run_contraction (block, free_indices = nil)
         node, source, origin = read_block(block)
         # An index named at the call site is not a parameter of the block, so
         # the block reaches for it the way it reaches for a captured value.
         # It is neither: it is an index, and it is answered here.
-        names = capture_names(source, node) - free_indices
+        names = capture_names(source, node) - (free_indices || [])
         arrays, scalars, c_functions = split_captures(names, binding_of(block))
         contract(source, arrays, free_indices, node: node, origin: origin,
                  scalars: scalars, c_functions: c_functions)
@@ -409,7 +411,10 @@ class CArray
       # @raise [CArray::JIT::Unsupported] when the block is not a contraction.
       def contraction_of (block, *free_indices)
         node, source, = read_block(block)
-        names = capture_names(source, node) - free_indices
+        # As `jit_contract` reads them: naming none is the convention, which
+        # is not the same as naming an empty list of axes.
+        free_indices = nil if free_indices.empty?
+        names = capture_names(source, node) - (free_indices || [])
         arrays, scalars, c_functions = split_captures(names, binding_of(block))
         # A captured number or a compiled function in the summand is a value
         # the structure cannot carry.
@@ -666,7 +671,7 @@ class CArray
       # typed before there is a kernel to ask, so the block is analyzed once
       # without being compiled.  Returns nil when the block assigns into an
       # array of its own.
-      def allocate_result (source, node, arrays, scalars, free_indices = [])
+      def allocate_result (source, node, arrays, scalars, free_indices = nil)
         probe = probe_contraction(source, node, arrays, scalars, free_indices)
         return nil unless probe
         free, index_axes, type = probe
@@ -688,7 +693,7 @@ class CArray
       end
 
       # @private
-      def probe_contraction (source, node, arrays, scalars, free_indices = [])
+      def probe_contraction (source, node, arrays, scalars, free_indices = nil)
         key = [source, arrays.transform_values(&:data_type_name),
                scalars.transform_values { |value| TypeAssignment.scalar_type(value) },
                # The result's axes are named at the call site rather than in
@@ -707,7 +712,7 @@ class CArray
       end
 
       # @private
-      def build_probe (source, node, arrays, scalars, free_indices = [])
+      def build_probe (source, node, arrays, scalars, free_indices = nil)
         storage_types = arrays.transform_values(&:data_type_name)
         analyzer = Analyzer.new(source, node: node, array_names: arrays.keys,
                                 contract: :probe, free_indices: free_indices,
@@ -934,11 +939,17 @@ class CArray
         end
         # Writing into an array a window reads is not a pass over the array:
         # a cell written here is a neighbour a later cell reads, so what comes
-        # back depends on the order the cells were reached in.  A window that
-        # reaches nowhere is not a stencil, and is the one case where writing
-        # in place says what it means.
-        if into && reach.any? { |low, high| !low.zero? || !high.zero? }
-          aliased = given.find { |_, array| root_of(array).equal?(root_of(into)) }
+        # back depends on the order the cells were reached in.  The question
+        # is about that window alone -- a window that reaches nowhere reads
+        # only the cell the loop is on, and may be written in place however
+        # far the other windows in the same kernel reach.
+        if into
+          aliased = given.find { |name, array|
+            next false unless root_of(array).equal?(root_of(into))
+            kernel.window_reaches[name].any? { |low, high|
+              !low.zero? || !high.zero?
+            }
+          }
           if aliased
             raise Unsupported,
                   "`into:` is the array `#{aliased.first}` reaches its window " \
@@ -1222,7 +1233,7 @@ class CArray
                    scalar_values:, c_functions: {}, masked: false, rank: nil,
                    steps: nil, contract: false, result: nil, map: false,
                    reassociate: false, cell_names: [], windows: [], border: nil,
-                   free_indices: [])
+                   free_indices: nil)
         # A kernel that mentions UNDEF is a masked one whatever its arrays
         # carry, and deciding that here means no caller has to remember it.
         masked ||= mentions_undef(source, node)
@@ -1387,7 +1398,7 @@ class CArray
       def build (source, node, array_names, storage_types, scalar_values, c_functions,
                  masked, rank = nil, steps = nil, contract = false, result = nil,
                  origin = nil, map = false, reassociate = false,
-                 cell_names = [], windows = [], border = nil, free_indices = [])
+                 cell_names = [], windows = [], border = nil, free_indices = nil)
         analyzer = Analyzer.new(source, node: node, array_names: array_names,
                                 c_functions: c_functions,
                                 rank: rank, steps: steps, contract: contract,

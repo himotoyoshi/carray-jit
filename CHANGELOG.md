@@ -39,6 +39,18 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- Fix: assigning to a loop index inside a kernel is refused. `jit_for(3) { |i|
+  i = 2; out[i] = ... }` assigned to the counter, so the loop walked somewhere
+  else -- outside the array, for a value outside its extent -- while Ruby reads
+  the same line as rebinding the parameter and runs the loop unchanged. Use a
+  local of another name; nothing that has an index only on the right changes.
+
+- Fix: an index named after something the generated C already uses is refused
+  where it is written rather than by the compiler. `jit_contract { |int, j, k|
+  ... }` reached clang as a declaration of `int`, and an index named
+  `contraction` shared its identifier with the accumulator the compiler writes,
+  which made the sum come out zero with nothing said.
+
 - Fix: a C function may take a `uint64_t *` and return a `uint64_t`.
   `CArray.jit_function("void (*)(uint64_t *, int64_t)")` reached its cells as
   an opaque slot rather than an array, and a `uint64_t` return type was

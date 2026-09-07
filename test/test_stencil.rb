@@ -236,6 +236,22 @@ class TestStencil < Minitest::Test
     assert_match(/a stencil writes into an array of its own/, error.message)
   end
 
+  # The question is about the window onto the array being written, not about
+  # the widest window in the kernel: one array may be read at its centre while
+  # another is reached into, and then writing the first in place is safe.
+  def test_into_may_be_a_window_that_reaches_nowhere_beside_one_that_does
+    reached = CArray.double(6, 8) { |i, j| i + j }
+    centred = CArray.double(6, 8) { |i, j| i * j }
+    expected = CArray.double(6, 8) { |i, j|
+      i.zero? || i == 5 ? centred[i,j] : 0.25 * (reached[i-1,j] + reached[i+1,j]) + centred[i,j]
+    }
+    returned = CArray.jit_stencil(reached, centred, border: :skip, into: centred) { |r, c|
+      0.25 * (r[-1, 0] + r[1, 0]) + c[0, 0]
+    }
+    assert_same(centred, returned)
+    assert_equal(expected.to_a, centred.to_a)
+  end
+
   # A window that reaches nowhere reads only the cell it is on, so there is no
   # later cell to disturb and writing in place says what it means.
   def test_into_may_be_the_array_when_the_window_reaches_nowhere
