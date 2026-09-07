@@ -37,7 +37,7 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.1 (unreleased)
+## 0.1.1
 
 - Fix: a zero divisor in a `CArray.fuse` expression no longer turns
   compilation off for the rest of the process. `ZeroDivisionError` is raised
