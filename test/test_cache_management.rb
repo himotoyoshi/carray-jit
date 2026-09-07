@@ -17,6 +17,7 @@ class TestCacheManagement < Minitest::Test
     ENV["CARRAY_JIT_CACHE"] = @previous_cache
     ENV["CARRAY_JIT_CACHE_LIMIT"] = @previous_limit
     ENV["CARRAY_JIT_NO_CACHE"] = @previous_off
+    CArray::JIT.cache_root = nil
     CArray::JIT::Compiler.instance_variable_set(:@ephemeral_directory, nil)
     FileUtils.remove_entry(@directory) if File.directory?(@directory)
     CArray::JIT.clear_registry
@@ -29,6 +30,51 @@ class TestCacheManagement < Minitest::Test
 
   def compile_indexed (index)
     compile_kernel("->(i) { a[i] = a[i-1] * #{index}.5 }", arrays: { :a => "float64" })
+  end
+
+  # -- where an application puts its own ----------------------------------
+
+  def test_an_application_can_name_its_own_cache_root
+    ENV.delete("CARRAY_JIT_CACHE")
+    Dir.mktmpdir("carray-jit-application-") do |own|
+      CArray::JIT.cache_root = own
+      assert_equal(own, CArray::JIT.cache_root)
+      compile_indexed(1)
+      assert_equal(1, CArray::JIT.cache_entry_count)
+      assert_equal(File.join(own, CArray::JIT::Compiler.environment_tag),
+                   CArray::JIT.cache_directory)
+    end
+  end
+
+  # Whoever runs the program has the last word on where a cache may be
+  # written, and on whether there is one at all.
+  def test_the_environment_comes_before_what_the_application_named
+    Dir.mktmpdir("carray-jit-application-") do |own|
+      CArray::JIT.cache_root = own
+      assert_equal(@directory, CArray::JIT.cache_root)
+      ENV["CARRAY_JIT_NO_CACHE"] = "1"
+      refute_equal(own, CArray::JIT.cache_root)
+    end
+  end
+
+  # A relative path is expanded when it is given.  Read later instead, it
+  # would name a different directory once the program has moved.
+  def test_a_relative_cache_root_is_settled_where_it_is_given
+    ENV.delete("CARRAY_JIT_CACHE")
+    Dir.mktmpdir("carray-jit-application-") do |own|
+      here = Dir.chdir(own) { CArray::JIT.cache_root = "kernels"; Dir.pwd }
+      assert_equal(File.join(here, "kernels"), CArray::JIT.cache_root)
+    end
+  end
+
+  def test_nothing_named_is_the_cache_everything_shares
+    ENV.delete("CARRAY_JIT_CACHE")
+    Dir.mktmpdir("carray-jit-application-") do |own|
+      CArray::JIT.cache_root = own
+      CArray::JIT.cache_root = nil
+      refute_equal(own, CArray::JIT.cache_root)
+      assert_equal("carray-jit", File.basename(CArray::JIT.cache_root))
+    end
   end
 
   def test_cache_reports_where_it_is_and_how_big

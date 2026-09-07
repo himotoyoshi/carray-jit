@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- New: `CArray::JIT.cache_root = "path"` puts an application's compiled
+  kernels somewhere of its own, rather than in the cache shared under the home
+  directory. Say it before the first kernel is compiled; the path is expanded
+  where it is given. `CARRAY_JIT_CACHE` and `CARRAY_JIT_NO_CACHE` still come
+  first, and `nil` restores the default.
+
 ## 0.1.1
 
 - Fix: a zero divisor in a `CArray.fuse` expression no longer turns

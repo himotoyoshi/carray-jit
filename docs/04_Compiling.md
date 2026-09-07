@@ -89,6 +89,16 @@ process C, existing file    dlopen    0.2 ms
 
 Set `CARRAY_JIT_NO_CACHE=1` (or `CARRAY_JIT_CACHE=none`) to put the cache in a temporary directory that is removed at exit, at that cost per kernel per run.
 
+An application that would rather not share the cache under the home directory can name one of its own, before the first kernel is compiled:
+
+```ruby
+CArray::JIT.cache_root = File.expand_path("../.jit-cache", __dir__)
+```
+
+The path is expanded where it is given, so a relative one does not move when the program does. What is already compiled and loaded keeps working, and what is already on disk stays where it is; this says where the next kernel is looked for and written. A directory inside a project wants to be ignored by the version control it sits in.
+
+`CARRAY_JIT_CACHE` and `CARRAY_JIT_NO_CACHE` still come first, so whoever runs the program has the last word on where a cache may be written and whether there is one at all. `CArray::JIT.cache_root = nil` restores the default.
+
 The cache is **bounded**: past `CARRAY_JIT_CACHE_LIMIT` kernels per environment (512 by default, so about 9 MB) the least recently used are evicted, source and object together. Reuse updates an entry's timestamp, so what a program actually runs stays. This is the one place carray-jit deliberately parts with RubyInline, whose `~/.ruby_inline` has no eviction at all and grows for the life of the account.
 
 Removing a cached object never breaks a kernel already in use: unlinking a loaded shared object leaves its mapping intact.
@@ -203,7 +213,7 @@ carray_jit_contiguous (char **pointers, int64_t *strides, int64_t *bounds, ...)
 | Variable | Effect |
 | --- | --- |
 | `CARRAY_JIT_DUMP` | Print generated C to stderr before compiling |
-| `CARRAY_JIT_CACHE` | Cache directory (default `~/.cache/carray-jit`), or `none` |
+| `CARRAY_JIT_CACHE` | Cache directory (default `~/.cache/carray-jit`, or what `CArray::JIT.cache_root=` named), or `none` |
 | `CARRAY_JIT_NO_CACHE` | Keep the cache in a temporary directory, removed on exit |
 | `CARRAY_JIT_CACHE_LIMIT` | Kernels retained on disk, per environment (default 512) |
 | `CARRAY_JIT_CACHE_MAX_AGE_DAYS` | Days an unused environment's directory is kept (default 30) |

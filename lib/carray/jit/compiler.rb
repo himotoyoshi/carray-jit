@@ -82,9 +82,27 @@ class CArray
         # directory for this one.
         def cache_root
           return ephemeral_directory if ephemeral?
-          ENV["CARRAY_JIT_CACHE"] ||
+          ENV["CARRAY_JIT_CACHE"] || @cache_root ||
             File.join(ENV["XDG_CACHE_HOME"] || File.join(Dir.home, ".cache"),
                       "carray-jit")
+        end
+
+        # An application saying where its own kernels live, rather than
+        # sharing the one cache under the home directory.  Set it before the
+        # first kernel is compiled; kernels already loaded keep working, and
+        # what is already on disk stays where it is.  `nil` restores the
+        # default.
+        #
+        # The environment still comes first: `CARRAY_JIT_CACHE` redirects an
+        # application that names a directory here, and `CARRAY_JIT_NO_CACHE`
+        # takes the cache away, so whoever runs a program can still put it
+        # somewhere writable, or do without.
+        #
+        # The path is expanded when it is given, not when it is read: a
+        # relative one would otherwise name a different directory after the
+        # program changes its working directory.
+        def cache_root= (path)
+          @cache_root = path && File.expand_path(path)
         end
 
         def cache_directory

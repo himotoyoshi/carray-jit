@@ -167,6 +167,7 @@ CArray::JIT.reassociate          #=> true, the default for jit_for reductions
 CArray::JIT.reassociate = false  # serial accumulation everywhere
 
 CArray::JIT.cache_directory      #=> ~/.cache/carray-jit/<version>
+CArray::JIT.cache_root = "tmp/jit"   # this application keeps its own
 CArray::JIT.cache_entry_count
 CArray::JIT.cache_byte_size
 CArray::JIT.clear_cache

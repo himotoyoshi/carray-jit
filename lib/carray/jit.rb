@@ -1004,6 +1004,27 @@ class CArray
         Compiler.cache_root
       end
 
+      # Puts this application's kernels somewhere of its own, rather than in
+      # the cache shared under the home directory.  Say it before the first
+      # kernel is compiled -- at the top of the program, beside the other
+      # requires:
+      #
+      #     CArray::JIT.cache_root = File.expand_path("../.jit-cache", __dir__)
+      #
+      # Kernels already loaded keep working and what is already on disk stays
+      # where it is; this says where the next one is looked for and written.
+      # `CARRAY_JIT_CACHE` and `CARRAY_JIT_NO_CACHE` still come first, so
+      # whoever runs the program can put the cache somewhere writable or do
+      # without one. A directory inside a project wants to be ignored by the
+      # version control it sits in.
+      #
+      # @param path [String, nil] the directory, relative to where the
+      #   program starts; `nil` restores the default.
+      # @return [void]
+      def cache_root= (path)
+        Compiler.cache_root = path
+      end
+
       # @return [Array<String>] the environment directories no longer in use --
       #   another version, or another architecture.
       def stale_cache_environments
