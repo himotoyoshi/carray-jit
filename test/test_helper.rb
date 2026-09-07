@@ -69,9 +69,13 @@ module KernelAssertions
   # computing in float instead of double).
   # A Complex is two doubles, and both of them are compared the same way --
   # the sign of a zero included, because that is what a branch cut is made
-  # of.
+  # of.  A NaN carries no sign anyone promises, though: Ruby's own complex
+  # division and C's `__divdc3` part company only over which NaN they leave
+  # behind, so every NaN is folded to one bit pattern before the comparison.
   def bits_of (value)
-    value.is_a?(Complex) ? [value.real, value.imaginary].pack("d2") : [value].pack("d")
+    doubles = value.is_a?(Complex) ? [value.real, value.imaginary] : [value]
+    doubles = doubles.map { |d| d.is_a?(Float) && d.nan? ? Float::NAN : d }
+    doubles.pack("d#{doubles.size}")
   end
 
   def assert_bits_equal (expected, actual, message = nil)

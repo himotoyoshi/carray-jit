@@ -150,8 +150,11 @@ class TestCacheManagement < Minitest::Test
   # the entry glob nor the prune glob.
   def test_abandoned_staging_files_are_swept
     FileUtils.mkdir_p(leaf)
-    stale = File.join(leaf, "deadbeef.bundle.99999")
-    fresh = File.join(leaf, "cafe.bundle.99998")
+    # sweep_staging globs "*<suffix>.<pid>", so a staging file only matches
+    # when it carries this platform's suffix -- ".so" here, ".bundle" on macOS.
+    suffix = CArray::JIT::Compiler.send(:shared_object_suffix)
+    stale = File.join(leaf, "deadbeef#{suffix}.99999")
+    fresh = File.join(leaf, "cafe#{suffix}.99998")
     FileUtils.touch(stale)
     FileUtils.touch(fresh)
     File.utime(Time.now - 3600, Time.now - 3600, stale)

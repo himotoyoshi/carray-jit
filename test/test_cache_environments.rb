@@ -23,7 +23,11 @@ class TestCacheEnvironments < Minitest::Test
   def plant (name, age_in_days)
     directory = File.join(@root, name)
     FileUtils.mkdir_p(directory)
-    entry = File.join(directory, "0" * 64 + ".bundle")
+    # The suffix has to be the one this platform's cache counts and sweeps by
+    # -- ".so" on Linux, ".bundle" on macOS -- or clear_cache's tally misses
+    # the planted entry.
+    suffix = CArray::JIT::Compiler.send(:shared_object_suffix)
+    entry = File.join(directory, "0" * 64 + suffix)
     FileUtils.touch(entry)
     moment = Time.now - age_in_days * 24 * 60 * 60
     File.utime(moment, moment, entry)

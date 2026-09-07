@@ -145,7 +145,14 @@ class TestExpression < Minitest::Test
   def test_an_unmasked_zero_divisor_still_raises
     x = CArray.int32(N) { |i| i + 1 }
     z = CArray.int32(N) { |i| i % 3 }
+    # CArray retires the evaluator on any exception it raises, a legitimate
+    # ZeroDivisionError included, and does not put it back. Left alone that
+    # leaks into whatever test runs next -- test_it_is_registered fails when
+    # it runs after this one -- so the registration is restored here.
+    kept = CArray.expression_evaluator
     assert_raises(ZeroDivisionError) { (CArray.fuse { x / z }).to_ca }
+  ensure
+    CArray.expression_evaluator = kept if kept && CArray.expression_evaluator.nil?
   end
 
   # -- declining ----------------------------------------------------------
