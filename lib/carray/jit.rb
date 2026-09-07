@@ -378,7 +378,221 @@ class CArray
         # It is neither: it is an index, and it is answered here.
         names = capture_names(source, node) - free_indices
         arrays, scalars, c_functions = split_captures(names, binding_of(block))
+        contract(source, arrays, free_indices, node: node, origin: origin,
+                 scalars: scalars, c_functions: c_functions)
+      end
 
+      # Reads a block as a contraction and returns the terms it is a product
+      # of, or nil when it is not one:
+      #
+      #   CArray::JIT.contraction_of(proc { |i, j, k| a[i,k] * b[k,j] })
+      #   #=> { :terms => [[a, [:i, :k]], [b, [:k, :j]]],
+      #   #     :free => [:i, :j], :summed => [:k] }
+      #
+      # This is the half of `jit_contract` that decides *what* is being
+      # computed, without compiling anything, for a caller that wants to
+      # rearrange it -- to contract two terms at a time, say, in an order it
+      # chose -- and then reach `contract_terms` with the pieces.
+      #
+      # Nil means "there is nothing here to rearrange", not that the block is
+      # wrong: a summand that is more than a product of element reads
+      # (`Math.exp(a[i,k]) * b[k,j]`, a division, a captured scalar, an index
+      # with an offset), or one that assigns into an array of its own. Such a
+      # block is still a contraction and `jit_contract` still compiles it; it
+      # is just not a product to be taken apart. A block that is not a
+      # contraction at all raises here, as it would there.
+      #
+      # @param block [Proc] the block, read and not called.
+      # @param free_indices [Array<Symbol>] the result's axes, as
+      #   `jit_contract` takes them.
+      # @return [Hash, nil] `{ terms:, free:, summed: }`, or nil.
+      # @raise [CArray::JIT::Unsupported] when the block is not a contraction.
+      def contraction_of (block, *free_indices)
+        node, source, = read_block(block)
+        names = capture_names(source, node) - free_indices
+        arrays, scalars, c_functions = split_captures(names, binding_of(block))
+        # A captured number or a compiled function in the summand is a value
+        # the structure cannot carry.
+        return nil unless scalars.empty? && c_functions.empty?
+
+        analyzer = Analyzer.new(source, node: node, array_names: arrays.keys,
+                                contract: :probe, free_indices: free_indices,
+                                cell_names: cell_names(arrays))
+        statements = analyzer.body.statements
+        # Locals before the summand are computation the structure cannot
+        # carry either; an ElementWrite last is the assigned form.
+        return nil unless statements.size == 1
+        terms = product_terms(statements.last, arrays)
+        return nil unless terms
+
+        free = analyzer.probe_free_names
+        { :terms => terms, :free => free,
+          :summed => terms.flat_map(&:last).uniq - free }
+      end
+
+      # The product's terms, or nil where the tree is anything but a product
+      # of cells read at plain indices.
+      def product_terms (node, arrays)
+        case node
+        when BinaryOperation
+          return nil unless node.operator == :*
+          left = product_terms(node.left, arrays)
+          right = left && product_terms(node.right, arrays)
+          right && left + right
+        when ElementRead
+          subscripts = node.subscripts
+          return nil unless subscripts.all? { |index, offset|
+            index && offset.is_a?(Integer) && offset.zero?
+          }
+          [[arrays.fetch(node.array), subscripts.map(&:first)]]
+        end
+      end
+
+      # @private
+      TERM_PREFIX = "term"
+      # @private
+      TARGET = :target
+
+      # Runs the contraction the terms describe, where a term is an array and
+      # the indices it is read at:
+      #
+      #   CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
+      #                              free: [:i, :j])            # a matrix product
+      #
+      # It is `jit_contract` with the block already taken apart -- the same
+      # rules, the same errors, the same kernels -- for a caller that has the
+      # structure rather than a block to read.  A contraction that was decided
+      # rather than written has no source, which is what this is for.
+      #
+      # `free:` is the result's axes in order, and is required: a structure has
+      # no parameter list, so there is nowhere else for the order to be said.
+      # Every index that is not named is summed, and must appear at more than
+      # one position, exactly as in a block whose axes are named.
+      #
+      # The terms are a product of element reads and nothing else. A summand
+      # that is more than that -- `Math.exp(a[i,k]) * b[k,j]`, a division, a
+      # captured scalar, an index with an offset -- is written as a block and
+      # compiled by `jit_contract`; there is no structure here that says it.
+      #
+      # @param terms [Array<Array>] `[array, [index, ...]]` pairs.
+      # @param free [Array<Symbol>] the result's axes, in order.
+      # @param into [CArray, nil] an array of yours to write into, which then
+      #   decides the axis order and is what comes back.
+      # @return [CArray] `into` when it is given, otherwise a new array.
+      # @raise [CArray::JIT::Unsupported] when the terms are malformed, or the
+      #   contraction they describe is one the compiler refuses.
+      def contract_terms (terms, free:, into: nil)
+        names = check_terms(terms)
+        indices = terms.flat_map { |_, subscripts| subscripts }
+        free = check_free_indices(free, indices)
+        arrays = names.zip(terms.map(&:first)).to_h
+
+        factors = terms.each_with_index.map { |(_, subscripts), position|
+          "#{names[position]}[#{subscripts.join(',')}]"
+        }
+        body = factors.join(" * ")
+        if into
+          check_destination(into, free)
+          arrays[TARGET] = into
+          # With every index summed the result is one number, which lives in a
+          # one-cell array at a fixed subscript -- as it is written in a block.
+          body = "#{TARGET}[#{free.empty? ? '0' : free.join(',')}] = #{body}"
+        end
+        summed = indices.uniq - free
+        parameters = summed.empty? ? "" : "|#{summed.join(', ')}| "
+
+        # The source the block would have had.  It is what the kernel cache is
+        # keyed by, so the same terms under the same shapes reach the same
+        # kernel however they were arrived at -- and the string is canonical,
+        # which is the same service einsum's subscripts perform.
+        result = contract("proc { #{parameters}#{body} }", arrays, free)
+        into || result
+      end
+
+      # The names the synthesized source gives the terms.  They are the
+      # source's own, so nothing outside chose them -- but an index may
+      # collide with one, and a collision would silently read an array as an
+      # index.
+      def check_terms (terms)
+        unless terms.is_a?(Array) && !terms.empty?
+          raise Unsupported,
+                "contract_terms takes the terms of a product, as in " \
+                "`[[a, [:i, :k]], [b, [:k, :j]]]`"
+        end
+        terms.each do |term|
+          unless term.is_a?(Array) && term.size == 2 && term.first.is_a?(CArray)
+            raise Unsupported,
+                  "a term is an array and the indices it is read at, as in " \
+                  "`[a, [:i, :k]]`; got #{term.inspect}"
+          end
+          array, subscripts = term
+          unless subscripts.is_a?(Array) && subscripts.all? { |name| index_name?(name) }
+            raise Unsupported,
+                  "the indices of a term are symbols naming its axes, as in " \
+                  "`[a, [:i, :k]]`; got #{subscripts.inspect}"
+          end
+          unless subscripts.size == array.rank
+            raise Unsupported,
+                  "a term names one index per axis: this array has rank " \
+                  "#{array.rank} and #{subscripts.size} " \
+                  "#{subscripts.size == 1 ? 'index' : 'indices'} were given"
+          end
+        end
+        names = terms.each_index.map { |position| :"#{TERM_PREFIX}#{position}" }
+        reserved = (names + [TARGET]) & terms.flat_map { |_, subscripts| subscripts }
+        unless reserved.empty?
+          raise Unsupported,
+                "#{reserved.map { |name| "`#{name}`" }.join(', ')} names a term " \
+                "here and cannot also be an index"
+        end
+        names
+      end
+
+      def check_free_indices (free, indices)
+        unless free.is_a?(Array) && free.all? { |name| index_name?(name) }
+          raise Unsupported,
+                "`free:` is the result's axes in order, named as symbols"
+        end
+        repeated = free.tally.select { |_, count| count > 1 }.keys
+        unless repeated.empty?
+          raise Unsupported,
+                "#{repeated.map { |name| "`#{name}`" }.join(', ')} names more " \
+                "than one axis of the result; each axis is one index"
+        end
+        missing = free - indices
+        unless missing.empty?
+          raise Unsupported,
+                "#{missing.map { |name| "`#{name}`" }.join(', ')} " \
+                "#{missing.size == 1 ? 'names no axis' : 'name no axis'} here"
+        end
+        free
+      end
+
+      def check_destination (into, free)
+        unless into.is_a?(CArray)
+          raise Unsupported, "`into:` is an array to write into"
+        end
+        expected = free.empty? ? 1 : free.size
+        unless into.rank == expected
+          raise Unsupported,
+                "`into:` has rank #{into.rank}, and the result's axes are " \
+                "#{free.empty? ? 'none, which is one cell' : free.map { |name| "`#{name}`" }.join(', ')}"
+        end
+      end
+
+      # An index is interpolated into the source this writes, so it has to be
+      # something Ruby reads back as a name.
+      def index_name? (name)
+        name.is_a?(Symbol) && name.to_s.match?(/\A[a-z_][A-Za-z0-9_]*\z/)
+      end
+
+      # What a contraction is once its block has been read: a source, the
+      # arrays that source names, and which indices are free.  Everything
+      # before this is about recovering those from a block; everything after
+      # is the same whatever recovered them, which is what lets
+      # `contract_terms` reach it with a source it wrote itself.
+      def contract (source, arrays, free_indices,
+                    node: nil, origin: nil, scalars: {}, c_functions: {})
         result = allocate_result(source, node, arrays, scalars, free_indices)
         arrays = arrays.merge(RESULT => result) if result
 

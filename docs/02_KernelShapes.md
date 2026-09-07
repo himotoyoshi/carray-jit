@@ -433,6 +433,24 @@ An index cannot be both, and saying so twice is refused. Everything else is as i
 
 An array that is both written and read is a recurrence rather than a contraction, and is refused with a pointer at `jit_for` too.
 
+### The contraction without the block
+
+A contraction that was *decided* rather than written has no block to read: a caller that rearranges one -- contracting two terms at a time, in an order it chose -- holds a structure, and a structure has no source. Two methods are the same contraction with the block taken out of the middle:
+
+```ruby
+CArray::JIT.contraction_of(proc { |i, j, k| a[i,k] * b[k,j] })
+#=> { :terms => [[a, [:i, :k]], [b, [:k, :j]]], :free => [:i, :j], :summed => [:k] }
+
+CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]], free: [:i, :j])
+#=> the same matrix product
+```
+
+`contract_terms` writes the block that was not written and compiles that, so the rules, the errors and the kernels are the ones above -- `free:` is the result's axes in order and is required, since a structure has no parameter list to say it in; an index that is not named is summed and must appear at more than one position; `into:` writes into an array of yours.
+
+`contraction_of` returns nil when there is nothing to take apart: a summand that is more than a product of cells (`Math.exp(a[i,k]) * b[k,j]`, a division, a captured number, an index with an offset) or one that assigns into an array of its own. Nil is not a refusal -- `jit_contract` compiles all of those -- it says the block is not a product with pieces to rearrange.
+
+Taken together they are what a contraction-order optimizer needs, and nothing else: a three-term product taken apart, contracted two at a time and put back agrees with the single nest to within the tolerance rearranging the additions earns, and on an 8x8x8x8 chain it is already faster.
+
 There is no BLAS for an arbitrary contraction, which is rather the point: this compiles to a plain nest of loops and is slower than a tuned GEMM, but it is one line and it exists.
 
 Its sum is split into partial ones, as `jit_for`'s reduction is and as CArray's own reduce kernels are. A contraction is a sum with no loop written anywhere for its order to agree with -- the notation says which indices are summed and nothing about in what order -- so there is nothing being overridden, which is a weaker claim than the one `jit_for` makes over a loop somebody wrote. It is also the whole of the difference between a contraction and that loop: a 400 x 400 x 400 product took 47 ms serial against `jit_for`'s 16, and takes 16 split (`benchmark/contraction.rb`).

@@ -39,6 +39,16 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- New: `CArray::JIT.contract_terms` runs the contraction a structure describes
+  rather than one a block writes --
+  `CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]], free: [:i, :j])`
+  is a matrix product -- and `CArray::JIT.contraction_of` reads a block and
+  returns the terms it is a product of, or nil when it is not one. They are
+  `jit_contract` with the block taken out of the middle, for a caller that
+  rearranges a contraction before running it: the terms are compiled by the
+  same analyzer under the same rules, so `free:` is required and an index that
+  is not named must appear at more than one position.
+
 - Fix: a contraction with nothing to assign into is collected into the type its
   summand computes in. `CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }` over
   float32 arrays came back int64 with every value truncated; over uint64 it came
