@@ -1171,6 +1171,36 @@ class TestCFunction < Minitest::Test
     assert_match(/has no mask to read/, error.message)
   end
 
+  # uint64 is a computation type of its own, and CArray has the array to
+  # match, so a pointer to one reaches its cells and a value of one comes back
+  # out whole.  Neither did: the table that reads a declaration was written
+  # when there was no uint64 to read, and said `uint64_t` held no value a body
+  # could compute with.
+  def test_a_uint64_pointer_and_return_value
+    increment = CArray.jit_function("void (*)(uint64_t *, int64_t)") { |p, n|
+      (0...n).each { |i| p[i] = p[i] + 1 }
+    }
+    large = CArray.uint64(3) { |i| 2**63 + i }
+    increment.call(large, 3)
+    assert_equal([2**63 + 1, 2**63 + 2, 2**63 + 3], large.to_a)
+
+    doubled = CArray.jit_function("uint64_t (*)(int64_t)") { |n| n * 2 }
+    assert_equal(4, doubled.call(2))
+  end
+
+  # A value reaches a body through one of the kernel's three scalar buses --
+  # doubles, int64s, complexes -- and uint64 is the one numeric type none of
+  # them carries whole.  Saying so where the declaration is beats a kernel
+  # that cannot be built.
+  def test_a_uint64_parameter_by_value
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("uint64_t (*)(uint64_t)") { |n| n + 1 }
+    end
+    assert_match(/a value is handed to a body as a double, an int64 or a complex/,
+                 error.message)
+    assert_match(/uint64_t \*/, error.message)
+  end
+
   # And not through `#call` either, which is the same array reaching the same
   # C by the other road.  The block is what says what the body means, and the
   # block reaches an UNDEF and stops; the C would have read the number lying

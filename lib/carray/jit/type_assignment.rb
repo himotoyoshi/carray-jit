@@ -8,15 +8,14 @@ class CArray
     # propagates bottom-up.
     #
     # The distinction that matters is between *storage* type and *computation*
-    # type.  A Ruby block reading a float32 array gets a Ruby Float -- a
-    # double -- computes in double, and rounds back to float32 only when the
-    # value is stored.  Computing in float instead would diverge from the Ruby
-    # evaluator, so reads from any float array are typed :double here and the
-    # generator casts once, at the store.
+    # type: what an array holds, and what a kernel works on a cell of it in.
+    # They are not the same -- int8 is computed in int64 -- and the table
+    # below is what says which.
     #
-    # cmplx64 stands in the same relation to cmplx128: a cell of either is a
-    # Ruby Complex whose parts are Floats, so both are typed :complex and the
-    # narrowing happens at the store.
+    # A narrow float is computed narrow: float32 in `float` and cmplx64 in
+    # `float _Complex`, read narrow and stored narrow. That is what CArray's
+    # own kernels do, so the two agree; the Ruby evaluator, which would widen
+    # to a double, is what they both differ from. See docs/03 and docs/05.
     class TypeAssignment
 
       STORAGE_COMPUTATION_TYPES = {

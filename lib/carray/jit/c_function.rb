@@ -368,25 +368,32 @@ class CArray
         Fiddle::TYPE_USHORT    => :uint16,
         Fiddle::TYPE_INT       => :int32,
         Fiddle::TYPE_UINT      => :uint32,
-        Fiddle::TYPE_LONG      => :int64,
-        Fiddle::TYPE_LONG_LONG => :int64,
+        Fiddle::TYPE_LONG       => :int64,
+        Fiddle::TYPE_LONG_LONG  => :int64,
+        # `unsigned long` and `size_t` arrive as the same code, and
+        # `uint64_t` as the other one.
+        Fiddle::TYPE_ULONG      => :uint64,
+        Fiddle::TYPE_ULONG_LONG => :uint64,
       }.freeze
 
       # Codes Fiddle may return, mapped to what a kernel computes them in.
       # Absent means the type may be written down but holds no value a body
-      # can compute with.  `uint64_t` is absent for the reason CArray has no
-      # uint64 array: no computation type holds it without losing a bit.
+      # can compute with -- `void`, and a pointer to it.
       COMPUTATION = {
-        Fiddle::TYPE_DOUBLE    => :double,
-        Fiddle::TYPE_FLOAT     => :double,
-        Fiddle::TYPE_CHAR      => :int64,
-        Fiddle::TYPE_UCHAR     => :int64,
-        Fiddle::TYPE_SHORT     => :int64,
-        Fiddle::TYPE_USHORT    => :int64,
-        Fiddle::TYPE_INT       => :int64,
-        Fiddle::TYPE_UINT      => :int64,
-        Fiddle::TYPE_LONG      => :int64,
-        Fiddle::TYPE_LONG_LONG => :int64,
+        Fiddle::TYPE_DOUBLE     => :double,
+        Fiddle::TYPE_FLOAT      => :double,
+        Fiddle::TYPE_CHAR       => :int64,
+        Fiddle::TYPE_UCHAR      => :int64,
+        Fiddle::TYPE_SHORT      => :int64,
+        Fiddle::TYPE_USHORT     => :int64,
+        Fiddle::TYPE_INT        => :int64,
+        Fiddle::TYPE_UINT       => :int64,
+        Fiddle::TYPE_LONG       => :int64,
+        Fiddle::TYPE_LONG_LONG  => :int64,
+        # uint64 is a computation type of its own, precisely because int64
+        # cannot carry what it holds; CArray has the array to match.
+        Fiddle::TYPE_ULONG      => :uint64,
+        Fiddle::TYPE_ULONG_LONG => :uint64,
       }.freeze
 
       module_function
@@ -680,6 +687,22 @@ class CArray
                    "`#{loose}` is declared `#{type.text}`, which is a slot in " \
                    "the signature rather than a value; the body cannot read it"
                  end)
+        end
+        # A body is handed its values through the kernel's three scalar buses,
+        # which carry doubles, int64s and complexes.  A uint64 argument is the
+        # one numeric type none of them can carry whole -- that is what having
+        # its own computation type means -- so it is refused here, where the
+        # declaration is, rather than deeper down as a kernel that cannot be
+        # built.  A `uint64_t *` reaches an array of them, and a uint64_t
+        # value comes back out of a body unharmed.
+        names.zip(parameters).each do |parameter, type|
+          next if type.pointer || type.computation != :uint64
+          raise Unsupported,
+                "`#{parameter}` is declared `#{type.text}`, and a value is " \
+                "handed to a body as a double, an int64 or a complex -- a " \
+                "uint64 fits none of them without losing a bit. Take " \
+                "`#{type.text} *` and index it, or take an int64 where the " \
+                "values are small enough to be one"
         end
         types = names.zip(parameters).reject { |_, type| type.pointer }
                      .to_h { |parameter, type| [parameter, type.computation] }

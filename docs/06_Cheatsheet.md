@@ -96,10 +96,18 @@ n = CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }    # the axes named: one per
 d = CArray.jit_contract(:a) { q[a,a] }                 # the diagonal, not the trace
 ```
 
-**An index that repeats is summed**, however often it repeats. One that appears once is free and
-becomes an axis of the result, in the order the block named them -- so
-`{ |j, i, k| ... }` is the transpose. No extent is given: each index's extent
-comes from the axes it addresses.
+**An index that repeats is summed**, however often it repeats. One that appears
+once is free and becomes an axis of the result, in the order the block named
+them -- so `{ |j, i, k| ... }` is the transpose. **An index named in the
+arguments is free however often it appears**, which is the third clause and
+what puts the diagonal and the per-point quantity here rather than in a loop.
+
+Naming one axis names them all: the argument list is the result's axes and
+their order, so a parameter left at a single position is refused there as it is
+under the convention. No extent is given: each index's extent comes from the
+axes it addresses. The sum is split into partial sums, as `jit_for`'s reduction
+is -- `CArray::JIT.reassociate = false` is the serial order, and a contraction
+has no per-call licence of its own.
 
 Assigning into an array of yours says where to put it and in what order its
 axes lie. It does **not** decide what is summed -- so `total[i] = a[i,k]` is
@@ -158,6 +166,7 @@ that was not asked.
 | `jit_stencil` with no array given | the arrays are arguments, not closures |
 | `jit_stencil` with both `type:` and `into:` | `into:` already decides the type |
 | a contraction summing an index that appears once | not the convention; `sum(axis:)` |
+| a parameter at one position once the axes are named | it is free, and the axes are already stated |
 | an index whose axes disagree in extent | the shape check a contraction exists to do |
 | an array both written and read in a contraction | a recurrence -- write it with `jit_for` |
 | a block naming a construct outside the subset | refused by name and line |
@@ -165,7 +174,7 @@ that was not asked.
 ## Knobs
 
 ```ruby
-CArray::JIT.reassociate          #=> true, the default for jit_for reductions
+CArray::JIT.reassociate          #=> true, for jit_for reductions and every contraction
 CArray::JIT.reassociate = false  # serial accumulation everywhere
 
 CArray::JIT.cache_directory      #=> ~/.cache/carray-jit/<version>

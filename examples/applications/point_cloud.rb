@@ -107,6 +107,10 @@ compiled = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
 puts format("  rotation: %.1f ms compiled, %.0f ms as a Ruby loop (%.0fx)",
             compiled * 1e3, interpreted * 1e3, interpreted / compiled)
+# The two agree to the last bit here, which is not the general case: a kernel
+# splits its sum into partial ones, and only the serial loop's order gives the
+# serial loop's answer. The sum is over j, whose extent is three, so the eight
+# partial sums never fill a round and what runs is the serial tail.
 puts "  identical: #{rotated.to_a == reference.to_a}"
 
 # An index whose axes disagree is the mistake this notation exists to catch.

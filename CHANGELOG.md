@@ -39,6 +39,14 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- Fix: a C function may take a `uint64_t *` and return a `uint64_t`.
+  `CArray.jit_function("void (*)(uint64_t *, int64_t)")` reached its cells as
+  an opaque slot rather than an array, and a `uint64_t` return type was
+  refused as "no value a compiled body can produce" -- from a table written
+  before uint64 was a type a kernel computes in. A `uint64_t` parameter taken
+  by value is still refused, and now says why: a value reaches a body as a
+  double, an int64 or a complex, and a uint64 fits none of them whole.
+
 - Fix: a contraction that writes an array it also reads is refused when the
   block gave that array two names -- `y = x`, or a view of something being
   read -- as it always was when one name was used for both. It compiled and
@@ -74,7 +82,7 @@ version you have and a newer one.
 
 - Change: `CArray.jit_contract` sums an index that repeats however often it
   repeats, rather than refusing more than two positions. `q[i,i,i]` is the sum
-  along a cube's long diagonal, and `a[i,k] * a[k,k]` sums `k` at three
+  along a cube's long diagonal, and `a[i,k] * b[k,k]` sums `k` at three
   positions across two arrays. Nothing that compiled before compiles
   differently: what changes is that these are accepted instead of raising
   `CArray::JIT::Unsupported`.

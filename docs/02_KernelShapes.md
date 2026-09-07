@@ -431,7 +431,7 @@ An index cannot be both, and saying so twice is refused. Everything else is as i
 
 
 
-An array that is both written and read is a recurrence rather than a contraction, and is refused with a pointer at `jit_for` too.
+An array that is both written and read is a recurrence rather than a contraction, and is refused with a pointer at `jit_for` too -- under any name it was given. `y = x` is one array with two names, and so is a view of something being read; both are followed to the memory they share rather than compared by name.
 
 ### The contraction without the block
 
