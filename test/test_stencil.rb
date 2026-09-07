@@ -219,6 +219,32 @@ class TestStencil < Minitest::Test
     assert_equal(source[2, 2].to_i, into[2, 2])
   end
 
+  # Writing into the array the window reads is not a pass over it: the cell
+  # written is a neighbour a later cell reaches, so what comes back depends on
+  # the order the cells were taken in.  The answer was wrong and said nothing.
+  def test_into_may_not_be_the_array_the_window_reads
+    source = CArray.double(6) { |i| (i + 1.0) ** 2 }
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_stencil(source, into: source) { |a| (a[-1] + a[0] + a[1]) / 3 }
+    end
+    assert_match(/a cell written there is one a later cell reads/, error.message)
+
+    view = source[nil]
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_stencil(source, into: view) { |a| (a[-1] + a[0] + a[1]) / 3 }
+    end
+    assert_match(/a stencil writes into an array of its own/, error.message)
+  end
+
+  # A window that reaches nowhere reads only the cell it is on, so there is no
+  # later cell to disturb and writing in place says what it means.
+  def test_into_may_be_the_array_when_the_window_reaches_nowhere
+    source = CArray.double(4).seq!(1.0)
+    returned = CArray.jit_stencil(source, into: source) { |a| a[0] * 2 }
+    assert_same(source, returned)
+    assert_equal([2.0, 4.0, 6.0, 8.0], source.to_a)
+  end
+
   # A missing cell reaches as far as the window does, and no further: the
   # cell itself is computed from cells that are all there.
   def test_a_missing_cell_propagates_through_the_window

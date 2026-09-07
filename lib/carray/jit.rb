@@ -581,9 +581,16 @@ class CArray
       end
 
       # An index is interpolated into the source this writes, so it has to be
-      # something Ruby reads back as a name.
+      # a name Ruby reads back as a local variable.  `:end` and `:do` would
+      # not parse at all, and `:nil` and `:self` would come back as something
+      # else -- all of them as an error about a source the caller never wrote.
       def index_name? (name)
-        name.is_a?(Symbol) && name.to_s.match?(/\A[a-z_][A-Za-z0-9_]*\z/)
+        return false unless name.is_a?(Symbol)
+        text = name.to_s
+        return false unless text.match?(/\A[a-z_][A-Za-z0-9_]*\z/)
+        parsed = Prism.parse("#{text} = 1")
+        parsed.errors.empty? &&
+          parsed.value.statements.body.first.is_a?(Prism::LocalVariableWriteNode)
       end
 
       # What a contraction is once its block has been read: a source, the
@@ -614,6 +621,7 @@ class CArray
                          free_indices: free_indices,
                          cell_names: cell_names(arrays))
 
+        refuse_aliased_result(kernel, arrays)
         extents = contraction_extents(kernel, arrays)
         if kernel.masked
           kernel.written_arrays.each do |name|
@@ -623,6 +631,35 @@ class CArray
         end
         kernel.call(arrays, scalars, extents, c_functions)
         result || kernel
+      end
+
+      # An array a contraction writes and also reads is a recurrence, which
+      # the analyzer refuses -- but it compares the names a block gave them,
+      # and two names may be one array.  `x = a` is one, and so is a view of
+      # something being read: cells reached before the write see the old value
+      # and cells reached after see the new one, so the answer depends on the
+      # order and is not the contraction that was asked for.
+      #
+      # This is where the arrays themselves are known, so it is where the
+      # question can be asked of them rather than of their names.  Views are
+      # followed to what they are views of, since that is the memory two names
+      # would share.
+      def refuse_aliased_result (kernel, arrays)
+        kernel.written_arrays.each do |written|
+          target = root_of(arrays.fetch(written))
+          arrays.each do |name, array|
+            next if name == written
+            next unless root_of(array).equal?(target)
+            raise Unsupported,
+                  "`#{written}` and `#{name}` are the same array, which this " \
+                  "both writes and reads; that is a recurrence rather than a " \
+                  "contraction, and is written with jit_for"
+          end
+        end
+      end
+
+      def root_of (array)
+        array.respond_to?(:root_array) ? array.root_array : array
       end
 
       # A contraction with nothing to assign into needs its result sized and
@@ -894,6 +931,20 @@ class CArray
                 "the window reaches #{reach.inspect} and the arrays are " \
                 "#{shape.inspect}, so there is no cell where the window is " \
                 "inside the array"
+        end
+        # Writing into an array a window reads is not a pass over the array:
+        # a cell written here is a neighbour a later cell reads, so what comes
+        # back depends on the order the cells were reached in.  A window that
+        # reaches nowhere is not a stencil, and is the one case where writing
+        # in place says what it means.
+        if into && reach.any? { |low, high| !low.zero? || !high.zero? }
+          aliased = given.find { |_, array| root_of(array).equal?(root_of(into)) }
+          if aliased
+            raise Unsupported,
+                  "`into:` is the array `#{aliased.first}` reaches its window " \
+                  "into, and a cell written there is one a later cell reads; " \
+                  "a stencil writes into an array of its own"
+          end
         end
         result.mask = 0 if (kernel.masked || border == :mask) && !result.has_mask?
         mark_frame(result, bounds, shape) if border == :mask

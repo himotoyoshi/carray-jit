@@ -39,6 +39,18 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- Fix: a contraction that writes an array it also reads is refused when the
+  block gave that array two names -- `y = x`, or a view of something being
+  read -- as it always was when one name was used for both. It compiled and
+  returned an answer that depended on the order the cells were reached in.
+  `CArray::JIT.contract_terms` refuses `into:` for the same reason. Write it
+  with `jit_for`, which is what a recurrence is for.
+
+- Fix: `CArray.jit_stencil(source, into: source)` is refused rather than
+  computing a pass whose cells feed the ones after them. A window that reaches
+  nowhere -- one that reads only the cell it is on -- still writes in place, as
+  it always did.
+
 - New: `CArray::JIT.contract_terms` runs the contraction a structure describes
   rather than one a block writes --
   `CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]], free: [:i, :j])`

@@ -162,6 +162,34 @@ class TestContractTerms < Minitest::Test
                  })
   end
 
+  # `into:` is written and the terms are read, so the same array in both is
+  # the recurrence the block form refuses -- and the synthesized names would
+  # have hidden it, since they are two names for one array.
+  def test_writing_into_an_array_that_is_also_a_term
+    a, b = operands
+    square = CArray.double(3, 3).seq!(1)
+    assert_match(/are the same array, which this both writes and reads/,
+                 refusal {
+                   CArray::JIT.contract_terms([[square, [:i, :k]], [square, [:k, :j]]],
+                                              free: [:i, :j], into: square)
+                 })
+  end
+
+  # The indices are written into the source this compiles, so a name Ruby
+  # reads as something else is refused where it is given rather than deeper
+  # down, as a complaint about a source the caller never wrote.
+  def test_an_index_named_after_a_keyword
+    a, b = operands
+    [:end, :do, :nil, :self, :class].each do |keyword|
+      assert_match(/the indices of a term are symbols/,
+                   refusal {
+                     CArray::JIT.contract_terms([[a, [keyword, :k]], [b, [:k, :j]]],
+                                                free: [keyword, :j])
+                   },
+                   "`#{keyword}` was accepted")
+    end
+  end
+
   # ---------- contraction_of ----------
 
   def test_what_a_block_is_a_product_of

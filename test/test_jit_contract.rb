@@ -339,6 +339,32 @@ class TestContract < Minitest::Test
     assert_match(/`b` addresses axes of different extents: /, error.message)
   end
 
+  # The analyzer compares the names a block gave its arrays, and two names
+  # may be one array -- `y = x`, or a view of something being read. Then a
+  # cell written is a cell a later one reads, and the answer depends on the
+  # order the loop took.
+  def test_one_array_under_two_names_is_still_a_recurrence
+    b = CArray.double(3, 3).seq!(1)
+    written = CArray.double(3, 3).seq!(1)
+    same = written
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract { |i, j, k| same[i,j] = written[i,k] * b[k,j] }
+    end
+    assert_match(/are the same array, which this both writes and reads/,
+                 error.message)
+    assert_match(/jit_for/, error.message)
+  end
+
+  def test_writing_into_a_view_of_what_is_read
+    b = CArray.double(3, 3).seq!(1)
+    source = CArray.double(3, 3).seq!(1)
+    view = source[nil, nil]
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract { |i, j, k| view[i,j] = source[i,k] * b[k,j] }
+    end
+    assert_match(/are the same array/, error.message)
+  end
+
   def test_a_block_is_required
     error = assert_raises(CArray::JIT::Unsupported) { CArray.jit_contract }
     assert_match(/needs a block/, error.message)
