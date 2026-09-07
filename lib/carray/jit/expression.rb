@@ -16,13 +16,24 @@ class CArray
     # goes back to CArray, which walks it and arrives at the same answer.
     class Expression
 
+      # A kernel that can divide by zero calls ca_zerodiv, which the CArray
+      # extension defines and this object does not.  ELF is content to leave
+      # the name undefined and resolve it when the object is loaded, which is
+      # what the declaration in #source_for assumes; Mach-O refuses to link at
+      # all, so on macOS every expression holding an integer `/` or `%` failed
+      # to compile and was silently handed back to CArray to walk.  The flag
+      # says to look the name up at load time, which is what Ruby builds its
+      # own extensions with and the only thing this object leaves undefined.
+      DYNAMIC_LOOKUP =
+        (RbConfig::CONFIG["host_os"] =~ /darwin/ ? ["-Wl,-undefined,dynamic_lookup"] : []).freeze
+
       # Built the way CArray's own kernels were, since that is what the answer
       # is being compared against.  The Prism front end wants the opposite of
       # this on one point -- it answers to a Ruby loop, which does not fuse a
       # multiply and an add into one rounding, so it compiles with
       # -ffp-contract=off.  Here the reference is the eager kernel, which was
       # built with whatever CArray settled on.
-      FLAGS = ["-fPIC", "-shared", *CArray::BUILD_FLAGS.split].freeze
+      FLAGS = ["-fPIC", "-shared", *CArray::BUILD_FLAGS.split, *DYNAMIC_LOOKUP].freeze
 
       C_TYPES = {
         float64: "double",  float32: "float",
@@ -37,7 +48,9 @@ class CArray
         @kernels = {}
       end
 
-      # Fills `out` and returns true, or writes nothing and returns false.
+      # Fills `out` and returns true, or returns false and leaves it to
+      # CArray.  A decline may have written part of `out` first, which is
+      # what walking it over again then settles.
       def call (plan, out)
         return false unless C_TYPES.key?(plan.data_type)
         aliased = plan.leaves.any? { |array| array.equal?(out) }
@@ -51,6 +64,25 @@ class CArray
           kernel.call(out.elements, *pointers(plan, bases))
         end
         true
+      rescue ZeroDivisionError
+        # A zero divisor is an answer, not a fault: it is what ca_zerodiv --
+        # the only thing a kernel here calls out to -- reports, and the same
+        # expression walked reaches the same place and raises the same error.
+        #
+        # CArray cannot tell the two apart, though.  It catches whatever an
+        # evaluator raises, retires it for the rest of the process and says so
+        # on stderr, which is right for an evaluator that is broken and wrong
+        # for one that has just met a zero.  So this declines instead, and
+        # CArray walks the expression and raises it there.  Anything else
+        # still reaches CArray and still retires this, which is what that net
+        # is for.
+        #
+        # What it costs: a kernel that raised where the walk does not -- over
+        # a masked zero, say -- now reads as slow rather than as wrong, since
+        # the walk answers and nobody sees the difference.  The answer is
+        # right either way, and the masked-divisor test asks the evaluator
+        # directly for that reason.
+        false
       end
 
       private

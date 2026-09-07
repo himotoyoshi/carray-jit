@@ -32,6 +32,17 @@ class TestExpression < Minitest::Test
     CArray.expression_evaluator = kept
   end
 
+  # Whether the evaluator computed the expression itself, or handed it back
+  # for CArray to walk.  Nothing downstream can tell: a decline is answered
+  # by walking the same expression, which arrives at the same values.  So it
+  # is asked directly, the way CArray asks it.
+  def computed? (view)
+    plan = CArray::Fusion.plan(view)
+    out = CArray.new(plan.data_type, view.dim)
+    out.mask = 0 if plan.masked
+    CArray.expression_evaluator.call(plan, out)
+  end
+
   # Computes the expression both ways and compares.  `walked` is the answer
   # CArray reaches by walking; `compiled` is the one this gem reaches.
   #
@@ -142,17 +153,33 @@ class TestExpression < Minitest::Test
     assert_same_answer { CArray.fuse { x % z } }
   end
 
+  # A masked zero has to be stepped over by the kernel, not by the fallback:
+  # declining would reach the same answer by walking, so the test above
+  # cannot tell which one produced it.  This asks the evaluator.
+  def test_the_kernel_is_what_steps_over_a_masked_zero_divisor
+    x = CArray.int32(N) { |i| i + 1 }
+    z = CArray.int32(N) { |i| i % 3 }
+    z[:eq, 0] = UNDEF
+    assert_equal true, computed?(CArray.fuse { x / z })
+  end
+
   def test_an_unmasked_zero_divisor_still_raises
     x = CArray.int32(N) { |i| i + 1 }
     z = CArray.int32(N) { |i| i % 3 }
-    # CArray retires the evaluator on any exception it raises, a legitimate
-    # ZeroDivisionError included, and does not put it back. Left alone that
-    # leaks into whatever test runs next -- test_it_is_registered fails when
-    # it runs after this one -- so the registration is restored here.
-    kept = CArray.expression_evaluator
     assert_raises(ZeroDivisionError) { (CArray.fuse { x / z }).to_ca }
-  ensure
-    CArray.expression_evaluator = kept if kept && CArray.expression_evaluator.nil?
+    # And the evaluator is still there afterwards.  CArray retires an
+    # evaluator that raises, for the rest of the process and with a warning,
+    # so a zero divisor reported out of the kernel would turn one expression
+    # into every later one being walked.
+    registered
+  end
+
+  # The kernel declines rather than reporting it, which is what keeps the
+  # evaluator registered above.
+  def test_an_unmasked_zero_divisor_is_handed_back
+    x = CArray.int32(N) { |i| i + 1 }
+    z = CArray.int32(N) { |i| i % 3 }
+    assert_equal false, computed?(CArray.fuse { x / z })
   end
 
   # -- declining ----------------------------------------------------------

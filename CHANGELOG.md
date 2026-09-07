@@ -21,6 +21,16 @@ Releases are recorded here from 0.1.0, which is the first.
 
 ## 0.1.1 (unreleased)
 
+- Fix: a zero divisor in a `CArray.fuse` expression no longer switches the
+  compiler off. `ZeroDivisionError` was raised as it should be, but CArray
+  read it as the evaluator having failed, said so on stderr and walked every
+  expression for the rest of the process. Nothing to do. `jit_for`,
+  `jit_each` and `jit_map` were never affected.
+
+- Fix: on macOS, a `CArray.fuse` expression holding an integer `/` or `%` is
+  compiled rather than quietly walked. The answer was right either way, so
+  this is speed and nothing to do. Linux was never affected.
+
 - Fix: a program that compiles more than one kernel no longer crashes on
   Linux. Two `jit_each` / `jit_map` / `jit_for` kernels reached in the same
   run could collide, and one would sweep into the other. Nothing to do --
