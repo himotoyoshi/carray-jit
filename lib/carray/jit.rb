@@ -216,13 +216,14 @@ class CArray
     JIT.run_stencil(arrays, block, border, type, into)
   end
 
-  # Returns the contraction the block writes: an index that appears twice
-  # is summed.
+  # Returns the contraction the block writes: a repeated index is summed.
   #
   #   CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
   #
   # Every block parameter is an index.  The ones that appear on the left are
-  # the cells written; the rest -- `k` here -- are summed over.
+  # the cells written; the rest -- `k` here -- are summed over.  An index that
+  # repeats is summed however often it repeats: `q[i,i,i]` is one index read
+  # at three positions, and the sum runs along the cube's long diagonal.
   #
   # No extent is given, because every index's extent is fixed by the axes it
   # addresses; an index whose axes disagree is an error, which is the shape
@@ -236,7 +237,7 @@ class CArray
   # Assigning into an array of your own says where to put it, and in what
   # order its axes lie; it does not decide what is summed.
   #
-  # That an index appearing twice is summed is a statement about *dimensions*,
+  # That a repeated index is summed is a statement about *dimensions*,
   # which is the world the notation comes from: two dimensions met is an inner
   # product, and there is no other reading.  An index that numbers things --
   # a point, a sample, a batch -- is not a dimension, and `x[p,k] * y[p,k]`

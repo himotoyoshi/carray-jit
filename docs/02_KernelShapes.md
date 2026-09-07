@@ -355,7 +355,7 @@ So this is not a faster `sum`. It is a way to write the reduction that has no `s
 
 ## Contraction
 
-`CArray.jit_contract` contracts over a repeated index: **an index that appears twice in the term is summed**. The repetition is the notation -- it is what stands in for the sigma.
+`CArray.jit_contract` contracts over a repeated index: **an index that repeats in the term is summed**. The repetition is the notation -- it is what stands in for the sigma. How often it repeats does not enter into it: `q[i,i,i]` is one index read at three positions, and the sum runs along the cube's long diagonal.
 
 ```ruby
 c = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }   # a matrix product
@@ -384,15 +384,15 @@ Neither form decides what is summed. So a sum along an axis is not a contraction
 ```ruby
 CArray.jit_contract { |i, k| total[i] = a[i,k] }
 #=> `k` appears once, so it is free and must be on the left. A contraction
-#   sums the indices that appear twice; to sum one that does not, write the
-#   loop with jit_for, or use sum(axis:)
+#   sums the indices that repeat; to sum one that does not, write the loop
+#   with jit_for, or use sum(axis:)
 ```
 
 There is nothing in `a[i,k]` standing in for a sigma, and summing anyway would be the `=` quietly meaning something it does not say. `sum(axis: 1)` is that operation, and it is faster than anything written here.
 
 ### Naming the result's axes
 
-That an index appearing twice is summed is a statement about *dimensions*, which is the world the notation comes from: two dimensions met is an inner product, and there is no other reading. An index that numbers things -- a point, a sample, a batch -- is not a dimension. `x[p,k] * y[p,k]` repeating `p` says "the same point", not "sum over points", and the convention cannot tell the two apart. Naming the result's axes says which is meant:
+That a repeated index is summed is a statement about *dimensions*, which is the world the notation comes from: two dimensions met is an inner product, and there is no other reading. An index that numbers things -- a point, a sample, a batch -- is not a dimension. `x[p,k] * y[p,k]` repeating `p` says "the same point", not "sum over points", and the convention cannot tell the two apart. Naming the result's axes says which is meant:
 
 ```ruby
 n = CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }               # one number per point

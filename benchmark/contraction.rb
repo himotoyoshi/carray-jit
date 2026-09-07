@@ -1,6 +1,6 @@
 # What naming a contraction's axes costs.
 #
-# `CArray.jit_contract` sums an index that appears twice.  Naming the result's
+# `CArray.jit_contract` sums an index that repeats.  Naming the result's
 # axes says which indices are *not* summed, which is the only way to write a
 # quantity per point, a diagonal or a batch of products -- there the question
 # is not what the naming costs but what the alternative does, since the

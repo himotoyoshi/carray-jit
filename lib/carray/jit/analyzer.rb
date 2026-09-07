@@ -550,10 +550,9 @@ class CArray
 
       # Turns `c[i,j] = a[i,k] * b[k,j]` into the loops it stands for.
       #
-      # Which indices are summed is not the assignment's business: an index
-      # that appears twice in the term is summed, and that repetition is the
-      # notation -- it is what stands in for the sigma.  An index appearing
-      # once is free.  The left-hand side says where the result goes and in
+      # Which indices are summed is not the assignment's business: a repeated
+      # index is summed, and that repetition is the notation -- it is what
+      # stands in for the sigma.  An index appearing once is free.  The left-hand side says where the result goes and in
       # what order its axes lie; it cannot make an index disappear.
       # The block's value is what every cell of the result gets, so the last
       # expression becomes a write into the result at the cell the loop is on.
@@ -647,8 +646,9 @@ class CArray
       end
 
       # Counts where each index sits on a tensor, on the right-hand side only.
-      # Once is free, twice is summed, and more than twice is not the
-      # convention -- it says nothing about which pair to sum.
+      # Once is free and repeated is summed, however often it repeats: three
+      # positions are not a pair to choose between but one index read at three
+      # of them, and `a[i,i,i]` is the sum along the cube's long diagonal.
       def classify_indices (statements, write)
         counts = Hash.new(0)
         subscripts_of(statements, write).each { |index, _| counts[index] += 1 }
@@ -666,16 +666,8 @@ class CArray
         if @free_indices.any?
           return [@free_indices, @index_names - @free_indices]
         end
-        crowded = counts.select { |_, count| count > 2 }.keys
-        unless crowded.empty?
-          raise Unsupported.new(
-            "#{crowded.map { |name| "`#{name}`" }.join(', ')} appears more " \
-            "than twice; a contraction sums a pair, and there is no pair to " \
-            "choose")
-        end
-
         [@index_names.select { |name| counts[name] == 1 },
-         @index_names.select { |name| counts[name] == 2 }]
+         @index_names.select { |name| counts[name] > 1 }]
       end
 
       # Every subscript on the right-hand side: the summand, and whatever the
@@ -702,10 +694,10 @@ class CArray
           # the convention could not see it.
           named = written.map { |name| ":#{name}" }.join(", ")
           return "#{summed_on_left.map { |name| "`#{name}`" }.join(', ')} " \
-                 "#{summed_on_left.size == 1 ? 'appears' : 'appear'} twice on " \
-                 "the right, so #{summed_on_left.size == 1 ? 'it is' : 'they are'} " \
-                 "summed over and cannot also be free. That an index appearing " \
-                 "twice is summed is the convention for dimensions; an index " \
+                 "#{summed_on_left.size == 1 ? 'is repeated' : 'are repeated'} " \
+                 "on the right, so #{summed_on_left.size == 1 ? 'it is' : 'they are'} " \
+                 "summed over and cannot also be free. That a repeated index " \
+                 "is summed is the convention for dimensions; an index " \
                  "that numbers things -- a point, a sample -- is not one, and " \
                  "naming the result's axes says so: " \
                  "`CArray.jit_contract(#{named})`"
@@ -714,8 +706,8 @@ class CArray
         "#{dropped.map { |name| "`#{name}`" }.join(', ')} " \
         "#{dropped.size == 1 ? 'appears' : 'appear'} once, so " \
         "#{dropped.size == 1 ? 'it is' : 'they are'} free and must be on the " \
-        "left. A contraction sums the indices that appear twice; to sum one " \
-        "that does not, write the loop with jit_for, or use sum(axis:)"
+        "left. A contraction sums the indices that repeat; to sum one that " \
+        "does not, write the loop with jit_for, or use sum(axis:)"
       end
 
       # The sum starts from zero of whatever the summand is; which zero that

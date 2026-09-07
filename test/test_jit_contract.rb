@@ -1,6 +1,6 @@
 require_relative "test_helper"
 
-# The contraction convention: an index that appears twice in the term is summed.
+# The contraction convention: an index repeated in the term is summed.
 #
 #   CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
 #
@@ -132,7 +132,7 @@ class TestContract < Minitest::Test
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| out[i] = a[i,k] * b[i,k] }
     end
-    assert_match(/`i` appears twice on the right, so it is summed over/,
+    assert_match(/`i` is repeated on the right, so it is summed over/,
                  error.message)
   end
 
@@ -145,13 +145,24 @@ class TestContract < Minitest::Test
     assert_match(/`z` names no axis here/, error.message)
   end
 
+  # Three positions are not a pair to choose between: they are one index read
+  # at three of them, and the sum runs along the cube's long diagonal.
   def test_an_index_appearing_more_than_twice
-    a = CArray.double(3, 3, 3).seq!(1)
+    size = 3
+    cube = CArray.double(size, size, size).seq!(1)
     out = CArray.double(1)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_contract { |i| out[0] = a[i,i,i] }
-    end
-    assert_match(/appears more than twice/, error.message)
+    CArray.jit_contract { |i| out[0] = cube[i,i,i] }
+    assert_equal((0...size).sum { |i| cube[i,i,i] }, out[0])
+  end
+
+  # The same index summed while another stays free, read at three positions
+  # across two arrays.
+  def test_an_index_repeated_across_arrays
+    a = CArray.double(3, 3).seq!(1)
+    result = CArray.jit_contract { |i, k| a[i,k] * a[k,k] }
+    expected = (0...3).map { |i| (0...3).sum { |k| a[i,k] * a[k,k] } }
+    assert_equal([3], result.dim)
+    assert_equal(expected, result.to_a)
   end
 
   def test_a_double_contraction
@@ -316,7 +327,7 @@ end
 #
 #   CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }
 #
-# That an index appearing twice is summed is the convention for *dimensions*,
+# That a repeated index is summed is the convention for *dimensions*,
 # where two of them met is an inner product and there is no other reading.  An
 # index that numbers things -- a point, a sample, a batch -- is not a
 # dimension, and repeating it says "the same point" rather than "sum over
@@ -489,7 +500,7 @@ class TestContractNamedAxes < Minitest::Test
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| out[i] = a[i,k] * b[i,k] }
     end
-    assert_match(/`i` appears twice on the right, so it is summed over/,
+    assert_match(/`i` is repeated on the right, so it is summed over/,
                  error.message)
     assert_match(/CArray\.jit_contract\(:i\)/, error.message)
   end

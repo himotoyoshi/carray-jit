@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- Change: `CArray.jit_contract` sums an index that repeats however often it
+  repeats, rather than refusing more than two positions. `q[i,i,i]` is the sum
+  along a cube's long diagonal, and `a[i,k] * a[k,k]` sums `k` at three
+  positions across two arrays. Nothing that compiled before compiles
+  differently: what changes is that these are accepted instead of raising
+  `CArray::JIT::Unsupported`.
+
 - Change: a contraction's sum is split into partial sums, as `jit_for`'s
   reduction and CArray's own reduce kernels are, which makes `jit_contract` as
   fast as the same loop written with `jit_for` rather than three times slower.

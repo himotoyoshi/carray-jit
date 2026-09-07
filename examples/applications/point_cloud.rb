@@ -1,6 +1,6 @@
 # Rotating a point cloud, then projecting it onto a basis
 #
-# Both are sums over an index that appears twice, which is what
+# Both are sums over an index that repeats, which is what
 # `CArray.jit_contract` is: the repeated index is summed, so the notation is the
 # formula.
 #

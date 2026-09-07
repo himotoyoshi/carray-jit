@@ -13,8 +13,8 @@ installed. Every example here runs as written.
 | The same, and you want the result back | `CArray.jit_map` |
 | A cell reads its neighbours, or the one computed before it | `CArray.jit_for` |
 | A cell reads a window, and the edge needs a rule | `CArray.jit_stencil` |
-| An index appears twice and is summed | `CArray.jit_contract` |
-| An index appears twice and is *not* summed -- a point number, a batch | `CArray.jit_contract(:p)`, naming the result's axes |
+| An index repeats and is summed | `CArray.jit_contract` |
+| An index repeats and is *not* summed -- a point number, a batch | `CArray.jit_contract(:p)`, naming the result's axes |
 | Call a C function someone else compiled | `CArray.jit_extern` |
 | Compile a C function of your own | `CArray.jit_function` |
 
@@ -96,7 +96,7 @@ n = CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }    # the axes named: one per
 d = CArray.jit_contract(:a) { q[a,a] }                 # the diagonal, not the trace
 ```
 
-**An index that appears twice is summed.** One that appears once is free and
+**An index that repeats is summed**, however often it repeats. One that appears once is free and
 becomes an axis of the result, in the order the block named them -- so
 `{ |j, i, k| ... }` is the transpose. No extent is given: each index's extent
 comes from the axes it addresses.
@@ -157,8 +157,7 @@ that was not asked.
 | `jit_each` / `jit_map` with block parameters | an index means `jit_for` |
 | `jit_stencil` with no array given | the arrays are arguments, not closures |
 | `jit_stencil` with both `type:` and `into:` | `into:` already decides the type |
-| a contraction summing an index that appears once | not the convention; `sum(axis:)` |
-| an index appearing more than twice | there is no pair to sum |
+| a contraction summing an index that appears once | not the convention; `sum(axis:)`, or name the result's axes |
 | an index whose axes disagree in extent | the shape check a contraction exists to do |
 | an array both written and read in a contraction | a recurrence -- write it with `jit_for` |
 | a block naming a construct outside the subset | refused by name and line |
