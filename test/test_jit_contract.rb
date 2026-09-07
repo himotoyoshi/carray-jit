@@ -311,3 +311,200 @@ class TestContract < Minitest::Test
   end
 
 end
+
+# The explicit form: the result's axes are named at the call site.
+#
+#   CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }
+#
+# That an index appearing twice is summed is the convention for *dimensions*,
+# where two of them met is an inner product and there is no other reading.  An
+# index that numbers things -- a point, a sample, a batch -- is not a
+# dimension, and repeating it says "the same point" rather than "sum over
+# points".  Naming the result's axes says which is meant, and then nothing is
+# counted: a named index is free however often it appears, and every parameter
+# left over is summed.
+class TestContractNamedAxes < Minitest::Test
+
+  # The index that numbers the points stays free, though it appears twice.
+  def test_a_quantity_per_point
+    np, nk = 4, 3
+    x = CArray.double(np, nk).seq!(1)
+    y = CArray.double(np, nk).seq!(0.5)
+    result = CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }
+
+    assert_equal([np], result.dim)
+    expected = (0...np).map { |p| (0...nk).sum { |k| x[p,k] * y[p,k] } }
+    assert_equal(expected, result.to_a)
+  end
+
+  # The same term is the trace under the convention and the diagonal when the
+  # axis is named -- which is the split einsum makes between `ii` and `ii->i`.
+  def test_the_diagonal_beside_the_trace
+    square = CArray.double(4, 4).seq!(1)
+    diagonal = CArray.jit_contract(:a) { square[a,a] }
+    trace = CArray.jit_contract { |a| square[a,a] }
+
+    assert_equal([4], diagonal.dim)
+    assert_equal((0...4).map { |a| square[a,a] }, diagonal.to_a)
+    assert_equal([1], trace.dim)
+    assert_equal((0...4).sum { |a| square[a,a] }, trace[0])
+  end
+
+  # A batch of matrix products: `b` numbers the matrices and is not summed,
+  # while `k` -- the block's one parameter -- is.
+  def test_a_batch_of_products
+    nb, ni, nk, nj = 2, 3, 4, 5
+    left = CArray.double(nb, ni, nk).seq!(1)
+    right = CArray.double(nb, nk, nj).seq!(0.5)
+    result = CArray.jit_contract(:b, :i, :j) { |k| left[b,i,k] * right[b,k,j] }
+
+    assert_equal([nb, ni, nj], result.dim)
+    expected = (0...nb).map { |b|
+      (0...ni).map { |i|
+        (0...nj).map { |j| (0...nk).sum { |k| left[b,i,k] * right[b,k,j] } } } }
+    assert_equal(expected, result.to_a)
+  end
+
+  # The argument list is the axis order, as the parameter list is under the
+  # convention -- so naming the axes where the convention would have found
+  # them anyway is how the result comes out in another order.
+  def test_the_argument_order_gives_the_axis_order
+    a = CArray.double(3, 4).seq!(1)
+    b = CArray.double(4, 2).seq!(1)
+    convention = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }
+    named = CArray.jit_contract(:i, :j) { |k| a[i,k] * b[k,j] }
+    swapped = CArray.jit_contract(:j, :i) { |k| a[i,k] * b[k,j] }
+
+    assert_equal(convention.to_a, named.to_a)
+    assert_equal([2, 3], swapped.dim)
+    assert_equal(convention.transpose.to_a, swapped.to_a)
+  end
+
+  # With every index named there is nothing left to sum, and the block takes
+  # no parameters at all.
+  def test_every_index_named_sums_nothing
+    x = CArray.double(2, 3).seq!(1)
+    result = CArray.jit_contract(:p, :k) { x[p,k] * x[p,k] }
+    assert_equal([2, 3], result.dim)
+    assert_equal(x.to_a.map { |row| row.map { |v| v * v } }, result.to_a)
+  end
+
+  # Assigning into an array of your own says where the result goes, as it
+  # does under the convention.
+  def test_the_assigned_form
+    nb, ni, nk, nj = 2, 3, 4, 2
+    left = CArray.double(nb, ni, nk).seq!(1)
+    right = CArray.double(nb, nk, nj).seq!(0.5)
+    out = CArray.double(nb, ni, nj)
+    CArray.jit_contract(:b, :i, :j) { |k| out[b,i,j] = left[b,i,k] * right[b,k,j] }
+
+    expected = CArray.jit_contract(:b, :i, :j) { |k| left[b,i,k] * right[b,k,j] }
+    assert_equal(expected.to_a, out.to_a)
+  end
+
+  def test_the_named_form_keeps_integers_integral
+    square = CArray.int64(3, 3).seq!(1)
+    diagonal = CArray.jit_contract(:a) { square[a,a] }
+    assert_equal("int64", diagonal.data_type_name)
+    assert_equal([1, 5, 9], diagonal.to_a)
+  end
+
+  # A missing cell is missing in whatever the sum over it reaches.
+  def test_a_masked_cell
+    x = CArray.double(2, 3).seq!(1)
+    x[0,1] = UNDEF
+    result = CArray.jit_contract(:p) { |k| x[p,k] * x[p,k] }
+    assert_equal(UNDEF, result[0])
+    assert_equal((0...3).sum { |k| x[1,k] * x[1,k] }, result[1])
+  end
+
+  # The naming is not part of the block's source, so it has to be part of what
+  # the cache keeps kernels apart by.
+  def test_the_same_block_under_two_namings
+    x = CArray.double(2, 3).seq!(1)
+    2.times do
+      assert_equal([2], CArray.jit_contract(:p) { |k| x[p,k] * x[p,k] }.dim)
+      assert_equal([2, 3], CArray.jit_contract(:p, :k) { x[p,k] * x[p,k] }.dim)
+      assert_equal([1], CArray.jit_contract { |p, k| x[p,k] * x[p,k] }.dim)
+    end
+  end
+
+  # An index is one thing or the other: an axis of the result, or summed.
+  def test_an_index_named_and_also_a_parameter
+    x = CArray.double(2, 3).seq!(1)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:p) { |p, k| x[p,k] * x[p,k] }
+    end
+    assert_match(/`p` is named as an axis of the result and again as a block parameter/,
+                 error.message)
+  end
+
+  def test_a_named_axis_that_names_no_axis
+    a = CArray.double(3, 4).seq!(1)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:q, :i) { |k| a[i,k] }
+    end
+    assert_match(/`q` names no axis here/, error.message)
+  end
+
+  def test_the_extents_still_come_from_the_axes
+    a = CArray.double(3, 4).seq!(1)
+    b = CArray.double(2, 4).seq!(1)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:p) { |k| a[p,k] * b[p,k] }
+    end
+    assert_match(/`p` addresses axes of different extents: /, error.message)
+  end
+
+  def test_the_arguments_are_symbols
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract("p") { |k| k }
+    end
+    assert_match(/named as symbols/, error.message)
+  end
+
+  def test_an_axis_named_twice
+    x = CArray.double(2, 3).seq!(1)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:p, :p) { |k| x[p,k] * x[p,k] }
+    end
+    assert_match(/`p` names more than one axis of the result/, error.message)
+  end
+
+  # The convention refuses a sum along an axis because there is nothing in
+  # `a[i,k]` standing in for a sigma.  Naming the result's axes is that
+  # statement, so the same term is accepted -- `sum(axis:)` is still the
+  # faster way to say it.
+  def test_a_sum_along_an_axis_once_the_axes_are_named
+    a = CArray.double(3, 4).seq!(1)
+    assert_equal(a.sum(axis: 1).to_a,
+                 CArray.jit_contract(:i) { |k| a[i,k] }.to_a)
+  end
+
+  # Where the convention refuses, it says what naming the axis would do.
+  def test_the_conventions_refusal_points_here
+    a = CArray.double(3, 4).seq!(1)
+    b = CArray.double(3, 4).seq!(2)
+    out = CArray.double(3)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract { |i, k| out[i] = a[i,k] * b[i,k] }
+    end
+    assert_match(/`i` appears twice on the right, so it is summed over/,
+                 error.message)
+    assert_match(/CArray\.jit_contract\(:i\)/, error.message)
+  end
+
+  # The hint names the whole left-hand side, which is what the result's axes
+  # are -- not only the index the convention tripped over.
+  def test_the_refusal_names_every_axis_of_the_result
+    a = CArray.double(3, 4).seq!(1)
+    b = CArray.double(3, 4).seq!(2)
+    v = CArray.double(2).seq!(1)
+    out = CArray.double(3, 2)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract { |i, j, k| out[i,j] = a[i,k] * b[i,k] * v[j] }
+    end
+    assert_match(/CArray\.jit_contract\(:i, :j\)/, error.message)
+  end
+
+end

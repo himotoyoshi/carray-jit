@@ -14,6 +14,7 @@ installed. Every example here runs as written.
 | A cell reads its neighbours, or the one computed before it | `CArray.jit_for` |
 | A cell reads a window, and the edge needs a rule | `CArray.jit_stencil` |
 | An index appears twice and is summed | `CArray.jit_contract` |
+| An index appears twice and is *not* summed -- a point number, a batch | `CArray.jit_contract(:p)`, naming the result's axes |
 | Call a C function someone else compiled | `CArray.jit_extern` |
 | Compile a C function of your own | `CArray.jit_function` |
 
@@ -91,6 +92,8 @@ is what the cell gets.
 ```ruby
 c = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }   # a matrix product
     CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
+n = CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }    # the axes named: one per point
+d = CArray.jit_contract(:a) { q[a,a] }                 # the diagonal, not the trace
 ```
 
 **An index that appears twice is summed.** One that appears once is free and

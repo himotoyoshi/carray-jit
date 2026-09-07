@@ -233,10 +233,15 @@ class CArray
       # returned, and it reaches no array.  It is the smallest of the three --
       # with no cell to address there is no extent, no direction and no mask,
       # so most of what follows never runs.
+      # `free_indices` are the result's axes, named at the call site rather
+      # than taken from the block's parameters.  Naming them puts the
+      # contraction in its explicit form: these are free however often they
+      # appear, every parameter left is summed, and nothing is counted.
       def initialize (source, node: nil, array_names: [], c_functions: {}, rank: nil,
                       steps: nil, contract: false, result: nil, function: false,
                       pointers: {}, map: false, cell_names: [],
-                      recursion: nil, windows: [], returns: true)
+                      recursion: nil, windows: [], returns: true,
+                      free_indices: [])
         @source = source
         @node = node
         @array_names = array_names
@@ -293,6 +298,7 @@ class CArray
         @given_rank = rank
         @steps = steps
         @contract = contract
+        @free_indices = free_indices
         @result = result
         @contracted_names = []
         @free_names = []
@@ -653,6 +659,13 @@ class CArray
             "#{missing.map { |name| "`#{name}`" }.join(', ')} " \
             "#{missing.size == 1 ? 'names no axis' : 'name no axis'} here")
         end
+        # The explicit form counts nothing.  The result's axes were named, so
+        # they are free however often they appear -- twice is what a point
+        # number does, and `square[a,a]` is the diagonal rather than a trace --
+        # and every parameter left over is summed.
+        if @free_indices.any?
+          return [@free_indices, @index_names - @free_indices]
+        end
         crowded = counts.select { |_, count| count > 2 }.keys
         unless crowded.empty?
           raise Unsupported.new(
@@ -684,10 +697,18 @@ class CArray
       def describe_index_mismatch (written, free, summed)
         summed_on_left = written & summed
         unless summed_on_left.empty?
+          # What to name is the whole left-hand side, in its order: those are
+          # the result's axes, and the one that repeats is only the reason
+          # the convention could not see it.
+          named = written.map { |name| ":#{name}" }.join(", ")
           return "#{summed_on_left.map { |name| "`#{name}`" }.join(', ')} " \
                  "#{summed_on_left.size == 1 ? 'appears' : 'appear'} twice on " \
                  "the right, so #{summed_on_left.size == 1 ? 'it is' : 'they are'} " \
-                 "summed over and cannot also be free"
+                 "summed over and cannot also be free. That an index appearing " \
+                 "twice is summed is the convention for dimensions; an index " \
+                 "that numbers things -- a point, a sample -- is not one, and " \
+                 "naming the result's axes says so: " \
+                 "`CArray.jit_contract(#{named})`"
         end
         dropped = free - written
         "#{dropped.map { |name| "`#{name}`" }.join(', ')} " \
@@ -774,6 +795,26 @@ class CArray
           @parameter_names = requireds.map(&:name)
           @index_names = []
           @outer_names = []
+          return
+        end
+
+        if @contract && @free_indices.any?
+          # The explicit form: the result's axes were named at the call site,
+          # so what the block names are the indices that are summed -- and a
+          # contraction may now take no parameters at all, which is how the
+          # diagonal of one array is written.
+          summed = requireds.map(&:name)
+          both = @free_indices & summed
+          unless both.empty?
+            raise Unsupported.new(
+              "#{both.map { |name| "`#{name}`" }.join(', ')} " \
+              "#{both.size == 1 ? 'is' : 'are'} named as " \
+              "#{both.size == 1 ? 'an axis' : 'axes'} of the result and again " \
+              "as a block parameter; the parameters are the indices that are " \
+              "summed")
+          end
+          @index_names = @free_indices + summed
+          @outer_names = @index_names.dup
           return
         end
 
@@ -1661,12 +1702,10 @@ class CArray
       # An index expression is `j`, `j + c` or `j - c`, where `j` is any index
       # in scope, so that the offset is a compile-time constant.
       def read_subscript (node, location)
-        if node.is_a?(Prism::LocalVariableReadNode) && index_in_scope?(node.name)
-          return [node.name, 0]
-        end
+        name = index_name(node)
+        return [name, 0] if name && index_in_scope?(name)
         if node.is_a?(Prism::CallNode) && [:+, :-].include?(node.name) &&
-           node.receiver.is_a?(Prism::LocalVariableReadNode) &&
-           index_in_scope?(node.receiver.name)
+           (receiver = index_name(node.receiver)) && index_in_scope?(receiver)
           return walked_subscript(node)
         end
         # Anything else pins the axis at a position the loop does not walk:
@@ -1739,6 +1778,20 @@ class CArray
         end
         offset = pinned_subscript(argument)
         [receiver.name, node.name == :+ ? offset : UnaryMinus.new(offset)]
+      end
+
+      # An index the block names as a parameter reads as a local variable.
+      # One named at the call site is a parameter of nothing, so Ruby reads it
+      # as a method call -- or as a local variable, where the scope the block
+      # was written in happens to have one by that name.  Both spell the same
+      # index, and which it is says nothing about what it means.
+      def index_name (node)
+        case node
+        when Prism::LocalVariableReadNode
+          node.name
+        when Prism::CallNode
+          node.name if node.receiver.nil? && node.arguments.nil? && node.block.nil?
+        end
       end
 
       def index_in_scope? (name)

@@ -236,17 +236,48 @@ class CArray
   # Assigning into an array of your own says where to put it, and in what
   # order its axes lie; it does not decide what is summed.
   #
+  # That an index appearing twice is summed is a statement about *dimensions*,
+  # which is the world the notation comes from: two dimensions met is an inner
+  # product, and there is no other reading.  An index that numbers things --
+  # a point, a sample, a batch -- is not a dimension, and `x[p,k] * y[p,k]`
+  # repeating `p` says "the same point", not "sum over points".  Naming the
+  # result's axes says which is meant:
+  #
+  #   CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }               # one number per point
+  #   CArray.jit_contract(:a) { square[a,a] }                       # the diagonal, not the trace
+  #   CArray.jit_contract(:b, :i, :j) { |k| u[b,i,k] * v[b,k,j] }   # a batch of products
+  #
+  # The arguments are the result's axes, in that order; the block's parameters
+  # are then the indices that are summed, and nothing is counted.  A named
+  # index stays free however often it appears, which is what puts the diagonal
+  # and the per-point quantity inside the notation instead of outside it.
+  # Naming them is allowed even where the convention would have reached the
+  # same answer, which is how the result's axes are put in another order.
+  #
   # The block is read and compiled, never called, so it is not yielded to.
   #
+  # @param free_indices [Array<Symbol>] the result's axes, in order; empty to
+  #   let the convention decide, which is an index appearing once.
   # @return [CArray, CArray::JIT::CompiledKernel] the allocated result when the block
   #   assigns into nothing, otherwise the compiled kernel.
   # @raise [CArray::JIT::Unsupported] when the block falls outside the
   #   recognized subset, or an index's axes disagree.
-  def self.jit_contract (&block)
+  def self.jit_contract (*free_indices, &block)
     unless block
       raise JIT::Unsupported, "jit_contract needs a block"
     end
-    JIT.run_contraction(block)
+    unless free_indices.all? { |name| name.is_a?(Symbol) }
+      raise JIT::Unsupported,
+            "jit_contract's arguments are the result's axes, named as symbols, " \
+            "as in `CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }`"
+    end
+    repeated = free_indices.tally.select { |_, count| count > 1 }.keys
+    unless repeated.empty?
+      raise JIT::Unsupported,
+            "#{repeated.map { |name| "`#{name}`" }.join(', ')} names more than " \
+            "one axis of the result; each axis is one index"
+    end
+    JIT.run_contraction(block, free_indices)
   end
 
   # @!endgroup
@@ -328,12 +359,15 @@ class CArray
       RESULT = :__contraction_result
 
       # @private
-      def run_contraction (block)
+      def run_contraction (block, free_indices = [])
         node, source, origin = read_block(block)
-        names = capture_names(source, node)
+        # An index named at the call site is not a parameter of the block, so
+        # the block reaches for it the way it reaches for a captured value.
+        # It is neither: it is an index, and it is answered here.
+        names = capture_names(source, node) - free_indices
         arrays, scalars, c_functions = split_captures(names, binding_of(block))
 
-        result = allocate_result(source, node, arrays, scalars)
+        result = allocate_result(source, node, arrays, scalars, free_indices)
         arrays = arrays.merge(RESULT => result) if result
 
         kernel = compile(source,
@@ -346,6 +380,7 @@ class CArray
                          masked: arrays.each_value.any? { |array| array.has_mask? },
                          contract: true,
                          result: RESULT,
+                         free_indices: free_indices,
                          cell_names: cell_names(arrays))
 
         extents = contraction_extents(kernel, arrays)
@@ -363,8 +398,8 @@ class CArray
       # typed before there is a kernel to ask, so the block is analyzed once
       # without being compiled.  Returns nil when the block assigns into an
       # array of its own.
-      def allocate_result (source, node, arrays, scalars)
-        probe = probe_contraction(source, node, arrays, scalars)
+      def allocate_result (source, node, arrays, scalars, free_indices = [])
+        probe = probe_contraction(source, node, arrays, scalars, free_indices)
         return nil unless probe
         free, index_axes, type = probe
         shape = free.map do |index|
@@ -385,13 +420,17 @@ class CArray
       end
 
       # @private
-      def probe_contraction (source, node, arrays, scalars)
+      def probe_contraction (source, node, arrays, scalars, free_indices = [])
         key = [source, arrays.transform_values(&:data_type_name),
                scalars.transform_values { |value| TypeAssignment.scalar_type(value) },
+               # The result's axes are named at the call site rather than in
+               # the block, so the same source under another naming is another
+               # kernel -- and another probe.
+               free_indices,
                cell_names(arrays)]
         cached = probe_cache[key]
         return cached unless cached.nil?
-        probe_cache[key] = build_probe(source, node, arrays, scalars)
+        probe_cache[key] = build_probe(source, node, arrays, scalars, free_indices)
       end
 
       # @private
@@ -400,10 +439,10 @@ class CArray
       end
 
       # @private
-      def build_probe (source, node, arrays, scalars)
+      def build_probe (source, node, arrays, scalars, free_indices = [])
         storage_types = arrays.transform_values(&:data_type_name)
         analyzer = Analyzer.new(source, node: node, array_names: arrays.keys,
-                                contract: :probe,
+                                contract: :probe, free_indices: free_indices,
                                 cell_names: cell_names(arrays))
         return false if analyzer.body.statements.last.is_a?(ElementWrite)
 
@@ -896,7 +935,8 @@ class CArray
       def compile (source, node: nil, origin: nil, array_names:, storage_types:,
                    scalar_values:, c_functions: {}, masked: false, rank: nil,
                    steps: nil, contract: false, result: nil, map: false,
-                   reassociate: false, cell_names: [], windows: [], border: nil)
+                   reassociate: false, cell_names: [], windows: [], border: nil,
+                   free_indices: [])
         # A kernel that mentions UNDEF is a masked one whatever its arrays
         # carry, and deciding that here means no caller has to remember it.
         masked ||= mentions_undef(source, node)
@@ -909,6 +949,10 @@ class CArray
                # symbol, which stands for its body -- see `CFunction#kernel_key`.
                c_functions.transform_values(&:kernel_key),
                masked, rank, steps, contract, result, map,
+               # A contraction whose free indices were named is not the kernel
+               # the same source is without them, nor with them in another
+               # order: the naming decides what is summed and what comes out.
+               free_indices,
                # Which names are read at their one cell rather than walked:
                # the same source over a CScalar is a different kernel from
                # the same source over a one-cell CArray.
@@ -929,7 +973,7 @@ class CArray
         registry[key] = build(source, node, array_names, storage_types,
                               scalar_values, c_functions, masked, rank, steps,
                               contract, result, origin, map, reassociate,
-                              cell_names, windows, border)
+                              cell_names, windows, border, free_indices)
       end
 
       # A kernel that mentions UNDEF is a masked kernel whatever its arrays
@@ -1057,11 +1101,11 @@ class CArray
       def build (source, node, array_names, storage_types, scalar_values, c_functions,
                  masked, rank = nil, steps = nil, contract = false, result = nil,
                  origin = nil, map = false, reassociate = false,
-                 cell_names = [], windows = [], border = nil)
+                 cell_names = [], windows = [], border = nil, free_indices = [])
         analyzer = Analyzer.new(source, node: node, array_names: array_names,
                                 c_functions: c_functions,
                                 rank: rank, steps: steps, contract: contract,
-                                result: result, map: map,
+                                result: result, map: map, free_indices: free_indices,
                                 cell_names: cell_names, windows: windows)
         assignment = TypeAssignment.new(analyzer.body, storage_types,
                                         scalar_values, c_functions)

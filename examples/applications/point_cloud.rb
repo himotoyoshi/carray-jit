@@ -8,6 +8,11 @@
 #   cov[a,b]     = sum_p c[p,a] c[p,b]           the covariance of the cloud
 #   coeff[p,m]   = sum_k x[p,k] basis[m,k]       project onto a basis
 #   recon[p,k]   = sum_m coeff[p,m] basis[m,k]   and build the points back
+#   norm[p]      = sum_k x[p,k] x[p,k]           how far each point is out
+#
+# The last one is where the convention needs help: p appears twice there as
+# well, but it numbers the points rather than naming a dimension, so it is
+# named as the result's axis and only k is summed.
 #
 # Written as loops these are three lines each and easy to get subtly wrong: an
 # index in the wrong place transposes the answer rather than failing.  Here the
@@ -69,17 +74,20 @@ puts format("  dropping the third direction costs %.2e per point", residual)
 puts format("  which is the variance that was in it: %.2e",
             rotated[nil, 2].stddev ** 2)
 
-# The distance of every point from the origin is *not* a contraction, and this
-# is the place the convention bites: in `x[p,k] * x[p,k]` the index p appears
-# twice as well, so it would be summed too and the answer would be one number.
-# A quantity per point is a per-cell loop, and says so.
-squared = CArray.double(count)
-CArray.jit_for(count) { |p|
-  total = 0.0
-  (0...3).each { |k| total = total + rotated[p, k] * rotated[p, k] }
-  squared[p] = total
-}
+# The distance of every point from the origin, and the place the convention
+# alone would say the wrong thing: in `x[p,k] * x[p,k]` the index p appears
+# twice, so it would be summed as well and the answer would be one number for
+# the whole cloud.  p is not a dimension, though -- repeating it says "the
+# same point" -- so it is named as the result's axis, and then k is the only
+# index left to sum.
+squared = CArray.jit_contract(:p) { |k| rotated[p,k] * rotated[p,k] }
 puts format("  furthest point %.4f away", Math.sqrt(squared.max))
+
+# Name nothing and the same term is the other reading, which is the number
+# the per-point one adds up to.
+whole = CArray.jit_contract { |p, k| rotated[p,k] * rotated[p,k] }
+puts format("  the cloud's total %.1f, and per point summed again %.1f",
+            whole[0], squared.sum)
 
 # The same rotation written as a Ruby loop.
 reference = CArray.double(count, 3)

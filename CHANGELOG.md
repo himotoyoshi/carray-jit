@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- New: `CArray.jit_contract` takes the result's axes as symbols, and then the
+  block's parameters are the indices that are summed and nothing is counted:
+  `CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }` is one number per point,
+  and `CArray.jit_contract(:a) { q[a,a] }` is the diagonal rather than the
+  trace. A named index stays free however often it appears, which is what an
+  index that numbers things -- a point, a sample, a batch -- does. Naming the
+  axes also states their order. With no arguments nothing changes: an index
+  appearing twice is summed, as before.
+
 - New: `CArray::JIT.cache_root = "path"` puts an application's compiled
   kernels somewhere of its own, rather than in the cache shared under the home
   directory. Say it before the first kernel is compiled; the path is expanded
