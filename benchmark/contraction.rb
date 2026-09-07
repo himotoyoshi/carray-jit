@@ -11,11 +11,10 @@
 # produced.  The first pair below is that check, and the second is the same
 # question asked where a call is all there is.
 #
-# What the numbers after those two say is what a contraction trades, which is
-# not what the naming trades: the same work written out with jit_for is faster
-# under either spelling, so what it costs is being a contraction rather than
-# being named.  Naming buys the shorter spelling, and one call where there
-# would otherwise be a Ruby loop of them.
+# What the numbers after those two say is what a contraction is worth against
+# the alternatives: the same work written out with jit_for, the reduction
+# CArray already has, and -- where the batch index is named -- a Ruby loop of
+# calls, which is the one place the naming itself buys speed.
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
@@ -37,8 +36,10 @@ CArray.jit_contract(:i, :j) { |t| left[i,t] * right[t,j] }
 convention = timed(SAMPLES) { CArray.jit_contract { |i, j, t| left[i,t] * right[t,j] } }
 named = timed(SAMPLES) { CArray.jit_contract(:i, :j) { |t| left[i,t] * right[t,j] } }
 
-# And the same product as a loop, which is where a contraction's own cost
-# shows: both spellings above are jit_contract, and this one is not.
+# And the same product as a loop.  Both spellings above are jit_contract and
+# this one is not, so it says what the notation costs against writing the
+# loop -- which, since a contraction's sum is split into partial ones as this
+# loop's is, is nothing.
 product = CArray.double(n, m)
 CArray.jit_for(n, m) { |i, j|
   accumulator = 0.0

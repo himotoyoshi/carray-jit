@@ -419,4 +419,6 @@ An array that is both written and read is a recurrence rather than a contraction
 
 There is no BLAS for an arbitrary contraction, which is rather the point: this compiles to a plain nest of loops and is slower than a tuned GEMM, but it is one line and it exists.
 
-Its sum is serial. `jit_for`'s reduction takes partial sums by default and `jit_contract`'s does not, which is the wrong way round -- a contraction is a sum with no loop written anywhere for it to agree with -- and stays that way only until `jit_contract` has a meaning in the core to be licensed against.
+Its sum is split into partial ones, as `jit_for`'s reduction is and as CArray's own reduce kernels are. A contraction is a sum with no loop written anywhere for its order to agree with -- the notation says which indices are summed and nothing about in what order -- so there is nothing being overridden, which is a weaker claim than the one `jit_for` makes over a loop somebody wrote. It is also the whole of the difference between a contraction and that loop: a 400 x 400 x 400 product took 47 ms serial against `jit_for`'s 16, and takes 16 split (`benchmark/contraction.rb`).
+
+`CArray::JIT.reassociate = false`, and `CARRAY_JIT_REASSOCIATE=0` for a whole process, ask for the serial order here as they do everywhere -- which is the order a Ruby loop takes, and what to use to compare one against the other. Unlike `jit_for`, `jit_contract` has no per-call licence: a contraction names no loop, so there is no loop at the call site to license.

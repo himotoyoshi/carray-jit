@@ -202,6 +202,64 @@ class TestReassociation < Minitest::Test
     assert_match(/accumulator__p0/, long.c_source)
   end
 
+  # ---------- a contraction ----------
+
+  # A contraction says which indices are summed and nothing about the order,
+  # so there is no order of the caller's to override and the accumulator is
+  # split as `jit_for`'s is.
+  def contracted_kernel (left, right, into)
+    CArray.jit_contract { |i, j, t| into[i,j] = left[i,t] * right[t,j] }
+  end
+
+  def test_a_contraction_splits_its_sum
+    left = CArray.double(2, 16).seq(1)
+    right = CArray.double(16, 2).seq(1)
+    into = CArray.double(2, 2)
+    kernel = contracted_kernel(left, right, into)
+    assert_match(/__p0/, kernel.c_source)
+    assert_match(/__p3/, kernel.c_source)
+  end
+
+  # There is no per-call licence -- a contraction names no loop -- so the
+  # process default is what a serial contraction is asked for with.
+  def test_a_contraction_under_the_process_default
+    left = CArray.double(2, 16).seq(1)
+    right = CArray.double(16, 2).seq(1)
+    into = CArray.double(2, 2)
+    previous = CArray::JIT.reassociate
+    begin
+      CArray::JIT.reassociate = false
+      refuses_to_split contracted_kernel(left, right, into)
+    ensure
+      CArray::JIT.reassociate = previous
+    end
+  end
+
+  # And the serial order it then takes is the order a Ruby loop takes, on
+  # terms that cancel and so tell the two apart.
+  def test_a_serial_contraction_is_the_ruby_order
+    random = Random.new(20260907)
+    length = 1_000
+    values = CArray.double(length) { random.rand(-1.0..1.0) * 1e6 }
+    weights = CArray.double(length) { random.rand(-1.0..1.0) }
+    serial_sum = (0...length).inject(0.0) { |sum, k| sum + values[k] * weights[k] }
+
+    split = CArray.jit_contract { |k| values[k] * weights[k] }[0]
+    previous = CArray::JIT.reassociate
+    begin
+      CArray::JIT.reassociate = false
+      exact = CArray.jit_contract { |k| values[k] * weights[k] }[0]
+    ensure
+      CArray::JIT.reassociate = previous
+    end
+
+    assert_bits_equal(serial_sum, exact)
+    refute_equal(serial_sum, split,
+                 "the split sum should differ from the serial one on terms " \
+                 "that cancel; if it does not, the licence is not reaching " \
+                 "the kernel")
+  end
+
   # ---------- where the default comes from ----------
 
   def test_the_process_default_can_be_turned_off

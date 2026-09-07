@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.2 (unreleased)
 
+- Change: a contraction's sum is split into partial sums, as `jit_for`'s
+  reduction and CArray's own reduce kernels are, which makes `jit_contract` as
+  fast as the same loop written with `jit_for` rather than three times slower.
+  A floating-point contraction therefore answers what the split accumulation
+  answers -- usually the more accurate number, never the one a serial Ruby
+  loop gives. `CArray::JIT.reassociate = false`, or `CARRAY_JIT_REASSOCIATE=0`
+  for a whole process, asks for the serial order; `jit_contract` takes no
+  per-call licence. Integer contractions are unaffected.
+
 - New: `CArray.jit_contract` takes the result's axes as symbols, and then the
   block's parameters are the indices that are summed and nothing is counted:
   `CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }` is one number per point,

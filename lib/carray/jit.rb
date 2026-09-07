@@ -254,6 +254,11 @@ class CArray
   # Naming them is allowed even where the convention would have reached the
   # same answer, which is how the result's axes are put in another order.
   #
+  # The sum is split into partial ones, as `jit_for`'s reduction is: a
+  # contraction says which indices are summed and nothing about the order, so
+  # there is no order here to override.  `CArray::JIT.reassociate = false`
+  # asks for the serial one, which is what a Ruby loop would take.
+  #
   # The block is read and compiled, never called, so it is not yielded to.
   #
   # @param free_indices [Array<Symbol>] the result's axes, in order; empty to
@@ -380,6 +385,11 @@ class CArray
                          masked: arrays.each_value.any? { |array| array.has_mask? },
                          contract: true,
                          result: RESULT,
+                         # A contraction sums an index; which order it sums it
+                         # in is not something the caller wrote, so splitting
+                         # the sum into partial ones does not change what the
+                         # contraction means.  Same licence `jit_for` takes.
+                         reassociate: JIT.reassociate,
                          free_indices: free_indices,
                          cell_names: cell_names(arrays))
 
