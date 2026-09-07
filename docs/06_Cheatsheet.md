@@ -157,7 +157,7 @@ that was not asked.
 | `jit_each` / `jit_map` with block parameters | an index means `jit_for` |
 | `jit_stencil` with no array given | the arrays are arguments, not closures |
 | `jit_stencil` with both `type:` and `into:` | `into:` already decides the type |
-| a contraction summing an index that appears once | not the convention; `sum(axis:)`, or name the result's axes |
+| a contraction summing an index that appears once | not the convention; `sum(axis:)` |
 | an index whose axes disagree in extent | the shape check a contraction exists to do |
 | an array both written and read in a contraction | a recurrence -- write it with `jit_for` |
 | a block naming a construct outside the subset | refused by name and line |

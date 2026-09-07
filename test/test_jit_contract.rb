@@ -331,9 +331,9 @@ end
 # where two of them met is an inner product and there is no other reading.  An
 # index that numbers things -- a point, a sample, a batch -- is not a
 # dimension, and repeating it says "the same point" rather than "sum over
-# points".  Naming the result's axes says which is meant, and then nothing is
-# counted: a named index is free however often it appears, and every parameter
-# left over is summed.
+# points".  Naming the result's axes says which is meant: a named index is
+# free however often it appears.  What a repetition means is unchanged, so a
+# parameter is still summed by repeating.
 class TestContractNamedAxes < Minitest::Test
 
   # The index that numbers the points stays free, though it appears twice.
@@ -482,14 +482,19 @@ class TestContractNamedAxes < Minitest::Test
     assert_match(/`p` names more than one axis of the result/, error.message)
   end
 
-  # The convention refuses a sum along an axis because there is nothing in
-  # `a[i,k]` standing in for a sigma.  Naming the result's axes is that
-  # statement, so the same term is accepted -- `sum(axis:)` is still the
-  # faster way to say it.
-  def test_a_sum_along_an_axis_once_the_axes_are_named
+  # Naming the result's axes says which indices are free.  It does not say
+  # what a repetition means, so a parameter is still summed by repeating, and
+  # one at a single position is a sum along an axis rather than a contraction
+  # -- refused here as it is under the convention.
+  def test_a_lone_parameter_is_not_summed_either
     a = CArray.double(3, 4).seq!(1)
-    assert_equal(a.sum(axis: 1).to_a,
-                 CArray.jit_contract(:i) { |k| a[i,k] }.to_a)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:i) { |k| a[i,k] }
+    end
+    assert_match(/`k` appears once, so it is free rather than summed/,
+                 error.message)
+    assert_match(/CArray\.jit_contract\(:i, :k\)/, error.message)
+    assert_match(/sum\(axis:\)/, error.message)
   end
 
   # Where the convention refuses, it says what naming the axis would do.

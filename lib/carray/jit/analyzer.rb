@@ -659,12 +659,20 @@ class CArray
             "#{missing.map { |name| "`#{name}`" }.join(', ')} " \
             "#{missing.size == 1 ? 'names no axis' : 'name no axis'} here")
         end
-        # The explicit form counts nothing.  The result's axes were named, so
-        # they are free however often they appear -- twice is what a point
-        # number does, and `square[a,a]` is the diagonal rather than a trace --
-        # and every parameter left over is summed.
+        # Naming the result's axes says which indices are free; it does not
+        # say what a repetition means, and a repetition still means a sum.  So
+        # a named index is free however often it appears -- twice is what a
+        # point number does, and `square[a,a]` is the diagonal rather than a
+        # trace -- while a parameter is summed by repeating, here as under the
+        # convention.  One that appears once is free and was not named, which
+        # is a sum along an axis and is not a contraction.
         if @free_indices.any?
-          return [@free_indices, @index_names - @free_indices]
+          parameters = @index_names - @free_indices
+          alone = parameters.select { |name| counts[name] == 1 }
+          unless alone.empty?
+            raise Unsupported.new(describe_a_lone_parameter(alone))
+          end
+          return [@free_indices, parameters]
         end
         [@index_names.select { |name| counts[name] == 1 },
          @index_names.select { |name| counts[name] > 1 }]
@@ -684,6 +692,22 @@ class CArray
         statements[0..-2].each { |statement| walk.call(statement) }
         walk.call(summand)
         collected.reject { |index, _| index.nil? }
+      end
+
+      # A parameter at one position only.  Nothing there stands in for a
+      # sigma, so summing it would be the argument list quietly meaning more
+      # than it says -- the same reason the convention refuses it.
+      def describe_a_lone_parameter (alone)
+        listed = alone.map { |name| "`#{name}`" }.join(", ")
+        named = (@free_indices + alone).map { |name| ":#{name}" }.join(", ")
+        "#{listed} #{alone.size == 1 ? 'appears' : 'appear'} once, so " \
+        "#{alone.size == 1 ? 'it is' : 'they are'} free rather than summed. " \
+        "A contraction sums the indices that repeat; name " \
+        "#{alone.size == 1 ? 'it' : 'them'} as " \
+        "#{alone.size == 1 ? 'an axis' : 'axes'} of the result " \
+        "(`CArray.jit_contract(#{named})`) to keep " \
+        "#{alone.size == 1 ? 'it' : 'them'}, or use sum(axis:) to sum along " \
+        "the axis"
       end
 
       def describe_index_mismatch (written, free, summed)

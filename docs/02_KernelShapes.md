@@ -400,7 +400,11 @@ d = CArray.jit_contract(:a) { q[a,a] }                            # the diagonal
 r = CArray.jit_contract(:b, :i, :j) { |k| u[b,i,k] * v[b,k,j] }   # a batch of products
 ```
 
-The arguments are the result's axes, in that order; the block's parameters are then the indices that are summed, and **nothing is counted**. A named index is free however often it appears, which is what puts the per-point quantity and the diagonal inside the notation instead of outside it -- `q[a,a]` is the trace under the convention and the diagonal when the axis is named. With every index named there is nothing left to sum, and the block takes no parameters at all.
+The arguments are the result's axes, in that order. What they say is which indices are free; they do not say what a repetition means, and a repetition still means a sum. So the whole of it is one rule:
+
+**An index that repeats is summed, and one that is named is free.**
+
+A named index is free however often it appears, which is what puts the per-point quantity and the diagonal inside the notation instead of outside it -- `q[a,a]` is the trace under the convention and the diagonal when the axis is named. A parameter is summed by repeating, here as under the convention, so a parameter at a single position is refused in both. With every index named there is nothing left to sum, and the block takes no parameters at all.
 
 This is the split `einsum` makes with `->`: `'ii'` is the trace and `'ii->i'` the diagonal, `'pk,pk'` is one number and `'pk,pk->p'` one per point. The argument list is that arrow's right-hand side.
 
@@ -412,7 +416,6 @@ CArray.jit_contract(:j, :i) { |k| a[i,k] * b[k,j] }   # the product, transposed
 
 An index cannot be both, and saying so twice is refused. Everything else is as it is under the convention: the extents come from the axes, an index whose axes disagree is refused, and assigning into an array of your own says where the result goes.
 
-Naming the axes also lifts the refusal above, because there is nothing quiet left about it: `CArray.jit_contract(:i) { |k| a[i,k] }` sums along an axis, and `k` being summed is what the call says rather than what the `=` implies. `sum(axis: 1)` is still that operation and still faster.
 
 
 An array that is both written and read is a recurrence rather than a contraction, and is refused with a pointer at `jit_for` too.

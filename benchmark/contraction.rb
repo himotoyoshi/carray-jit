@@ -13,8 +13,9 @@
 #
 # What the numbers after those two say is what a contraction is worth against
 # the alternatives: the same work written out with jit_for, the reduction
-# CArray already has, and -- where the batch index is named -- a Ruby loop of
-# calls, which is the one place the naming itself buys speed.
+# CArray already has where the shape is one it has, and -- where the batch
+# index is named -- a Ruby loop of calls, which is the one place the naming
+# itself buys speed.
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
@@ -136,20 +137,6 @@ puts format("Ruby loop        %8.1f ms   %5.2f ns/cell   %.0fx",
             ruby * 1e3, ruby / cells * 1e9, ruby / contracted)
 puts format("(x ** 2).sum(axis: 1) %3.1f ms   %5.2f ns/cell   %.2fx",
             native * 1e3, native / cells * 1e9, native / contracted)
-
-# A sum along an axis, which the naming also allows.  CArray has the
-# reduction, and its kernel is written for the shape.
-puts
-rows, columns = 2_000, 500
-source = CArray.double(rows, columns).seq!(1)
-CArray.jit_contract(:i) { |t| source[i,t] }
-along = timed(SAMPLES) { CArray.jit_contract(:i) { |t| source[i,t] } }
-built_in = timed(SAMPLES) { source.sum(axis: 1) }
-puts "row sums over #{rows} x #{columns}"
-puts format("the axes named   %8.1f ms   %5.2f ns/cell", along * 1e3,
-            along / (rows * columns) * 1e9)
-puts format("sum(axis: 1)     %8.1f ms   %5.2f ns/cell   %.2fx",
-            built_in * 1e3, built_in / (rows * columns) * 1e9, built_in / along)
 
 # A batch of matrix products, where the batch index is named and the loop over
 # it is the kernel's rather than Ruby's.
