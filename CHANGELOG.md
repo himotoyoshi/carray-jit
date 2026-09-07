@@ -1,12 +1,20 @@
 # Changelog
 
-Releases are recorded here from 0.1.0, which is the first.
+Releases are recorded here from 0.1.0, which is the first. There is no
+separate NEWS file: this is where to look for what changed between the
+version you have and a newer one.
 
 <!-- Newest first, at both levels: a new release section goes above the
      ones below it, and a new entry goes directly under its own release
      heading -- not at the end of the section. The kind of change is
      carried by the `- Fix:` / `- Change:` / `- New:` that opens the
      entry; there are no per-kind subheadings.
+
+     A section is written newest-first while the release is open, and
+     sorted into New, Change, Fix when it closes -- in the same commit
+     that drops `(unreleased)`. Within Change, the ones that ask the
+     reader to change code come first. It is a reading order rather than
+     a classification: where it is not obvious, either place will do.
 
      An entry says three things and stops: what changed, what to do about
      it (the migration, the replacement, the condition under which nothing
@@ -15,25 +23,35 @@ Releases are recorded here from 0.1.0, which is the first.
      speed came from, or argue the design -- those belong in the commit
      message. Two to six lines.
 
+     It is written for someone using the library, not someone working on
+     it: with no NEWS file, this is what a reader consults before
+     upgrading. An entry naming something only a C extension touches says
+     so in its opening words.
+
+     Every entry has to read on its own. Entries are looked at one at a
+     time and move about within a section, so none may lean on a
+     neighbour ("as well", "the kernel above") or leave unnamed the
+     method, class or keyword it is about.
+
      The version here is this gem's own and is not CArray's. Which CArray
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
 ## 0.1.1 (unreleased)
 
-- Fix: a zero divisor in a `CArray.fuse` expression no longer switches the
-  compiler off. `ZeroDivisionError` was raised as it should be, but CArray
-  read it as the evaluator having failed, said so on stderr and walked every
-  expression for the rest of the process. Nothing to do. `jit_for`,
-  `jit_each` and `jit_map` were never affected.
+- Fix: a zero divisor in a `CArray.fuse` expression no longer turns
+  compilation off for the rest of the process. `ZeroDivisionError` is raised
+  as before; what has gone is the warning that followed it on stderr, and the
+  expressions walked rather than compiled from then on. Nothing to do.
+  `jit_for`, `jit_each` and `jit_map` were never affected.
 
 - Fix: on macOS, a `CArray.fuse` expression holding an integer `/` or `%` is
-  compiled rather than quietly walked. The answer was right either way, so
-  this is speed and nothing to do. Linux was never affected.
+  compiled rather than walked. The answers were right before and are
+  unchanged; this is speed alone. Linux was never affected.
 
-- Fix: a program that compiles more than one kernel no longer crashes on
-  Linux. Two `jit_each` / `jit_map` / `jit_for` kernels reached in the same
-  run could collide, and one would sweep into the other. Nothing to do --
+- Fix: on Linux, a program that compiles more than one kernel no longer
+  crashes -- any two of `jit_for`, `jit_each`, `jit_map`, `jit_stencil`,
+  `jit_contract` and `jit_function` reached in the same run. Nothing to do:
   cached kernels are rebuilt on first use. macOS was never affected.
 
 ## 0.1.0
@@ -90,9 +108,10 @@ Releases are recorded here from 0.1.0, which is the first.
   `CARRAY_JIT_NO_CACHE` keeps the cache in a temporary directory that goes
   away with the process, and `CARRAY_JIT_CC` names a different compiler.
 
-- New: the `carray-jit` command reports and looks after that cache --
-  `status`, `list`, `show`, `clear`. It loads the compiler and nothing else,
-  so a cache can be inspected or cleared when CArray itself will not load.
+- New: the `carray-jit` command reports and looks after the on-disk kernel
+  cache -- `status`, `list`, `show`, `clear`. It loads the compiler and
+  nothing else, so a cache can be inspected or cleared when CArray itself
+  will not load.
 
 - New: needs CArray 3.0.1 or later in the 3.0 series, and Ruby 3.2 or later.
   The floor is where `ca_call_cslab_N`, the expression evaluator hook,
