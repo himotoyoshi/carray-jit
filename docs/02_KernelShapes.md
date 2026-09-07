@@ -400,11 +400,22 @@ d = CArray.jit_contract(:a) { q[a,a] }                            # the diagonal
 r = CArray.jit_contract(:b, :i, :j) { |k| u[b,i,k] * v[b,k,j] }   # a batch of products
 ```
 
-The arguments are the result's axes, in that order. What they say is which indices are free; they do not say what a repetition means, and a repetition still means a sum. So the whole of it is one rule:
+The arguments are the result's axes, in that order. What they say is which indices are free; they do not say what a repetition means, and a repetition still means a sum. So the whole of it is the convention's rule with a clause added:
 
-**An index that repeats is summed, and one that is named is free.**
+**An index that repeats is summed; one that appears once is free; and a named one is free however often it appears.**
 
-A named index is free however often it appears, which is what puts the per-point quantity and the diagonal inside the notation instead of outside it -- `q[a,a]` is the trace under the convention and the diagonal when the axis is named. A parameter is summed by repeating, here as under the convention, so a parameter at a single position is refused in both. With every index named there is nothing left to sum, and the block takes no parameters at all.
+The third clause is what puts the per-point quantity and the diagonal inside the notation instead of outside it -- `q[a,a]` is the trace under the convention and the diagonal when the axis is named.
+
+A free index then needs somewhere to go, and there are three places: the argument list, the left-hand side, or -- with neither -- the result's axes, which are the free indices in the order the block's parameters named them. So a parameter at a single position is refused once the axes are named. It is free, by the second clause, and the axes are already stated:
+
+```
+`k` appears once, so it is free rather than summed. A contraction sums the
+indices that repeat; name it as an axis of the result
+(`CArray.jit_contract(:i, :k)`) to keep it, or use sum(axis:) to sum along
+the axis
+```
+
+With every index named there is nothing left to sum, and the block takes no parameters at all.
 
 This is the split `einsum` makes with `->`: `'ii'` is the trace and `'ii->i'` the diagonal, `'pk,pk'` is one number and `'pk,pk->p'` one per point. The argument list is that arrow's right-hand side.
 

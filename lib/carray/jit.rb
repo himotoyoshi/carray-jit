@@ -249,14 +249,15 @@ class CArray
   #   CArray.jit_contract(:b, :i, :j) { |k| u[b,i,k] * v[b,k,j] }   # a batch of products
   #
   # The arguments are the result's axes, in that order.  What they say is
-  # which indices are free; what a repetition means is unchanged, so the whole
-  # of it is one rule: an index that repeats is summed, and one that is named
-  # is free.  A named index stays free however often it appears, which is what
-  # puts the diagonal and the per-point quantity inside the notation instead
-  # of outside it, and a parameter at a single position is refused here as it
-  # is under the convention.  Naming is allowed even where the convention
-  # would have reached the same answer, which is how the result's axes are put
-  # in another order.
+  # which indices are free; what a repetition means is unchanged.  So the rule
+  # is the convention's, with a third clause: an index that repeats is summed,
+  # one that appears once is free, and a named one is free however often it
+  # appears -- which is what puts the diagonal and the per-point quantity
+  # inside the notation instead of outside it.  A free index needs somewhere
+  # to go, so a parameter at a single position is refused once the axes are
+  # named: it is free, and the axes are already stated.  Naming is allowed
+  # even where the convention would have reached the same answer, which is how
+  # the result's axes are put in another order.
   #
   # The sum is split into partial ones, as `jit_for`'s reduction is: a
   # contraction says which indices are summed and nothing about the order, so
