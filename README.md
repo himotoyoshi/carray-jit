@@ -34,10 +34,13 @@ gem "carray-jit"
 
 Requires:
 
-- Ruby >= 3.2
+- Ruby >= 3.2, and CRuby: CArray is a C extension, so JRuby and TruffleRuby
+  are out of reach
 - CArray >= 3.0.1, < 3.1
 - A C compiler
 - Prism and Fiddle (both ship with Ruby; Fiddle is a bundled gem)
+- macOS or Linux. Windows through WSL -- native Windows is not tested, and the
+  flags a kernel is compiled with are written for a compiler that takes gcc's
 
 ## Example
 
