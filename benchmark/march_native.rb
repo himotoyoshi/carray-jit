@@ -26,12 +26,20 @@ require "rbconfig"
 require "carray/jit"
 
 ROUNDS = 9
-REPEATS = 16          # calls per sample, so a sample is long enough to trust
+REPEATS = Integer(ENV["REPEATS"] || 16)   # calls per sample, so a sample is
+                                          # long enough to trust
 
-N = 4_000_000
-SIDE = 2_000
-ROWS = 2_000
-COLUMNS = 2_000
+# The default working set is far larger than any cache, which is a choice
+# rather than a size: a kernel that streams cannot show what a wider vector
+# would buy, because it is waiting on memory either way.  Set SCALE below 1
+# to bring the arrays inside the last level and ask the same question of a
+# resident working set -- SCALE=0.05 REPEATS=200 is about 5 MB.
+SCALE = Float(ENV["SCALE"] || 1.0)
+
+N = (4_000_000 * SCALE).to_i
+SIDE = (2_000 * Math.sqrt(SCALE)).to_i
+ROWS = SIDE
+COLUMNS = SIDE
 
 def median (values)
   sorted = values.sort
@@ -121,8 +129,10 @@ Dir.mktmpdir("march-native-") do |directory|
     end
   end
 
+  megabytes = (N * 3 + SIDE * SIDE * 2 + ROWS * COLUMNS) * 8 / 1_048_576.0
   puts "#{RbConfig::CONFIG['arch']}, #{real}, median of #{ROUNDS}, " \
        "#{REPEATS} calls each"
+  puts format("n = %d, %d x %d, %.0f MB of arrays", N, SIDE, SIDE, megabytes)
   puts
   puts format("%-32s %11s %14s %8s", "", "default", FLAG, "ratio")
   KERNELS.each_key do |label|
