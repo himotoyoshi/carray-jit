@@ -450,6 +450,26 @@ class TestContractNamedAxes < Minitest::Test
                  error.message)
   end
 
+  # Naming one axis names them all: a free index left out of the list has
+  # nowhere to go, and nothing may put it back but the list itself.
+  def test_a_partial_list_of_axes
+    a = CArray.double(3, 4).seq!(1)
+    b = CArray.double(4, 2).seq!(1)
+    out = CArray.double(3, 2)
+    returned = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:i) { |k, j| a[i,k] * b[k,j] }
+    end
+    assert_match(/`j` appears once, so it is free rather than summed/,
+                 returned.message)
+
+    # Not even with the left-hand side to put it on.
+    assigned = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract(:i) { |k, j| out[i,j] = a[i,k] * b[k,j] }
+    end
+    assert_match(/`j` appears once, so it is free rather than summed/,
+                 assigned.message)
+  end
+
   def test_a_named_axis_that_names_no_axis
     a = CArray.double(3, 4).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do

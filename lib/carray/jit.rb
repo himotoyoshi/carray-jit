@@ -255,7 +255,9 @@ class CArray
   # appears -- which is what puts the diagonal and the per-point quantity
   # inside the notation instead of outside it.  A free index needs somewhere
   # to go, so a parameter at a single position is refused once the axes are
-  # named: it is free, and the axes are already stated.  Naming is allowed
+  # named: it is free, and the axes are already stated.  The list is all of
+  # the result's axes rather than some of them -- name one and you have named
+  # them all -- which is what keeps the order it states complete.  Naming is allowed
   # even where the convention would have reached the same answer, which is how
   # the result's axes are put in another order.
   #

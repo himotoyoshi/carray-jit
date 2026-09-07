@@ -415,6 +415,8 @@ indices that repeat; name it as an axis of the result
 the axis
 ```
 
+So the list is all of the result's axes rather than some of them: name one and you have named them all. A partial one could be given a meaning -- the axes left out would take their order from the parameter list, as they do when nothing is named -- but it would only ever produce the orders that put the named axes first, so an order like `[i, b, j]` with `b` named could not be asked for at all. The result's order would be stated in two places, and neither could state all of it.
+
 With every index named there is nothing left to sum, and the block takes no parameters at all.
 
 This is the split `einsum` makes with `->`: `'ii'` is the trace and `'ii->i'` the diagonal, `'pk,pk'` is one number and `'pk,pk->p'` one per point. The argument list is that arrow's right-hand side.
