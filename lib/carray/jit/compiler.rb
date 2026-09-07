@@ -40,7 +40,22 @@ class CArray
       # being lower was not a decision -- the flag list is the one the first
       # milestone was scaffolded with, and only the contraction flag beside
       # it was ever argued for.
-      FLAGS = ["-O3", "-fPIC", "-shared", "-ffp-contract=off"].freeze
+
+      # Every generated object exports the same fixed names -- carray_jit_kernel,
+      # carray_jit_slab, the border and error helpers -- because each one is a
+      # module of its own.  Fiddle.dlopen passes RTLD_GLOBAL, so on ELF those
+      # names all land in one flat namespace and an intra-module call resolves
+      # to the first definition loaded: a later kernel's carray_jit_slab calls
+      # an earlier kernel's carray_jit_kernel, which takes a different number
+      # of operands, reads past the pointers it was given, and the process
+      # segfaults.  -Wl,-Bsymbolic binds each object's own definitions before
+      # the global scope, which is what one object per kernel assumed all
+      # along.  Mach-O's two-level namespace already does this, and its linker
+      # rejects the flag, so it is only named where it means something.
+      SYMBOLIC =
+        (RbConfig::CONFIG["host_os"] =~ /darwin|mswin|mingw/ ? [] : ["-Wl,-Bsymbolic"]).freeze
+
+      FLAGS = ["-O3", "-fPIC", "-shared", "-ffp-contract=off", *SYMBOLIC].freeze
 
       # Kernels retained on disk.  Each costs about 17 KB, so the default is
       # roughly 9 MB -- far more than any real program compiles, but a bound

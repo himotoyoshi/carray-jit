@@ -21,6 +21,11 @@ Releases are recorded here from 0.1.0, which is the first.
 
 ## 0.1.1 (unreleased)
 
+- Fix: a program that compiles more than one kernel no longer crashes on
+  Linux. Two `jit_each` / `jit_map` / `jit_for` kernels reached in the same
+  run could collide, and one would sweep into the other. Nothing to do --
+  cached kernels are rebuilt on first use. macOS was never affected.
+
 ## 0.1.0
 
 - New: `CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` compile their
