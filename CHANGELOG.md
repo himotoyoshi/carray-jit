@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `CArray::JIT.contraction_of` returns the number that multiplies the
+  product as `:scale`, which is 1 where there is none, so
+  `a[i,k] * b[k,j] * 2.0` comes back as its two terms and 2.0 rather than as
+  nil. A number is not a term -- it has no indices and no cell -- but it is
+  not a reason to give up on the terms either, and a caller that takes them
+  apart puts it back. Written out or closed over is the same number; anything
+  a name holds that is not a Numeric is still nil. This shipped in 0.1.2,
+  whose entry describes the same two methods without mentioning it.
+
 ## 0.1.2
 
 - New: `CArray.jit_contract` takes the result's axes as symbols, which says
