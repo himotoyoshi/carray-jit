@@ -37,7 +37,67 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.2 (unreleased)
+## 0.1.2
+
+- New: `CArray.jit_contract` takes the result's axes as symbols, which says
+  which indices are free: `CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }` is
+  one number per point, and `CArray.jit_contract(:a) { q[a,a] }` is the
+  diagonal rather than the trace. A named index stays free however often it
+  appears, which is what an index that numbers things -- a point, a sample, a
+  batch -- does. What a repetition means is unchanged, so the whole rule is
+  that an index which repeats is summed and one that is named is free. Naming
+  the axes also states their order. With no arguments nothing changes.
+
+- New: `CArray::JIT.contract_terms` runs the contraction a structure describes
+  rather than one a block writes --
+  `CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]], free: [:i, :j])`
+  is a matrix product -- and `CArray::JIT.contraction_of` reads a block and
+  returns the terms it is a product of, or nil when it is not one. They are
+  `jit_contract` with the block taken out of the middle, for a caller that
+  rearranges a contraction before running it: the terms are compiled by the
+  same analyzer under the same rules, so `free:` is required and an index that
+  is not named must appear at more than one position.
+
+- New: `CArray::JIT.cache_root = "path"` puts an application's compiled
+  kernels somewhere of its own, rather than in the cache shared under the home
+  directory. Say it before the first kernel is compiled; the path is expanded
+  where it is given. `CARRAY_JIT_CACHE` and `CARRAY_JIT_NO_CACHE` still come
+  first, and `nil` restores the default.
+
+- Change: a contraction's sum is split into partial sums, as `jit_for`'s
+  reduction and CArray's own reduce kernels are, which makes `jit_contract` as
+  fast as the same loop written with `jit_for` rather than three times slower.
+  A floating-point contraction therefore answers what the split accumulation
+  answers -- usually the more accurate number, never the one a serial Ruby
+  loop gives. `CArray::JIT.reassociate = false`, or `CARRAY_JIT_REASSOCIATE=0`
+  for a whole process, asks for the serial order; `jit_contract` takes no
+  per-call licence. Integer contractions are unaffected.
+
+- Change: `CArray.jit_contract` sums an index that repeats however often it
+  repeats, rather than refusing more than two positions. `q[i,i,i]` is the sum
+  along a cube's long diagonal, and `a[i,k] * b[k,k]` sums `k` at three
+  positions across two arrays. Nothing that compiled before compiles
+  differently: what changes is that these are accepted instead of raising
+  `CArray::JIT::Unsupported`.
+
+- Fix: a contraction with nothing to assign into is collected into the type its
+  summand computes in. `CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }` over
+  float32 arrays came back int64 with every value truncated; over uint64 it came
+  back int64 and wrapped; over cmplx64 it raised. The assigned form -- the same
+  contraction written `c[i,j] = ...` -- was right throughout, and `jit_for`,
+  `jit_each` and `jit_stencil` were never affected.
+
+- Fix: a contraction that writes an array it also reads is refused when the
+  block gave that array two names -- `y = x`, or a view of something being
+  read -- as it always was when one name was used for both. It compiled and
+  returned an answer that depended on the order the cells were reached in.
+  `CArray::JIT.contract_terms` refuses `into:` for the same reason. Write it
+  with `jit_for`, which is what a recurrence is for.
+
+- Fix: `CArray.jit_stencil(source, into: source)` is refused rather than
+  computing a pass whose cells feed the ones after them. A window that reaches
+  nowhere -- one that reads only the cell it is on -- still writes in place, as
+  it always did.
 
 - Fix: assigning to a loop index inside a kernel is refused. `jit_for(3) { |i|
   i = 2; out[i] = ... }` assigned to the counter, so the loop walked somewhere
@@ -59,69 +119,9 @@ version you have and a newer one.
   by value is still refused, and now says why: a value reaches a body as a
   double, an int64 or a complex, and a uint64 fits none of them whole.
 
-- Fix: a contraction that writes an array it also reads is refused when the
-  block gave that array two names -- `y = x`, or a view of something being
-  read -- as it always was when one name was used for both. It compiled and
-  returned an answer that depended on the order the cells were reached in.
-  `CArray::JIT.contract_terms` refuses `into:` for the same reason. Write it
-  with `jit_for`, which is what a recurrence is for.
-
-- Fix: `CArray.jit_stencil(source, into: source)` is refused rather than
-  computing a pass whose cells feed the ones after them. A window that reaches
-  nowhere -- one that reads only the cell it is on -- still writes in place, as
-  it always did.
-
-- New: `CArray::JIT.contract_terms` runs the contraction a structure describes
-  rather than one a block writes --
-  `CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]], free: [:i, :j])`
-  is a matrix product -- and `CArray::JIT.contraction_of` reads a block and
-  returns the terms it is a product of, or nil when it is not one. They are
-  `jit_contract` with the block taken out of the middle, for a caller that
-  rearranges a contraction before running it: the terms are compiled by the
-  same analyzer under the same rules, so `free:` is required and an index that
-  is not named must appear at more than one position.
-
-- Fix: a contraction with nothing to assign into is collected into the type its
-  summand computes in. `CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }` over
-  float32 arrays came back int64 with every value truncated; over uint64 it came
-  back int64 and wrapped; over cmplx64 it raised. The assigned form -- the same
-  contraction written `c[i,j] = ...` -- was right throughout, and `jit_for`,
-  `jit_each` and `jit_stencil` were never affected.
-
 - Fix: `CArray.jit_map` collects a cmplx64 value into a cmplx64 array rather
   than refusing to allocate one. Nothing else changes type: a block whose value
   is cmplx128 still gives cmplx128.
-
-- Change: `CArray.jit_contract` sums an index that repeats however often it
-  repeats, rather than refusing more than two positions. `q[i,i,i]` is the sum
-  along a cube's long diagonal, and `a[i,k] * b[k,k]` sums `k` at three
-  positions across two arrays. Nothing that compiled before compiles
-  differently: what changes is that these are accepted instead of raising
-  `CArray::JIT::Unsupported`.
-
-- Change: a contraction's sum is split into partial sums, as `jit_for`'s
-  reduction and CArray's own reduce kernels are, which makes `jit_contract` as
-  fast as the same loop written with `jit_for` rather than three times slower.
-  A floating-point contraction therefore answers what the split accumulation
-  answers -- usually the more accurate number, never the one a serial Ruby
-  loop gives. `CArray::JIT.reassociate = false`, or `CARRAY_JIT_REASSOCIATE=0`
-  for a whole process, asks for the serial order; `jit_contract` takes no
-  per-call licence. Integer contractions are unaffected.
-
-- New: `CArray.jit_contract` takes the result's axes as symbols, which says
-  which indices are free: `CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }` is
-  one number per point, and `CArray.jit_contract(:a) { q[a,a] }` is the
-  diagonal rather than the trace. A named index stays free however often it
-  appears, which is what an index that numbers things -- a point, a sample, a
-  batch -- does. What a repetition means is unchanged, so the whole rule is
-  that an index which repeats is summed and one that is named is free. Naming
-  the axes also states their order. With no arguments nothing changes.
-
-- New: `CArray::JIT.cache_root = "path"` puts an application's compiled
-  kernels somewhere of its own, rather than in the cache shared under the home
-  directory. Say it before the first kernel is compiled; the path is expanded
-  where it is given. `CARRAY_JIT_CACHE` and `CARRAY_JIT_NO_CACHE` still come
-  first, and `nil` restores the default.
 
 ## 0.1.1
 

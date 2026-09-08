@@ -8,7 +8,7 @@ The block is read with Prism, translated to C if it falls inside that subset, co
 
 ## Status
 
-0.1.1 is the current release, and it still moves: behaviour can change between releases — see [CHANGELOG.md](CHANGELOG.md). A companion gem to CArray, it follows CArray's surface, which is not settled until CArray 3.1.
+0.1.2 is the current release, and it still moves: behaviour can change between releases — see [CHANGELOG.md](CHANGELOG.md). A companion gem to CArray, it follows CArray's surface, which is not settled until CArray 3.1.
 
 ## Features
 
