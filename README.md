@@ -14,7 +14,7 @@ The block is read with Prism, translated to C if it falls inside that subset, co
 
 - **A JIT compiler for C-level loops.** A block becomes one C function over CArray's own memory, built by the system C compiler and called through Fiddle.
 - **Ordinary Ruby, and enough of it.** The source is parsed with Prism -- no DSL, no `eval` -- and every operation means what Ruby means by it, apart from the order a reduction takes its terms in. The subset is enough to state a numerical algorithm; what falls outside it is refused by name and line, not run as a Ruby loop.
-- **A method for each shape.** `jit_for` for recurrences and loops written out, `jit_stencil` for windows at any rank, `CArray.jit_contract` for contraction over a repeated index, or over the indices left when the result's axes are named, `jit_each` and `jit_map` for a pass that reaches no neighbour.
+- **A method for each shape.** `jit_for` for recurrences and loops written out, `jit_stencil` for windows at any rank, `CArray.jit_contract` for contraction over a repeated index, or over every index the result's axes do not name, `jit_each` and `jit_map` for a pass that reaches no neighbour.
 - **View- and mask-aware.** Columns, transposes and slices of slices are written in place without a copy, and masks propagate as CArray propagates them.
 - **Pure C functions, in and out.** `jit_extern` binds one from a library and a kernel calls it by address; `jit_function` compiles one from a block and hands back a C function pointer.
 - **The backend for `CArray.fuse`.** An array expression compiles instead of being walked a node at a time, without being asked and without changing the answer.

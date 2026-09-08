@@ -39,6 +39,24 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: naming a contraction's axes now replaces the convention rather than
+  adding a clause to it. `CArray.jit_contract(:i, :j) { ... }` names all of
+  the result's axes, so every index left out of the list is summed at however
+  few positions it sits -- where before, one sitting at a single position was
+  refused as a free index with nowhere to go. So `jit_contract(:i) { |k|
+  a[i,k] }` is the row sums, and `contract_terms(terms, free: [])` over a
+  product is its total; both were refused. (`a.sum(axis: 1)` remains the
+  faster way to write a reduction, being one.) With nothing named the
+  convention is unchanged: a repetition is a sum and a single position is
+  free. What this makes exact is the correspondence with einsum's two modes,
+  the argument list being the arrow's right-hand side; `"ik->i"` and
+  `"ik,kj->"` can now be said.
+
+  Where the block assigns into an array of yours, an axis on the left-hand
+  side that the list leaves out is still refused -- it is the list falling
+  short of the result rather than an index to sum, and the left-hand side is
+  the one place that can be seen. The message says so in those terms now.
+
 - New: `CArray::JIT.contraction_of` returns the number that multiplies the
   product as `:scale`, which is 1 where there is none, so
   `a[i,k] * b[k,j] * 2.0` comes back as its two terms and 2.0 rather than as

@@ -522,22 +522,30 @@ class TestContractNamedAxes < Minitest::Test
 
   # Naming one axis names them all: a free index left out of the list has
   # nowhere to go, and nothing may put it back but the list itself.
-  def test_a_partial_list_of_axes
+  # Naming the axes names all of them, so a list that leaves `j` out is not
+  # a partial list: it says `j` is summed.  What comes back has one axis, and
+  # is the row sums of the product.
+  def test_a_list_that_leaves_an_index_out_sums_it
+    a = CArray.double(3, 4).seq!(1)
+    b = CArray.double(4, 2).seq!(1)
+    product = CArray.jit_contract(:i, :j) { |k| a[i,k] * b[k,j] }
+    assert_equal(product.sum(axis: 1).to_a,
+                 CArray.jit_contract(:i) { |k, j| a[i,k] * b[k,j] }.to_a)
+  end
+
+  # Where the left-hand side has the axis, though, the list is short of the
+  # result rather than saying anything about `j`, and that is refused -- the
+  # left-hand side is what makes it visible.
+  def test_a_list_short_of_the_left_hand_side
     a = CArray.double(3, 4).seq!(1)
     b = CArray.double(4, 2).seq!(1)
     out = CArray.double(3, 2)
-    returned = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_contract(:i) { |k, j| a[i,k] * b[k,j] }
-    end
-    assert_match(/`j` appears once, so it is free rather than summed/,
-                 returned.message)
-
-    # Not even with the left-hand side to put it on.
-    assigned = assert_raises(CArray::JIT::Unsupported) do
+    error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract(:i) { |k, j| out[i,j] = a[i,k] * b[k,j] }
     end
-    assert_match(/`j` appears once, so it is free rather than summed/,
-                 assigned.message)
+    assert_match(/`j` is an axis of the left-hand side and was not named/,
+                 error.message)
+    assert_match(/CArray\.jit_contract\(:i, :j\)/, error.message)
   end
 
   def test_a_named_axis_that_names_no_axis
@@ -572,19 +580,22 @@ class TestContractNamedAxes < Minitest::Test
     assert_match(/`p` names more than one axis of the result/, error.message)
   end
 
-  # Naming the result's axes says which indices are free.  It does not say
-  # what a repetition means, so a parameter is still summed by repeating, and
-  # one at a single position is a sum along an axis rather than a contraction
-  # -- refused here as it is under the convention.
-  def test_a_lone_parameter_is_not_summed_either
+  # Naming the result's axes says which indices are free, and says it of all
+  # of them: a parameter left out of the list is summed whether it repeats or
+  # not.  That is `"ik->i"`, which the convention alone cannot say -- and
+  # `sum(axis:)` is the faster way to write it, being a reduction rather than
+  # a contraction.
+  def test_a_lone_parameter_is_summed_where_a_list_was_given
     a = CArray.double(3, 4).seq!(1)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_contract(:i) { |k| a[i,k] }
-    end
-    assert_match(/`k` appears once, so it is free rather than summed/,
-                 error.message)
-    assert_match(/CArray\.jit_contract\(:i, :k\)/, error.message)
-    assert_match(/sum\(axis:\)/, error.message)
+    assert_equal(a.sum(axis: 1).to_a,
+                 CArray.jit_contract(:i) { |k| a[i,k] }.to_a)
+  end
+
+  # And with nothing named the convention decides instead, where an index at
+  # one position is free and must be on the left.
+  def test_a_lone_index_is_free_where_nothing_was_named
+    a = CArray.double(3, 4).seq!(1)
+    assert_equal(a.to_a, CArray.jit_contract { |i, k| a[i,k] }.to_a)
   end
 
   # Where the convention refuses, it says what naming the axis would do.

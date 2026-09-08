@@ -253,13 +253,19 @@ class CArray
   # is the convention's, with a third clause: an index that repeats is summed,
   # one that appears once is free, and a named one is free however often it
   # appears -- which is what puts the diagonal and the per-point quantity
-  # inside the notation instead of outside it.  A free index needs somewhere
-  # to go, so a parameter at a single position is refused once the axes are
-  # named: it is free, and the axes are already stated.  The list is all of
-  # the result's axes rather than some of them -- name one and you have named
-  # them all -- which is what keeps the order it states complete.  Naming is allowed
+  # inside the notation instead of outside it.  The list is all of the
+  # result's axes rather than some of them -- name one and you have named them
+  # all -- so what is left out of it is summed, at however few positions it
+  # sits: `jit_contract(:i) { |k| a[i,k] }` is the row sums, which the
+  # convention alone cannot say.  (`sum(axis:)` is the faster way to write
+  # that one, being a reduction rather than a contraction.)  Naming is allowed
   # even where the convention would have reached the same answer, which is how
   # the result's axes are put in another order.
+  #
+  # Where the block assigns into an array of yours, the left-hand side has the
+  # result's axes on it, and an axis there that the list left out is the list
+  # falling short rather than an index to sum -- which is refused, and is the
+  # one place a short list is caught.
   #
   # The sum is split into partial ones, as `jit_for`'s reduction is: a
   # contraction says which indices are summed and nothing about the order, so

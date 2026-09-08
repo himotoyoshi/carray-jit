@@ -671,20 +671,18 @@ class CArray
             "#{missing.map { |name| "`#{name}`" }.join(', ')} " \
             "#{missing.size == 1 ? 'names no axis' : 'name no axis'} here")
         end
-        # Naming the result's axes says which indices are free; it does not
-        # say what a repetition means, and a repetition still means a sum.  So
-        # a named index is free however often it appears -- twice is what a
-        # point number does, and `square[a,a]` is the diagonal rather than a
-        # trace -- while a parameter is summed by repeating, here as under the
-        # convention.  One that appears once is free and was not named, which
-        # is a sum along an axis and is not a contraction.
+        # Naming the result's axes says which indices are free, and says it
+        # of all of them: what is not named is summed, at however few
+        # positions it sits.  So a named index is free however often it
+        # appears -- twice is what a point number does, and `square[a,a]` is
+        # the diagonal rather than a trace -- and a parameter is summed
+        # whether it repeats or not, which is what lets `"ik->i"` be written.
+        #
+        # Where nothing is named the convention decides instead, and there a
+        # repetition is what makes a sum: an index at one position is free,
+        # because a list that would have said otherwise was not given.
         if @free_indices
-          parameters = @index_names - @free_indices
-          alone = parameters.select { |name| counts[name] == 1 }
-          unless alone.empty?
-            raise Unsupported.new(describe_a_lone_parameter(alone))
-          end
-          return [@free_indices, parameters]
+          return [@free_indices, @index_names - @free_indices]
         end
         [@index_names.select { |name| counts[name] == 1 },
          @index_names.select { |name| counts[name] > 1 }]
@@ -706,22 +704,6 @@ class CArray
         collected.reject { |index, _| index.nil? }
       end
 
-      # A parameter at one position only.  Nothing there stands in for a
-      # sigma, so summing it would be the argument list quietly meaning more
-      # than it says -- the same reason the convention refuses it.
-      def describe_a_lone_parameter (alone)
-        listed = alone.map { |name| "`#{name}`" }.join(", ")
-        named = (@free_indices + alone).map { |name| ":#{name}" }.join(", ")
-        "#{listed} #{alone.size == 1 ? 'appears' : 'appear'} once, so " \
-        "#{alone.size == 1 ? 'it is' : 'they are'} free rather than summed. " \
-        "A contraction sums the indices that repeat; name " \
-        "#{alone.size == 1 ? 'it' : 'them'} as " \
-        "#{alone.size == 1 ? 'an axis' : 'axes'} of the result " \
-        "(`CArray.jit_contract(#{named})`) to keep " \
-        "#{alone.size == 1 ? 'it' : 'them'}, or use sum(axis:) to sum along " \
-        "the axis"
-      end
-
       def describe_index_mismatch (written, free, summed)
         summed_on_left = written & summed
         unless summed_on_left.empty?
@@ -729,6 +711,16 @@ class CArray
           # the result's axes, and the one that repeats is only the reason
           # the convention could not see it.
           named = written.map { |name| ":#{name}" }.join(", ")
+          if @free_indices
+            # A list was given, so what is summed is what the list left out.
+            # An axis of the left-hand side that is not in it is the list
+            # falling short of the result, not the index being a sum.
+            listed = summed_on_left.map { |name| "`#{name}`" }.join(", ")
+            return "#{listed} #{summed_on_left.size == 1 ? 'is an axis' : 'are axes'} " \
+                   "of the left-hand side and #{summed_on_left.size == 1 ? 'was' : 'were'} " \
+                   "not named. Naming the result's axes names all of them, and " \
+                   "what is left out is summed: `CArray.jit_contract(#{named})`"
+          end
           return "#{summed_on_left.map { |name| "`#{name}`" }.join(', ')} " \
                  "#{summed_on_left.size == 1 ? 'is repeated' : 'are repeated'} " \
                  "on the right, so #{summed_on_left.size == 1 ? 'it is' : 'they are'} " \

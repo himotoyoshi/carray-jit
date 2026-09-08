@@ -400,22 +400,31 @@ d = CArray.jit_contract(:a) { q[a,a] }                            # the diagonal
 r = CArray.jit_contract(:b, :i, :j) { |k| u[b,i,k] * v[b,k,j] }   # a batch of products
 ```
 
-The arguments are the result's axes, in that order. What they say is which indices are free; they do not say what a repetition means, and a repetition still means a sum. So the whole of it is the convention's rule with a clause added:
+The arguments are the result's axes, in that order. Naming them replaces the convention rather than adding to it, so there are two rules and which one applies is whether a list was given:
 
-**An index that repeats is summed; one that appears once is free; and a named one is free however often it appears.**
+**With nothing named** -- an index that repeats is summed; one that appears once is free.
 
-The third clause is what puts the per-point quantity and the diagonal inside the notation instead of outside it -- `q[a,a]` is the trace under the convention and the diagonal when the axis is named.
+**With the axes named** -- the named indices are free, in that order, however often they appear; every other index is summed, at however few positions it sits.
 
-A free index then needs somewhere to go, and there are three places: the argument list, the left-hand side, or -- with neither -- the result's axes, which are the free indices in the order the block's parameters named them. So a parameter at a single position is refused once the axes are named. It is free, by the second clause, and the axes are already stated:
+The second rule's first half is what puts the per-point quantity and the diagonal inside the notation instead of outside it: `q[a,a]` is the trace under the convention and the diagonal when the axis is named. Its second half is what lets a sum along an axis be written at all --
 
-```
-`k` appears once, so it is free rather than summed. A contraction sums the
-indices that repeat; name it as an axis of the result
-(`CArray.jit_contract(:i, :k)`) to keep it, or use sum(axis:) to sum along
-the axis
+```ruby
+CArray.jit_contract(:i) { |k| a[i,k] }        # the row sums
 ```
 
-So the list is all of the result's axes rather than some of them: name one and you have named them all. A partial one could be given a meaning -- the axes left out would take their order from the parameter list, as they do when nothing is named -- but it would only ever produce the orders that put the named axes first, so an order like `[i, b, j]` with `b` named could not be asked for at all. The result's order would be stated in two places, and neither could state all of it.
+-- which the convention alone cannot say, since `k` sits at one position and the convention reads that as free. (`a.sum(axis: 1)` is the faster way to write this one: it is a reduction, and a compiled contraction pays for machinery it has no use for here.)
+
+So the list is all of the result's axes rather than some of them: name one and you have named them all. That is what makes it readable -- `jit_contract(:i)` says the result has one axis, and can be trusted to.
+
+Where the block assigns into an array of yours, the left-hand side has the result's axes written on it, and the two must agree. An axis there that the list left out is the list falling short of the result rather than an index to sum, and that is refused:
+
+```
+`j` is an axis of the left-hand side and was not named. Naming the result's
+axes names all of them, and what is left out is summed:
+`CArray.jit_contract(:i, :j)`
+```
+
+It is the one place a short list can be caught, because it is the one place the result's axes are stated twice.
 
 With every index named there is nothing left to sum, and the block takes no parameters at all.
 

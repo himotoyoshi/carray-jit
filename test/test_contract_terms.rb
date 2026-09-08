@@ -135,12 +135,13 @@ class TestContractTerms < Minitest::Test
                  })
   end
 
-  # The block form's rules apply, since it is the same compiler: an index that
-  # is neither named nor repeated is free, and there is nowhere to put it.
+  # The block form's rules apply, since it is the same compiler: `free:` names
+  # the result's axes and names all of them, so an index left out is summed
+  # whether it repeats or not.  This is `"ik->i"`.
   def test_an_index_at_one_position_that_was_not_named
     a, b = operands
-    assert_match(/`k` appears once, so it is free rather than summed/,
-                 refusal { CArray::JIT.contract_terms([[a, [:i, :k]]], free: [:i]) })
+    assert_equal(a.sum(axis: 1).to_a,
+                 CArray::JIT.contract_terms([[a, [:i, :k]]], free: [:i]).to_a)
   end
 
   def test_the_extents_come_from_the_axes
@@ -198,12 +199,18 @@ class TestContractTerms < Minitest::Test
     assert_equal([(0...3).sum { |d| q[d,d] }],
                  CArray::JIT.contract_terms([[q, [:d, :d]]], free: []).to_a)
 
+    # And with none of a product's axes named, every index is summed: this is
+    # `"ik,kj->"`, the total of the product rather than a cell of it.
     a, b = operands
-    assert_match(/appear once, so they are free rather than summed/,
-                 refusal {
-                   CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
-                                              free: [])
-                 })
+    total = (0...a.dim[0]).sum { |i|
+      (0...b.dim[1]).sum { |j|
+        (0...a.dim[1]).sum { |k| a[i,k] * b[k,j] }
+      }
+    }
+    assert_in_delta(total,
+                    CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
+                                               free: [])[0],
+                    1e-9)
   end
 
   # The accumulator the compiler writes is a local of its own, and an index
