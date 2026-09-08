@@ -37,6 +37,8 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
+## 0.1.3 (unreleased)
+
 ## 0.1.2
 
 - New: `CArray.jit_contract` takes the result's axes as symbols, which says
