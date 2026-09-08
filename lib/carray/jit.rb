@@ -389,7 +389,15 @@ class CArray
       #
       #   CArray::JIT.contraction_of(proc { |i, j, k| a[i,k] * b[k,j] })
       #   #=> { :terms => [[a, [:i, :k]], [b, [:k, :j]]],
-      #   #     :free => [:i, :j], :summed => [:k] }
+      #   #     :free => [:i, :j], :summed => [:k], :scale => 1 }
+      #
+      # A number multiplied into the product is not a term -- it has no
+      # indices and no cell -- so it comes back as `:scale`, which is 1 where
+      # there is none.  `a[i,k] * b[k,j] * 2.0` is the same contraction scaled,
+      # and a caller that rearranges it has to put the scale back: multiplying
+      # a sum by a number and multiplying each of its terms are the same
+      # arithmetic, but not the same rounding, and they are not the same
+      # computation type either where the number is wider than the cells.
       #
       # This is the half of `jit_contract` that decides *what* is being
       # computed, without compiling anything, for a caller that wants to
@@ -416,9 +424,9 @@ class CArray
         free_indices = nil if free_indices.empty?
         names = capture_names(source, node) - (free_indices || [])
         arrays, scalars, c_functions = split_captures(names, binding_of(block))
-        # A captured number or a compiled function in the summand is a value
-        # the structure cannot carry.
-        return nil unless scalars.empty? && c_functions.empty?
+        # A compiled function in the summand is not something the structure
+        # carries; a captured number is, as the scale.
+        return nil unless c_functions.empty?
 
         analyzer = Analyzer.new(source, node: node, array_names: arrays.keys,
                                 contract: :probe, free_indices: free_indices,
@@ -427,29 +435,36 @@ class CArray
         # Locals before the summand are computation the structure cannot
         # carry either; an ElementWrite last is the assigned form.
         return nil unless statements.size == 1
-        terms = product_terms(statements.last, arrays)
-        return nil unless terms
+        factors = product_terms(statements.last, arrays, scalars)
+        return nil unless factors
+        terms, scale = factors
+        return nil if terms.empty?
 
         free = analyzer.probe_free_names
         { :terms => terms, :free => free,
-          :summed => terms.flat_map(&:last).uniq - free }
+          :summed => terms.flat_map(&:last).uniq - free, :scale => scale }
       end
 
-      # The product's terms, or nil where the tree is anything but a product
-      # of cells read at plain indices.
-      def product_terms (node, arrays)
+      # The product's terms and what multiplies them, or nil where the tree is
+      # anything but a product of cells and numbers.
+      def product_terms (node, arrays, scalars)
         case node
         when BinaryOperation
           return nil unless node.operator == :*
-          left = product_terms(node.left, arrays)
-          right = left && product_terms(node.right, arrays)
-          right && left + right
+          left = product_terms(node.left, arrays, scalars)
+          right = left && product_terms(node.right, arrays, scalars)
+          right && [left.first + right.first, left.last * right.last]
         when ElementRead
           subscripts = node.subscripts
           return nil unless subscripts.all? { |index, offset|
             index && offset.is_a?(Integer) && offset.zero?
           }
-          [[arrays.fetch(node.array), subscripts.map(&:first)]]
+          [[[arrays.fetch(node.array), subscripts.map(&:first)]], 1]
+        when IntegerLiteral, FloatLiteral
+          [[], node.value]
+        when CaptureRead
+          value = scalars[node.name]
+          value.is_a?(Numeric) ? [[], value] : nil
         end
       end
 

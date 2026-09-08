@@ -243,6 +243,23 @@ class TestContractTerms < Minitest::Test
     assert_equal([:i, :j], structure[:free])
     assert_equal([:k], structure[:summed])
     assert_equal([[a, [:i, :k]], [b, [:k, :j]]], structure[:terms])
+    assert_equal(1, structure[:scale])
+  end
+
+  # A number multiplied into the product is not a term: it has no indices and
+  # no cell, and a caller rearranging the terms has to put it back.  Written
+  # out or closed over, it is the same number.
+  def test_a_number_multiplied_into_the_product
+    a, b = operands
+    half = 0.5
+    [proc { |i, j, k| a[i,k] * b[k,j] * 2.0 },
+     proc { |i, j, k| a[i,k] * b[k,j] * half },
+     proc { |i, j, k| 4.0 * a[i,k] * b[k,j] * half }].zip([2.0, 0.5, 2.0]) do |block, scale|
+      structure = CArray::JIT.contraction_of(block)
+      assert_equal([[a, [:i, :k]], [b, [:k, :j]]], structure[:terms])
+      assert_equal([:i, :j], structure[:free])
+      assert_in_delta(scale, structure[:scale], 1e-15)
+    end
   end
 
   def test_the_axes_may_be_named_here_too
@@ -257,11 +274,9 @@ class TestContractTerms < Minitest::Test
   # block below is one `jit_contract` compiles.
   def test_what_is_not_a_product_of_cells
     a, b = operands
-    factor = 2.0
     into = CArray.double(3, 2)
     assert_nil(CArray::JIT.contraction_of(proc { |i, j, k| Math.exp(a[i,k]) * b[k,j] }))
     assert_nil(CArray::JIT.contraction_of(proc { |i, k| a[i,k] / b[k,0] }))
-    assert_nil(CArray::JIT.contraction_of(proc { |i, j, k| a[i,k] * b[k,j] * factor }))
     assert_nil(CArray::JIT.contraction_of(proc { |i, j, k| into[i,j] = a[i,k] * b[k,j] }))
     assert_nil(CArray::JIT.contraction_of(proc { |i, j, k| t = a[i,k]; t * b[k,j] }))
   end
