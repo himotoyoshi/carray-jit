@@ -569,7 +569,13 @@ class CArray
           @uses_floor_divide ||= needs[:floor_divide]
           @uses_floor_modulo ||= needs[:floor_modulo]
         end
-        text = +"#include <stdint.h>\n#include <math.h>\n#include <complex.h>\n" \
+        # `stddef.h` is here for the signature's sake rather than the body's:
+        # a declaration may be written with `size_t` or `ptrdiff_t`, and that
+        # is the header those come from.  `stdio.h` happens to declare
+        # `size_t` as well, which is why the omission went unnoticed until
+        # `ptrdiff_t` was written down.
+        text = +"#include <stdint.h>\n#include <stddef.h>\n" \
+                "#include <math.h>\n#include <complex.h>\n" \
                 "#include <stdio.h>\n\n"
         unless @address_functions.empty?
           text << "/* The C functions the block called.  They arrive as\n" \

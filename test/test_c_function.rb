@@ -1329,6 +1329,20 @@ class TestCFunction < Minitest::Test
     assert_match(/uint64_t \*/, error.message)
   end
 
+  # `ptrdiff_t` is a type this reads, and for a while it was one the generated
+  # C could not compile: the preamble had `stdint.h` and, by luck, a `size_t`
+  # from `stdio.h`, and nothing that declares `ptrdiff_t`.  A signature is
+  # written in C's own spellings, so the headers those spellings live in
+  # belong to the preamble.
+  def test_a_signature_written_in_stddef_types_compiles
+    step = CArray.jit_function("ptrdiff_t (*)(ptrdiff_t offset)") { |offset|
+      offset - 1
+    }
+    assert_equal(-1, step.call(0))
+    assert_equal(41, step.call(42))
+    assert_match(/#include <stddef\.h>/, step.c_source)
+  end
+
   # And not through `#call` either, which is the same array reaching the same
   # C by the other road.  The block is what says what the body means, and the
   # block reaches an UNDEF and stops; the C would have read the number lying

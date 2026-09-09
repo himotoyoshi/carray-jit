@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a C declaration written with `ptrdiff_t` compiles. `size_t` and the
+  other `<stddef.h>` names have read since 0.1.0, but the C generated for a
+  body that took one declared no such type, so `CArray.jit_function("ptrdiff_t
+  (*)(ptrdiff_t)")` failed in the C compiler with `unknown type name`.
+  `size_t` was unaffected, by luck rather than by design.
+
 - New: `x.nan?` and `x.finite?`, which compile to C's `isnan` and `isfinite`
   and answer what Ruby answers. `nan?` is a Float's question: an Integer and
   a Complex have no method by that name and raise `NoMethodError` in Ruby, so
