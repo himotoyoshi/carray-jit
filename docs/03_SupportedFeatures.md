@@ -434,6 +434,27 @@ A borrowed function still goes through the pointer: there is no body here to pas
 
 A body that can fail is pasted like any other. Standing alone it reports a division with no divisor through a flag in its own compiled object, which is what `f.call(0)` reads to raise `ZeroDivisionError`; pasted, there is no such object around it, and the failure belongs to the kernel that is running -- so the pasted copy takes the kernel's error slot as a last argument and reports there. The same body called either way raises the same thing, and under a masked cell it reports nothing, exactly as the kernel's own arithmetic does.
 
+#### One of these calling another
+
+A function written here may call another one written here, and it is pasted rather than pointed at for the reason a kernel pastes it:
+
+```ruby
+root = CArray.jit_function("double root(double)") { |x|
+  raise "no square root of a negative" if x < 0
+  Math.sqrt(x)
+}
+
+hypot = CArray.jit_function("double (*)(double a, double b)") { |a, b|
+  root.call(a * a + b * b)
+}
+```
+
+`root`'s definition goes into `hypot`'s translation unit as a `static`, and `hypot` calls it by symbol -- so what leaves is still one self-contained object with one address, and the compiler can see through the call. A chain of them arrives together: a kernel that calls the outermost gets every body under it, with the helpers they want and the messages they raise.
+
+Which is what the error slot buys here too. `root` reports a failure, so the copy pasted into `hypot` takes the caller's slot, and `hypot`'s own copy takes its caller's -- however deep it goes, and whether the top of it is a kernel or a `#call` from Ruby. So `hypot.call(3.0, 4.0)` is `5.0`, and a body that hands `root` a negative raises the string `root` wrote, at whatever depth it was reached.
+
+This is the one thing a body may reach outside its parameters, and the next section says why it is not really an exception.
+
 #### A call may stand alone
 
 A call is the one thing in the subset that may be written as a statement:
@@ -463,9 +484,11 @@ A recursion is written the same way, which is what a body walking an array wants
 
 #### Its parameters are its whole surface
 
-A compiled function may not reach anything outside its parameter list -- not a number, not an array, not another compiled function. A captured number could be written into the C as a literal and a captured function's address as a constant, but either would put something in the compiled object that no cache key covers, and an object built for one capture would be handed back for another.
+A compiled function may not reach anything outside its parameter list -- not a number, not an array, not a function borrowed with `jit_extern`. A captured number could be written into the C as a literal and a borrowed function's address as a constant, but either would put something in the compiled object that no cache key covers, and an object built for one capture would be handed back for another. The borrowed one has a second reason: an address is all there is of it, and there is nowhere in a compiled object to keep one. A kernel is handed its addresses at call time; a function has no such moment.
 
-Two things fall out of that, and they are worth more than the restriction costs. The first is that `[source, return type, parameter types]` is a complete key: with nothing captured, the body's text settles which function it is. The second is that the compiled object is **pure C** -- it touches no Ruby value and references no Ruby symbol, so the address is safe to call from a thread that holds no GVL, and from a library that knows nothing about Ruby. That is more than a Ruby-defined callback usually manages.
+A function compiled here is the exception, and stays inside the rule that produced the restriction: what goes into the caller is the callee's body and the symbol standing over it, and that symbol -- which carries the digest of the body -- goes into the key. So two blocks spelled the same that call different functions are two functions, which is the whole of what the key had to settle.
+
+Two things fall out, and they are worth more than the restriction costs. The first is that `[source, return type, parameter types, the symbols it calls]` is a complete key: nothing else reaches the compiled object, so the body's text settles which function it is. The second is that the compiled object is **pure C** -- it touches no Ruby value and references no Ruby symbol, so the address is safe to call from a thread that holds no GVL, and from a library that knows nothing about Ruby. That is more than a Ruby-defined callback usually manages.
 
 What replaces capturing is what C already does: take a pointer.
 
@@ -572,7 +595,7 @@ Anything outside it raises `CArray::JIT::Unsupported`, naming the construct and 
 - `& | ^ ~ << >>` on integers, and `& | ^` on booleans; a shift is C's shift, which is what CArray's own `<<` compiles to
 - `(from...to).each { |j| ... }` and `n.times { |j| ... }`, an inner loop whose index reads but never writes; `next` and `break` inside it, and `next` in the kernel block to skip the cell
 - `while cond ... end`, and its modifier form, with `next` and `break` inside it; the condition is read at the top of every pass, and a local it reads must be a local before the loop.  `while true` is allowed where the body holds a `break` or a `raise`, and refused where it holds neither
-- a call to a C function -- one from `jit_extern` or `jit_function`, or the function's own name inside its body -- as an expression, and *as a statement*, where its value is dropped as Ruby drops it and what it did is wherever its pointer parameters pointed. It is the only call that may stand alone; a `void` function -- borrowed or written here -- may only be called there. Under a mask the call does not happen (see [Calling a C function](#a-call-may-stand-alone))
+- a call to a C function -- one from `jit_extern` or `jit_function`, the function's own name inside its body, or, inside a `jit_function` body, another function written with `jit_function` -- as an expression, and *as a statement*, where its value is dropped as Ruby drops it and what it did is wherever its pointer parameters pointed. It is the only call that may stand alone; a `void` function -- borrowed or written here -- may only be called there. Under a mask the call does not happen (see [Calling a C function](#a-call-may-stand-alone))
 - assignment to a cell: `out[i] = ...`, at a cell the loop walks onto -- every axis of it either walks with an index at no offset or is pinned, so `out[i, 0]` writes a column and `out[i, i]` a diagonal.  Pin every axis and nothing walks: `box[0] = ...` writes one cell for every iteration and keeps the last, as the same Ruby loop does.  A pinned position is checked against the extent before the first cell, so reaching outside is a message rather than a store past the end
 
 **Rejected**

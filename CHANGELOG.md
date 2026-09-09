@@ -39,6 +39,16 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a function compiled with `CArray.jit_function` may call another one
+  compiled with `CArray.jit_function`, by the name the block reaches it by --
+  `hypot = CArray.jit_function("double (*)(double, double)") { |a, b|
+  root.call(a * a + b * b) }`. The called body is pasted into the caller's C
+  and reached by symbol, so what comes back is still one self-contained
+  object with one address, and a chain of any depth arrives together with the
+  messages its bodies raise. Everything else a body closes over is refused as
+  before -- a number, an array, and a function bound with `jit_extern`, which
+  is only an address and has nowhere in a compiled object to live.
+
 - Change: naming a contraction's axes now replaces the convention rather than
   adding a clause to it. `CArray.jit_contract(:i, :j) { ... }` names all of
   the result's axes, so every index left out of the list is summed at however

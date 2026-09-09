@@ -126,7 +126,8 @@ CArray.jit_each { out = j0.call(x) }
 it directly rather than reaching it per cell through Fiddle. `from:` names the
 library; `nil` searches the process. `jit_function` compiles a body of your
 own, callable from a kernel, from Ruby, and by a C library that knows nothing
-about either.
+about either -- and from another `jit_function` body, which is the one thing
+such a body may reach outside its parameters.
 
 ---
 

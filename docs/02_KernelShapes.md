@@ -40,7 +40,7 @@ The last statement is what every cell of the result gets, so there is no output 
 
 An assignment is a statement with a value -- Ruby's rule, not a special case here -- so `CArray.jit_map { out = a + b }` writes `out` and hands the same value back. Which is why the two methods are split by what returns rather than by what is written: writing is the block's business either way.
 
-It is the same shape of block `CArray.jit_function` takes, and not the same thing. There, the loop belongs to whoever calls the function, so the body is reached through a pointer and may close over nothing. Here the loop is this compiler's and the body is inlined into it, so it costs no call and may reach a captured value, a `Math` function or a bound C function like any other kernel body.
+It is the same shape of block `CArray.jit_function` takes, and not the same thing. There, the loop belongs to whoever calls the function, so the body is reached through a pointer and may close over nothing but another function compiled the same way. Here the loop is this compiler's and the body is inlined into it, so it costs no call and may reach a captured value, a `Math` function or a bound C function like any other kernel body.
 
 #### Who drives the loop
 
