@@ -375,6 +375,8 @@ class CArray
         when 4 then raise ArgumentError,
                             "comparison with a NaN failed, so `clamp` has " \
                             "no answer"
+        when 5 then raise Math::DomainError,
+                            "Numerical argument is out of domain - gamma"
         else
           # `raise "..."` in the body.  The message did not come back through
           # the C -- it was registered when this was compiled -- so it is

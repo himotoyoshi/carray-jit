@@ -367,7 +367,11 @@ See [Locals](#locals-types-and-postfix-math) for what a local's type is otherwis
 
 ## Calling a C function
 
-`Math.erf` and `Math.erfc` are lowered like the rest -- Ruby calls those very functions, so the two agree to the bit. What is left of Ruby's `Math` is four names, and each says why rather than claiming C has no such function, which it does in every case: `gamma` is answered from a table of exact values for a small integer argument, which is not what `tgamma` computes; `lgamma` and `frexp` each answer with a *pair*, and a cell holds one number; and `ldexp`'s second argument is an exponent rather than a number, where a math call here computes every argument in the type of its result.
+`Math.erf` and `Math.erfc` are lowered like the rest -- Ruby calls those very functions, so the two agree to the bit.
+
+`Math.gamma` is lowered too, but not to `tgamma`: Ruby's answer is tgamma with two things around it, and both are reproduced. A whole number up to 23 is answered from the table of exact values Ruby answers it from -- written into the generated C, filled from the Ruby that compiled it, the way `Math::PI` is emitted as the double Ruby would have used -- and a negative whole number, or negative infinity, raises `Math::DomainError` with Ruby's own words where `tgamma` would answer with a NaN. A cell with no value in it does not raise, as everywhere else.
+
+What is left of Ruby's `Math` is three names, and each says why rather than claiming C has no such function, which it does in every case: `lgamma` and `frexp` each answer with a *pair*, and a cell holds one number; and `ldexp`'s second argument is an exponent rather than a number, where a math call here computes every argument in the type of its result.
 
 math.h is already handled: `Math.sqrt(x)` compiles to `sqrt(x)`, linked and inlinable. This is for everything else -- the Bessel functions in libm that Ruby has no `Math` method for, and, by the same route, anything in a library you can dlopen.
 

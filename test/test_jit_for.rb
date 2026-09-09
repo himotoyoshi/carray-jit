@@ -179,9 +179,7 @@ class TestJitFor < Minitest::Test
   def test_the_math_names_that_are_not_lowered
     values = CArray.double(2)
     out = CArray.double(2)
-    [[proc { CArray.jit_for(2) { |i| out[i] = Math.gamma(values[i]) } },
-      /a table of exact values, which is not what tgamma computes/],
-     [proc { CArray.jit_for(2) { |i| out[i] = Math.lgamma(values[i]) } },
+    [[proc { CArray.jit_for(2) { |i| out[i] = Math.lgamma(values[i]) } },
       /answer is a pair -- the value and the sign/],
      [proc { CArray.jit_for(2) { |i| out[i] = Math.frexp(values[i]) } },
       /answer is a pair -- the fraction and the exponent/],
@@ -194,6 +192,48 @@ class TestJitFor < Minitest::Test
       assert_match(reason, error.message)
       refute_match(/no math.h counterpart/, error.message)
     end
+  end
+
+  # `Math.gamma` is tgamma with Ruby's two answers around it: a table for a
+  # whole number, and a domain error where tgamma gives a NaN.
+  def test_the_gamma_function
+    inputs = (1..26).map(&:to_f) +
+             [0.5, 1.5, -0.5, -2.5, 171.5, 172.0, 0.0, -0.0, Float::INFINITY]
+    values = CArray.double(inputs.size) { |i| inputs[i] }
+    out = CArray.double(inputs.size)
+    CArray.jit_for(inputs.size) { |i| out[i] = Math.gamma(values[i]) }
+    inputs.each_with_index do |x, i|
+      assert_bits_equal(Math.gamma(x), out[i], "gamma of #{x}")
+    end
+
+    nan = CArray.double(1) { Float::NAN }
+    one = CArray.double(1)
+    CArray.jit_for(1) { |i| one[i] = Math.gamma(nan[i]) }
+    assert_predicate(one[0], :nan?)
+  end
+
+  # Where Ruby raises rather than answering, so does the kernel -- with
+  # Ruby's class and Ruby's words.
+  def test_gamma_outside_its_domain
+    [-1.0, -3.0, -Float::INFINITY].each do |x|
+      values = CArray.double(1) { x }
+      out = CArray.double(1)
+      error = assert_raises(Math::DomainError) do
+        CArray.jit_for(1) { |i| out[i] = Math.gamma(values[i]) }
+      end
+      in_ruby = assert_raises(Math::DomainError) { Math.gamma(x) }
+      assert_equal(in_ruby.message, error.message, "gamma of #{x}")
+    end
+  end
+
+  # A cell with no value in it does not raise, the rule every reported
+  # failure keeps.
+  def test_gamma_under_a_mask
+    values = CArray.double(1) { -1.0 }
+    values[0] = UNDEF
+    out = CArray.double(1)
+    CArray.jit_for(1) { |i| out[i] = Math.gamma(values[i]) }
+    assert_equal(UNDEF, out[0])
   end
 
   def test_conditional_expression

@@ -249,6 +249,8 @@ class CArray
         when 4 then raise ArgumentError,
                             "comparison with a NaN failed, so `clamp` has " \
                             "no answer"
+        when 5 then raise Math::DomainError,
+                            "Numerical argument is out of domain - gamma"
         else
           message = @raise_messages[code]
           # A code with no message behind it is this compiler's bug, not the

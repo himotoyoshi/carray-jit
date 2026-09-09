@@ -357,6 +357,7 @@ class CArray
         @uses_wrap = false
         @uses_real_arg = false
         @clamp_types = []
+        @gamma_types = []
         @complex_helpers = []
         @uses_floor_divide = false
         @uses_floor_modulo = false
@@ -483,6 +484,7 @@ class CArray
           :floor_modulo_float => @uses_floor_modulo_float,
           :real_arg => @uses_real_arg,
           :clamp => @clamp_types.dup,
+          :gamma => @gamma_types.dup,
           :complex => @complex_helpers.dup,
           :index_check => @uses_index_check,
           :floor_divide => @uses_floor_divide,
@@ -585,6 +587,7 @@ class CArray
           @uses_floor_modulo_float ||= needs[:floor_modulo_float]
           @uses_real_arg ||= needs[:real_arg]
           @clamp_types |= needs[:clamp] || []
+          @gamma_types |= needs[:gamma] || []
           @complex_helpers |= needs[:complex] || []
           @uses_index_check ||= needs[:index_check]
           @uses_floor_divide ||= needs[:floor_divide]
@@ -719,6 +722,46 @@ class CArray
             text << (narrow ? self.class.narrowed_complex_helper(definition)
                             : definition) << "\n"
           end
+        end
+        @gamma_types.each do |type|
+          suffix, c_type, gamma, modf = GAMMA_C_TYPES.fetch(type)
+          table = (1..GAMMA_TABLE_LIMIT).map { |whole|
+            format_float(Math.gamma(whole.to_f), type)
+          }
+          text << <<~C
+            /* `Math.gamma` is tgamma with Ruby's two answers around it: a
+               whole number up to #{GAMMA_TABLE_LIMIT} is answered from the table Ruby
+               answers it from, and a negative whole number -- where tgamma
+               gives a NaN -- is the domain error Ruby raises.  The values
+               are the ones the Ruby that compiled this holds. */
+            static const #{c_type} carray_jit_gamma_table_#{suffix}[#{GAMMA_TABLE_LIMIT}] = {
+              #{table.each_slice(4).map { |row| row.join(", ") }.join(",\n  ")}
+            };
+
+            static inline #{c_type}
+            carray_jit_gamma_#{suffix} (#{c_type} x, int32_t *error)
+            {
+              if ( isinf(x) ) {
+                if ( signbit(x) ) {
+                  if ( error ) *error = 5;
+                  return 0;
+                }
+                return x;
+              }
+              #{c_type} whole;
+              if ( #{modf}(x, &whole) == 0 ) {
+                if ( whole < 0 ) {
+                  if ( error ) *error = 5;
+                  return 0;
+                }
+                if ( 0 < whole && whole <= #{GAMMA_TABLE_LIMIT} ) {
+                  return carray_jit_gamma_table_#{suffix}[(int)whole - 1];
+                }
+              }
+              return #{gamma}(x);
+            }
+
+          C
         end
         @clamp_types.each do |type|
           suffix, c_type, has_nan = CLAMP_C_TYPES.fetch(type)
@@ -1777,6 +1820,20 @@ class CArray
         :uint64 => ["uint64", "uint64_t", false],
       }.freeze
 
+      # The widths `Math.gamma` is emitted for: the helper's suffix, the C
+      # type, and the C function it falls through to.
+      GAMMA_C_TYPES = {
+        :double => ["double", "double", "tgamma", "modf"],
+        :float  => ["float", "float", "tgammaf", "modff"],
+      }.freeze
+
+      # Ruby answers `Math.gamma` for a small whole number from a table of
+      # exact values rather than from tgamma, so the table is written into
+      # the C -- filled from the Ruby that is compiling, the way `Math::PI`
+      # is emitted as the double Ruby would have used.  Its length is Ruby's
+      # own: the table covers 1 through 23, and tgamma has the rest.
+      GAMMA_TABLE_LIMIT = 23
+
       ERROR_FLAG = "carray_jit_error"
 
       # A computation type this generator has no C for.  Nothing reaches here
@@ -2068,6 +2125,18 @@ class CArray
       end
 
       # `a[i] == UNDEF` reads the mask byte, never the value.
+      # `Math.gamma` is Ruby's, which is tgamma with two things around it: a
+      # table of exact values for a small integer argument, and the domain
+      # error Ruby raises where tgamma answers with a NaN.
+      def emit_gamma (node)
+        type = node.type
+        unhandled_type(node, "Math.gamma") unless GAMMA_C_TYPES.key?(type)
+        @gamma_types |= [type]
+        suffix, = GAMMA_C_TYPES.fetch(type)
+        ["carray_jit_gamma_#{suffix}(#{emit(node.arguments.first, type)}, " \
+         "#{error_argument})", LEAF_PRECEDENCE]
+      end
+
       # `x.clamp(low, high)` through a helper of its own width, so that each
       # of the three is computed once and the two failures Ruby raises for
       # are reported where they happen.
@@ -2375,6 +2444,7 @@ class CArray
           return ["(float _Complex)#{text}", UNARY_PRECEDENCE]
         end
         function = node.name.to_s
+        return emit_gamma(node) if function == "gamma"
         function += "f" if node.type == :float
         arguments = node.arguments.map { |argument| emit(argument, node.type) }
         ["#{function}(#{arguments.join(', ')})", LEAF_PRECEDENCE]

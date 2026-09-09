@@ -37,6 +37,9 @@ class CArray
         :hypot => "hypot",
         :erf   => "erf",
         :erfc  => "erfc",
+        # Not lowered to `tgamma` but to a helper, `Math.gamma` being what
+        # Ruby computes and tgamma only most of it -- see CGenerator.
+        :gamma => "gamma",
         :asinh => "asinh",
         :acosh => "acosh",
         :atanh => "atanh",
@@ -154,8 +157,6 @@ class CArray
       # `math.h` -- so the reason is the one that actually applies: what
       # Ruby computes and what C computes are not the same thing.
       REFUSED_MATH = {
-        :gamma  => "Ruby answers a small integer argument from a table of " \
-                   "exact values, which is not what tgamma computes",
         :lgamma => "Ruby's answer is a pair -- the value and the sign -- " \
                    "and a cell holds one number",
         :frexp  => "Ruby's answer is a pair -- the fraction and the " \
