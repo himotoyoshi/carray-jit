@@ -47,7 +47,9 @@ version you have and a newer one.
   object with one address, and a chain of any depth arrives together with the
   messages its bodies raise. Everything else a body closes over is refused as
   before -- a number, an array, and a function bound with `jit_extern`, which
-  is only an address and has nowhere in a compiled object to live.
+  is only an address and has nowhere in a compiled object to live. The name
+  may be a constant as well as a local, which is what lets a method reach
+  one: `def` closes over nothing.
 
 - Change: naming a contraction's axes now replaces the convention rather than
   adding a clause to it. `CArray.jit_contract(:i, :j) { ... }` names all of

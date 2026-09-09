@@ -643,14 +643,36 @@ class CArray
         names -= [own_name.to_sym] if own_name
         binding = binding_of(block)
         names.each_with_object({}) do |captured, found|
-          value = begin
-                    binding.local_variable_defined?(captured) &&
-                      binding.local_variable_get(captured)
-                  rescue NameError
-                    nil
-                  end
+          value = captured_value(captured, binding)
           found[captured] = value if value.is_a?(CFunction) && value.pasted?
         end
+      end
+
+      # What a name held where the block was written, or nil for one that
+      # held nothing.  A constant is looked up as well as a local, because a
+      # method body closes over nothing: a `def` that compiles a function
+      # reaches the one it calls by a constant or not at all.
+      def captured_value (name, binding)
+        if name.to_s.start_with?(/[A-Z]/)
+          binding.eval(name.to_s)
+        elsif binding.local_variable_defined?(name)
+          binding.local_variable_get(name)
+        end
+      rescue NameError
+        nil
+      end
+
+      # Whether the name held anything at all, which `captured_value` cannot
+      # say: a name holding nil and a name that is not there both come back
+      # as nil, and only one of them is worth a different message.
+      def captured_name_defined? (name, binding)
+        if name.to_s.start_with?(/[A-Z]/)
+          binding.eval("defined?(#{name})") ? true : false
+        else
+          binding.local_variable_defined?(name)
+        end
+      rescue NameError
+        false
       end
 
       def function_registry
@@ -808,11 +830,7 @@ class CArray
         captured -= [own_name] if own_name
         return if captured.empty?
         name = captured.first
-        value = begin
-                  binding_of(block).local_variable_get(name)
-                rescue NameError
-                  nil
-                end
+        value = captured_value(name, binding_of(block))
         if value.is_a?(CFunction)
           # A function compiled here is pasted into this one, so it is no
           # longer a capture at all -- it never reaches the list above.  One
@@ -824,6 +842,10 @@ class CArray
                 "`jit_extern` and so is only an address; a compiled function " \
                 "has nowhere to keep one. Take it as a parameter, or compile " \
                 "the body here with `CArray.jit_function`"
+        end
+        unless captured_name_defined?(name, binding_of(block))
+          raise Unsupported,
+                "`#{name}` is not defined where the block was written"
         end
         kind = value.is_a?(CArray) ? "an array" : "a value"
         raise Unsupported,

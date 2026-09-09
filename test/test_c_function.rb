@@ -15,6 +15,17 @@ require "tmpdir"
 # particular function and can only come from the call.
 class TestCFunction < Minitest::Test
 
+  SCALE_CONSTANT = 2.0
+  SQUARE_CONSTANT = CArray.jit_function("double square(double)") { |x| x * x }
+
+  # Written as a method rather than in the test body, because a method is
+  # the case: it closes over nothing, so the constant is the only way in.
+  def self.build_from_a_constant
+    CArray.jit_function("double (*)(double)") { |x|
+      SQUARE_CONSTANT.call(x) + 1.0
+    }
+  end
+
   def setup
     @j0 = CArray.jit_extern("double j0(double)")
     @tgamma = CArray.jit_extern("double tgamma(double)")
@@ -600,6 +611,29 @@ class TestCFunction < Minitest::Test
     assert_equal(CArray.double(3) { |i| (i + 1) }, CArray.jit_map { quarter.call(a) })
   end
 
+  # A method body closes over nothing, so a constant is the only name it can
+  # reach a compiled function by -- which makes this the case, not a corner
+  # of one.
+  def test_a_called_function_may_be_held_in_a_constant
+    assert_equal(10.0, TestCFunction.build_from_a_constant.call(3.0))
+  end
+
+  def test_a_constant_holding_something_else_is_refused_as_a_local_would_be
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double (*)(double)") { |x| x * SCALE_CONSTANT }
+    end
+    assert_match(/reaches `SCALE_CONSTANT`, which is a value outside it/,
+                 error.message)
+  end
+
+  def test_a_name_holding_nothing_says_so
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double (*)(double)") { |x| x * NO_SUCH_CONSTANT }
+    end
+    assert_match(/`NO_SUCH_CONSTANT` is not defined where the block was written/,
+                 error.message)
+  end
+
   def test_a_body_calls_another_beside_calling_itself
     half = CArray.jit_function("double half(double)") { |x| x / 2 }
     down = CArray.jit_function("double down(double n)") { |n|
@@ -949,7 +983,10 @@ class TestCFunction < Minitest::Test
   # position too: a function pointer type names nothing.
   def test_an_anonymous_function_has_nothing_to_recurse_through
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_function("double (*)(double)") { |n|
+      # As it would be written: the assignment has made `fact` a local
+      # before the block is compiled, and what it holds at that moment is
+      # nothing.  So it is refused as any other captured value is.
+      fact = CArray.jit_function("double (*)(double)") { |n|
         n <= 1.0 ? 1.0 : n * fact.call(n - 1.0)
       }
     end

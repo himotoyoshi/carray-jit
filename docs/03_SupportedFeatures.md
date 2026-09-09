@@ -449,6 +449,8 @@ hypot = CArray.jit_function("double (*)(double a, double b)") { |a, b|
 }
 ```
 
+The name may be a constant as well as a local, and for a method there is no other way: a `def` closes over nothing, so `SQUARE.call(x)` is how a compiled body reaches another one from inside a method. A constant is looked up where the block was written, as it is for a kernel.
+
 `root`'s definition goes into `hypot`'s translation unit as a `static`, and `hypot` calls it by symbol -- so what leaves is still one self-contained object with one address, and the compiler can see through the call. A chain of them arrives together: a kernel that calls the outermost gets every body under it, with the helpers they want and the messages they raise.
 
 Which is what the error slot buys here too. `root` reports a failure, so the copy pasted into `hypot` takes the caller's slot, and `hypot`'s own copy takes its caller's -- however deep it goes, and whether the top of it is a kernel or a `#call` from Ruby. So `hypot.call(3.0, 4.0)` is `5.0`, and a body that hands `root` a negative raises the string `root` wrote, at whatever depth it was reached.
