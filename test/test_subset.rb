@@ -35,11 +35,26 @@ class TestSubset < Minitest::Test
     refuse("->(i) { a[i] = Math.frexp(a[i]) }", /Math.frexp has no math.h counterpart/)
   end
 
-  # An inner index addresses reads only: the loop it belongs to runs inside
-  # one cell of the outer ones, so there is no cell of its own to write.
+  # An inner index addresses a write as an outer one does: its loop states
+  # its extent, so the cell it reaches is known and is bounds-checked with
+  # the rest.  Every outer iteration lands on the same four cells here, which
+  # is what the same Ruby loop does.
   def test_writing_through_an_inner_index
-    refuse("->(i) { 4.times { |j| a[j] = 1.0 } }",
-           /is addressed by i, by a position fixed before the loop runs/)
+    values = CArray.double(4)
+    CArray.jit_for(3) { |i| 4.times { |j| values[j] = j + 1.0 } }
+    assert_equal([1.0, 2.0, 3.0, 4.0], values.to_a)
+  end
+
+  # A write is still addressed by an index or a value, not by a mixture of a
+  # displaced one and a scatter -- there is no single reach to check that in
+  # advance.
+  def test_writing_at_a_displaced_index_and_a_computed_one
+    work = CArray.double(3, 4)
+    where = CArray.int32(3) { |i| i }
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(3) { |i| work[i+1, where[i]] = 1.0 }
+    end
+    assert_match(/`work\[\.\.\.\]` on the left of `=` is addressed by/, error.message)
   end
 
   # A displaced write is a write like any other -- `out[i + 1]` reaches a

@@ -39,6 +39,23 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: an inner loop's index may address a write, so a cell can be given a
+  row of workspace -- `(0...width).each { |k| work[i, k] = ... }` fills it,
+  and `work[i, k]` reads it back inside the same cell. That is what an
+  algorithm needing a few numbers per cell is written with: a small dense
+  solve, a tableau, a sweep and the pass back down it, in one kernel rather
+  than in several that each pay a call. The cell is bounds-checked before the
+  kernel runs, as one addressed by `i` is. Inside the row the body may do as
+  it likes -- sort it, walk it backwards, write at a position it works out --
+  which is what a median filter needs and what no extra axis can say. Reading
+  an array the kernel writes through an inner index is still refused where
+  the read leaves the cell the outer indices picked: a read carrying an inner
+  index addresses every axis some write walks with an outer index with that
+  same index, at whatever offset, or it reaches cells another outer iteration
+  owns. Where the sweep can be said as an extra axis instead --
+  `jit_for(rows, 1...width)` -- that remains the faster form once the rows
+  are long.
+
 - New: a function compiled with `CArray.jit_function` may call another one
   compiled with `CArray.jit_function`, by the name the block reaches it by --
   `hypot = CArray.jit_function("double (*)(double, double)") { |a, b|

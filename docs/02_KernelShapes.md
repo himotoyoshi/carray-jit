@@ -261,7 +261,7 @@ CArray.jit_for(rows) { |i|
 
 The accumulator is split into partial sums, which is faster than the serial chain and usually the more accurate answer, and is not the order the same loop would take in Ruby. `reassociate: false` asks for that order; see "The order a reduction takes its terms in" below.
 
-What makes it expressible is `(from...to).each { |j| ... }` -- or `n.times { |j| ... }`, which is the same loop from zero: an inner loop whose index addresses arrays but writes nothing. The accumulator is then an ordinary block-local, which is why sum, maximum, product, count and a dot product all fall out without a primitive each -- and why a matrix multiply does too:
+What makes it expressible is `(from...to).each { |j| ... }` -- or `n.times { |j| ... }`, which is the same loop from zero. The accumulator is then an ordinary block-local, which is why sum, maximum, product, count and a dot product all fall out without a primitive each -- and why a matrix multiply does too:
 
 ```ruby
 CArray.jit_for(rows, columns) { |i, j|
@@ -304,7 +304,7 @@ How many times the outer loop runs does not enter into it: both sides scale with
 
 Writing the whole thing as one kernel has no such threshold: it beats the Ruby loop at every size on this table, and by two orders of magnitude once there is real work.
 
-A constant subscript pins an axis: `a[i, 0]` and `a[i, j]` on the same array is ordinary. An array the kernel *writes* cannot be read through an inner index, because that would reach cells another outer iteration owns and no evaluation order settles it.
+A constant subscript pins an axis: `a[i, 0]` and `a[i, j]` on the same array is ordinary.
 
 ```
 row sums over 2000 x 500
@@ -352,6 +352,49 @@ The licence is part of the kernel rather than of the call -- it decides what C i
 The matrix multiply carries a different subtlety -- it is a plain triple loop and not a blocked GEMM, so BLAS is still an order of magnitude away.
 
 So this is not a faster `sum`. It is a way to write the reduction that has no `sum`.
+
+## A row of workspace per cell
+
+An inner index addresses a write as well as a read, which is what gives a cell a **row of workspace**: `work[i, k] = ...` fills it, and `work[i, k]` reads it back inside the same cell. That is what an algorithm needing a few numbers per cell is written with -- a small dense solve, a tableau -- and it is the alternative to splitting the body into kernels that each pay a call:
+
+```ruby
+CArray.jit_for(rows) { |i|                       # a tridiagonal solve per row
+  swept[i, 0] = upper[i, 0] / diagonal[i, 0]
+  carried[i, 0] = right[i, 0] / diagonal[i, 0]
+  (1...width).each { |k|
+    denominator = diagonal[i, k] - lower[i, k] * swept[i, k-1]
+    swept[i, k] = upper[i, k] / denominator
+    carried[i, k] = (right[i, k] - lower[i, k] * carried[i, k-1]) / denominator
+  }
+  answer[i, width-1] = carried[i, width-1]
+  (0...(width-1)).each { |t|                     # an inner loop counts up, so
+    k = width - 2 - t                            # a downward sweep says so here
+    answer[i, k] = carried[i, k] - swept[i, k] * answer[i, k+1]
+  }
+}
+```
+
+The cell an inner index reaches is bounds-checked before the kernel runs, as `i`'s is: its loop states its extent the same way an extent does. Two outer iterations landing on the same cell is not an ambiguity either -- the extent states the order, so the array holds what the same Ruby loop would have left in it.
+
+Which cells are the cell's own is decided by the axes the **outer** indices pick it by. So a read carrying an inner index has to walk those axes with the same outer index -- at whatever offset, `work[i-1, k]` being the row before this one and a recurrence like any other displaced read. Inside the row the body may do as it likes: sort it, walk it backwards, land on a position it works out. This is a median filter, which has no expression as an extra axis at all -- the window has to be somewhere while it is being sorted:
+
+```ruby
+CArray.jit_for(half...(n-half)) { |i|
+  (0...width).each { |k| window[i, k] = signal[i - half + k] }
+  (1...width).each { |k|                             # insertion sort, in place
+    key = window[i, k]
+    placed = k - 1
+    while placed >= 0 && window[i, placed] > key
+      window[i, placed+1] = window[i, placed]
+      placed = placed - 1
+    end
+    window[i, placed+1] = key
+  }
+  median[i] = window[i, half]
+}
+```
+
+What stays refused is the read that leaves the cell: `values[i] = ...` read at `values[j]` for an inner `j` reaches cells another outer iteration owns, and no evaluation order settles that. The message names the axis and what writes it.
 
 ## Contraction
 

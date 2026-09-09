@@ -307,6 +307,7 @@ class CArray
         @array_ranks = {}
         @inner_ranges = {}
         @subscripts = Hash.new { |hash, key| hash[key] = [] }
+        @write_subscripts = Hash.new { |hash, key| hash[key] = [] }
         @given_rank = rank
         @steps = steps
         @contract = contract
@@ -377,18 +378,29 @@ class CArray
       end
 
       # A write is addressed the way a read is: every axis either walks with an
-      # outer index, at whatever offset, or is pinned at a position known
-      # before the first cell.
+      # index the kernel is running -- an outer one or an inner one, at
+      # whatever offset -- or is pinned at a position known before the first
+      # cell.
       #
       # Two iterations may land on the same cell -- `box[0]` puts every one of
       # them there -- and that is not an ambiguity: the extent states the
       # order, so what the array holds afterwards is what the same Ruby loop
       # would leave in it.  An inner loop already rests on exactly that, an
       # accumulator being one cell written once per pass.
+      #
+      # An inner index is in that position and not a weaker one: its loop
+      # states its extent the way the kernel's own extents do, so the cell it
+      # reaches is as knowable as `i`'s and is bounds-checked with it.  What
+      # the write is for is a row of workspace per outer cell -- filling one
+      # and walking back down it is the shape a small dense solve has, and it
+      # was the reason to add an axis rather than split a body into kernels
+      # that each pay a call.  It was refused until it was noticed that
+      # `kk = k + 0` on the way in compiled it anyway, as a scatter: the rule
+      # was stopping the spelling rather than the thing.
       def walking_subscripts? (subscripts)
         subscripts.all? { |index, offset|
           if index
-            @outer_names.include?(index)
+            index_in_scope?(index)
           else
             !offset.is_a?(Node) || Analyzer.fixed_subscript?(offset)
           end
@@ -544,20 +556,49 @@ class CArray
         end
       end
 
-      # An array the kernel writes is written once per outer cell; reading it
-      # through an inner index would reach cells other outer iterations own,
-      # and no evaluation order settles that.
+      # An array the kernel writes at `a[i]` is written once per outer cell,
+      # and reading it at `a[j]` for an inner `j` would reach cells other
+      # outer iterations own -- an order no extent states.
+      #
+      # What decides that is the axis the outer indices pick the cell by, not
+      # the array.  `work[i, k] = ...` gives outer cell i a row of its own,
+      # and `work[i, k]`, `work[i, j]` or `work[i, position]` are that row
+      # being read back inside the same cell, in the order the body states.
+      # So a read carrying an inner index has to address every axis some
+      # write walks with an outer index with that same index -- at whatever
+      # offset, `work[i-1, k]` being the row before this one and a recurrence
+      # like any other displaced read.  Where it does, the inner index is
+      # roaming inside the cell the outer ones already picked, and whatever
+      # the writes do along that axis they do there too.
       def verify_written_arrays_are_not_read_through_inner_indices
         @written_arrays.each do |array|
+          writes = @write_subscripts[array]
           @subscripts[array].each do |per_axis|
-            per_axis.each do |index, _|
-              next unless @inner_names_seen.include?(index)
+            inner = per_axis.map(&:first).find { |index|
+              @inner_names_seen.include?(index)
+            }
+            next unless inner
+            per_axis.each_with_index do |(index, _), axis|
+              name = outer_name_written(writes, axis)
+              next if name.nil? || name == index
               raise Unsupported.new(
-                "`#{array}` is written by this kernel, so it cannot also be " \
-                "read through the inner index `#{index}`")
+                "`#{array}` is written on axis #{axis} through `#{name}`, " \
+                "so it cannot also be read through the inner index " \
+                "`#{inner}`: a read that carries one addresses axis " \
+                "#{axis} through `#{name}` too, or it reaches cells another " \
+                "outer iteration owns")
             end
           end
         end
+      end
+
+      # The outer index the writes walk one axis with, where they agree on
+      # one.  Writes that pin the axis or work its position out say nothing
+      # about which cell is whose, and so name nothing here.
+      def outer_name_written (writes, axis)
+        names = writes.map { |written| written[axis]&.first }
+                      .select { |name| @outer_names.include?(name) }.uniq
+        names.size == 1 ? names.first : nil
       end
 
       # Turns `c[i,j] = a[i,k] * b[k,j]` into the loops it stands for.
@@ -1222,23 +1263,24 @@ class CArray
             node.location)
         end
         subscripts = read_subscripts(array, arguments[0..-2], node.location)
-        # A kernel writes a cell its own indices reach -- or one it works out,
-        # which is a scatter and is checked as it is reached rather than in
-        # advance.  What it may not do is write through an index that is not
-        # the loop's: an inner index addresses reads only.
+        # A kernel writes a cell one of its own indices reaches -- an outer
+        # one or an inner one -- or one it works out, which is a scatter and
+        # is checked as it is reached rather than in advance.  What it may not
+        # do is write through a name that addresses no cell at all.
         #
         # In a contraction the left-hand side names which indices are free and
         # which are summed over, so it is checked there instead.
         unless @contract || walking_subscripts?(subscripts) ||
                computed_subscripts?(subscripts)
           raise Unsupported.new(
-            "a kernel writes through its own indices, so `#{array}[...]` on " \
-            "the left of `=` is addressed by #{@outer_names.join(', ')}, by a " \
-            "position fixed before the loop runs -- or by a value the kernel " \
-            "works out, which is a scatter",
+            "a kernel writes through the indices it is running, so " \
+            "`#{array}[...]` on the left of `=` is addressed by " \
+            "#{available_indices}, by a position fixed before the loop runs " \
+            "-- or by a value the kernel works out, which is a scatter",
             node.location)
         end
         record_subscripts(array, subscripts)
+        record_write_subscripts(array, subscripts)
         @written_arrays << array unless @written_arrays.include?(array)
         if undef_constant?(arguments.last)
           @uses_undef = true
@@ -1676,6 +1718,15 @@ class CArray
 
       def record_subscripts (array, subscripts)
         @subscripts[array] << subscripts unless @subscripts[array].include?(subscripts)
+      end
+
+      # Kept apart from the reads because the two are asked different
+      # questions: every use of an array decides the box a view is
+      # transferred in, while only the writes say which axes the kernel owns
+      # a cell of.
+      def record_write_subscripts (array, subscripts)
+        list = @write_subscripts[array]
+        list << subscripts unless list.include?(subscripts)
       end
 
       def array_name (receiver, location)
