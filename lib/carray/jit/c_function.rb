@@ -136,6 +136,16 @@ class CArray
         pasted? && @takes_error
       end
 
+      # The declaration under the name the block reached it by.  What a
+      # message about a call should say: the caller wrote `f`, and the symbol
+      # a body compiled here carries -- `carray_jit_two_<digest>` -- along
+      # with the file it was written in are answers to a question nobody
+      # asked there.  Those stay in `to_s`, which names the object rather
+      # than the call.
+      def declaration_as (name)
+        "#{@return_type.text} #{name}(#{@parameters.map(&:text).join(', ')})"
+      end
+
       # The signature, without the address.
       def signature
         [@return_type.text, @parameters.map(&:text)]

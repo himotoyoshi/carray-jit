@@ -634,6 +634,20 @@ class TestCFunction < Minitest::Test
                  error.message)
   end
 
+  # The message is about the call, so it spells the function the way the
+  # call did.  A body compiled here has a mangled symbol and a file behind
+  # it, and neither answers a question the caller asked.
+  def test_a_miscounted_call_names_the_function_as_the_block_did
+    two = CArray.jit_function("double two(double, double)") { |a, b| a + b }
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double (*)(double)") { |x| two.call(x) }
+    end
+    assert_match(/`two` is `double two\(double, double\)`, so it takes 2 arguments/,
+                 error.message)
+    refute_match(/carray_jit_/, error.message)
+    refute_match(/test_c_function\.rb/, error.message)
+  end
+
   def test_a_body_calls_another_beside_calling_itself
     half = CArray.jit_function("double half(double)") { |x| x / 2 }
     down = CArray.jit_function("double down(double n)") { |n|

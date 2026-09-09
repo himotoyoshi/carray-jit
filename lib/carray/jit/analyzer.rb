@@ -1592,7 +1592,8 @@ class CArray
         arguments = node.arguments ? node.arguments.arguments : []
         unless arguments.size == c_function.arity
           raise Unsupported.new(
-            "`#{name}` is `#{c_function}`, so it takes #{c_function.arity} " \
+            "`#{name}` is `#{c_function.declaration_as(name)}`, so it takes " \
+            "#{c_function.arity} " \
             "#{c_function.arity == 1 ? 'argument' : 'arguments'}; " \
             "#{arguments.size} #{arguments.size == 1 ? 'was' : 'were'} given",
             node.location)
