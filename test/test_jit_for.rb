@@ -144,6 +144,58 @@ class TestJitFor < Minitest::Test
     10.times { |i| assert_bits_equal(expected[i], values[i], "cell #{i}") }
   end
 
+  # `erf` and `erfc` are 1:1 with math.h -- Ruby calls those very functions
+  # -- so the two agree to the bit, infinities included.
+  def test_the_error_function
+    inputs = [0.0, 0.5, -3.0, 1e-8, 30.0, Float::INFINITY, -Float::INFINITY]
+    values = CArray.double(inputs.size) { |i| inputs[i] }
+    integral = CArray.double(inputs.size)
+    complement = CArray.double(inputs.size)
+
+    CArray.jit_for(inputs.size) { |i|
+      integral[i] = Math.erf(values[i])
+      complement[i] = Math.erfc(values[i])
+    }
+
+    inputs.each_with_index do |x, i|
+      assert_bits_equal(Math.erf(x), integral[i], "erf of #{x}")
+      assert_bits_equal(Math.erfc(x), complement[i], "erfc of #{x}")
+    end
+  end
+
+  # A float32 cell is worked on narrow, so the call is `erff` -- the rule
+  # every other libm call over that cell already takes.
+  def test_the_error_function_on_a_float32
+    values = CArray.float32(2) { |i| [0.5, -1.0][i] }
+    out = CArray.float32(2)
+    kernel = CArray.jit_for(2) { |i| out[i] = Math.erf(values[i]) }
+    assert_includes(kernel.c_source, "erff(")
+    assert_in_delta(Math.erf(0.5), out[0], 1e-7)
+    assert_in_delta(Math.erf(-1.0), out[1], 1e-7)
+  end
+
+  # The names Ruby's Math has that this does not lower say why, and the
+  # reason is never that C has no such function -- it has all four.
+  def test_the_math_names_that_are_not_lowered
+    values = CArray.double(2)
+    out = CArray.double(2)
+    [[proc { CArray.jit_for(2) { |i| out[i] = Math.gamma(values[i]) } },
+      /a table of exact values, which is not what tgamma computes/],
+     [proc { CArray.jit_for(2) { |i| out[i] = Math.lgamma(values[i]) } },
+      /answer is a pair -- the value and the sign/],
+     [proc { CArray.jit_for(2) { |i| out[i] = Math.frexp(values[i]) } },
+      /answer is a pair -- the fraction and the exponent/],
+     [proc { CArray.jit_for(2) { |i| out[i] = Math.ldexp(values[i], 3) } },
+      /second argument is an exponent rather than a number/],
+     [proc { CArray.jit_for(2) { |i| out[i] = Math.nosuch(values[i]) } },
+      /Math.nosuch is not a name this compiles/],
+    ].each do |attempt, reason|
+      error = assert_raises(CArray::JIT::Unsupported) { attempt.call }
+      assert_match(reason, error.message)
+      refute_match(/no math.h counterpart/, error.message)
+    end
+  end
+
   def test_conditional_expression
     values = CArray.double(12)
     values[0] = 10.0

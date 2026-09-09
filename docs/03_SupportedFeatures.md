@@ -367,6 +367,8 @@ See [Locals](#locals-types-and-postfix-math) for what a local's type is otherwis
 
 ## Calling a C function
 
+`Math.erf` and `Math.erfc` are lowered like the rest -- Ruby calls those very functions, so the two agree to the bit. What is left of Ruby's `Math` is four names, and each says why rather than claiming C has no such function, which it does in every case: `gamma` is answered from a table of exact values for a small integer argument, which is not what `tgamma` computes; `lgamma` and `frexp` each answer with a *pair*, and a cell holds one number; and `ldexp`'s second argument is an exponent rather than a number, where a math call here computes every argument in the type of its result.
+
 math.h is already handled: `Math.sqrt(x)` compiles to `sqrt(x)`, linked and inlinable. This is for everything else -- the Bessel functions in libm that Ruby has no `Math` method for, and, by the same route, anything in a library you can dlopen.
 
 There are two of these, because they do two different things. `jit_extern` finds a function someone else compiled, which is Fiddle's job and involves no compiler at all -- `extern` is C's own word for a body that lives elsewhere. `jit_function` compiles a body of your own, which is this gem's job. They hand back the same kind of object, so a kernel calls either without knowing which it has, and `compiled?` is where the difference stays visible.

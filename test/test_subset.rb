@@ -31,8 +31,9 @@ class TestSubset < Minitest::Test
     refuse("->(i) { a[i] = a[i].to_r }", /unsupported method `to_r`/)
   end
 
-  def test_math_function_without_c_counterpart
-    refuse("->(i) { a[i] = Math.frexp(a[i]) }", /Math.frexp has no math.h counterpart/)
+  def test_a_math_function_ruby_does_not_compute_the_c_way
+    refuse("->(i) { a[i] = Math.frexp(a[i]) }",
+           /Math.frexp is not compiled: Ruby's answer is a pair/)
   end
 
   # An inner index addresses a write as an outer one does: its loop states

@@ -35,6 +35,8 @@ class CArray
         :cosh  => "cosh",
         :tanh  => "tanh",
         :hypot => "hypot",
+        :erf   => "erf",
+        :erfc  => "erfc",
         :asinh => "asinh",
         :acosh => "acosh",
         :atanh => "atanh",
@@ -144,6 +146,23 @@ class CArray
         :arg       => :arg,
         :angle     => :arg,
         :phase     => :arg,
+      }.freeze
+
+      # The rest of Ruby's Math, and why each is not lowered.  C has a
+      # function by every one of these names -- saying it does not would be
+      # untrue, and it was what this said until the list was read against
+      # `math.h` -- so the reason is the one that actually applies: what
+      # Ruby computes and what C computes are not the same thing.
+      REFUSED_MATH = {
+        :gamma  => "Ruby answers a small integer argument from a table of " \
+                   "exact values, which is not what tgamma computes",
+        :lgamma => "Ruby's answer is a pair -- the value and the sign -- " \
+                   "and a cell holds one number",
+        :frexp  => "Ruby's answer is a pair -- the fraction and the " \
+                   "exponent -- and a cell holds one number",
+        :ldexp  => "its second argument is an exponent rather than a " \
+                   "number, and a math call here computes every argument " \
+                   "in the type of its result",
       }.freeze
 
       # Constants under Math, emitted as literals so that the C sees exactly
@@ -2267,8 +2286,12 @@ class CArray
       def build_math_call (node)
         function = MATH_FUNCTIONS[node.name]
         unless function
-          raise Unsupported.new("Math.#{node.name} has no math.h counterpart",
-                                node.location)
+          if (reason = REFUSED_MATH[node.name])
+            raise Unsupported.new("Math.#{node.name} is not compiled: " \
+                                  "#{reason}", node.location)
+          end
+          raise Unsupported.new(
+            "Math.#{node.name} is not a name this compiles", node.location)
         end
         arguments = node.arguments ? node.arguments.arguments : []
         expected = [:atan2, :hypot].include?(node.name) ? 2 : 1

@@ -39,6 +39,22 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `Math.erf` and `Math.erfc`, which are 1:1 with math.h's `erf` and
+  `erfc` -- Ruby calls those very functions, so a kernel and the Ruby loop
+  agree to the bit, infinities included. A float32 cell is worked on narrow
+  and so gets `erff`, as it gets `sinf`. There is no postfix `x.erf`:
+  `CArray::CoreExtensions` does not provide one, and this compiles the
+  refinement's names rather than inventing them.
+
+- Change: the four names left in Ruby's `Math` say why they are not lowered
+  rather than saying that C has no counterpart, which was untrue of all four
+  -- `tgamma`, `lgamma`, `frexp` and `ldexp` all exist. `Math.gamma` answers
+  a small integer argument from a table of exact values, which `tgamma` does
+  not; `Math.lgamma` and `Math.frexp` each answer with a pair, and a cell
+  holds one number; `Math.ldexp` takes an exponent where a math call here
+  computes every argument in the type of its result. A name Ruby's `Math`
+  does not have says that instead of guessing at a reason.
+
 - New: `x.clamp(low, high)`, which answers the value or whichever bound it
   ran past. The value and both bounds have to be one class: Ruby hands back
   the receiver in one branch and a bound in the other, so `1.clamp(0.0, 3.0)`
