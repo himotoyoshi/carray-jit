@@ -74,6 +74,11 @@ class CArray
       #     `nil` for one found elsewhere.
       attr_reader :name, :prototype, :return_type, :parameters, :pointer,
                   :block, :c_source, :origin, :definition, :helpers,
+                  # The compiled functions this body calls.  Whoever pastes
+                  # the definition has to paste these beside it: it reaches
+                  # them by symbol, and the symbol is only there if the
+                  # definition is.
+                  :dependencies,
                   # What `raise` in the body said, by the code it reports.
                   # The kernel that pastes it answers for these too.
                   :raise_messages
@@ -81,7 +86,7 @@ class CArray
       def initialize (name, prototype, return_type, parameters, pointer,
                       block: nil, c_source: nil, origin: nil, error: nil,
                       definition: nil, helpers: nil, takes_error: false,
-                      raise_messages: {})
+                      raise_messages: {}, dependencies: [])
         @name = name && name.to_sym
         @prototype = prototype
         @return_type = return_type
@@ -95,6 +100,7 @@ class CArray
         # what it wants from a preamble -- what a kernel needs to paste it.
         @definition = definition
         @helpers = helpers
+        @dependencies = dependencies
         # True when that definition ends in an `int32_t *`: the body can report
         # a failure, and pasted it reports into the caller's slot rather than
         # into the flag in its own object.
@@ -608,12 +614,43 @@ class CArray
 
       def compile_c_function (prototype, name, return_type, parameters, block)
         node, source, origin = read_block(block)
-        key = [source, return_type.text, parameters.map(&:text), name]
+        # A function this body calls is pasted into it, so which one it is
+        # belongs in the key beside the body's own text.  Two blocks spelled
+        # the same that reach different functions are different functions,
+        # and without this the first compiled would be handed back for the
+        # second -- quietly, since nothing about them differs to look at.
+        # `kernel_key` is what a kernel already keys a pasted body by: the
+        # signature and the symbol, which carries the digest of the body.  A
+        # symbol rather than an address, so the key means the same thing in
+        # the next process as in this one.
+        called = called_functions(source, node, block, name)
+        key = [source, return_type.text, parameters.map(&:text), name,
+               called.values.map(&:kernel_key)]
         found = function_registry[key]
         return found if found
         function_registry[key] =
           build_c_function(prototype, name, return_type, parameters,
-                      source, node, origin, block, function_symbol(name, key))
+                      source, node, origin, block, function_symbol(name, key),
+                      called)
+      end
+
+      # The compiled functions the block reaches for, by the name it reaches
+      # them by.  Only these: everything else it closes over is refused, and
+      # `refuse_captures` is where that is said.  This runs before the
+      # registry is consulted, because the key cannot be built without it.
+      def called_functions (source, node, block, own_name)
+        names = capture_names(source, node) - block.parameters.map(&:last)
+        names -= [own_name.to_sym] if own_name
+        binding = binding_of(block)
+        names.each_with_object({}) do |captured, found|
+          value = begin
+                    binding.local_variable_defined?(captured) &&
+                      binding.local_variable_get(captured)
+                  rescue NameError
+                    nil
+                  end
+          found[captured] = value if value.is_a?(CFunction) && value.pasted?
+        end
       end
 
       def function_registry
@@ -621,7 +658,7 @@ class CArray
       end
 
       def build_c_function (prototype, name, return_type, parameters,
-                       source, node, origin, block, symbol)
+                       source, node, origin, block, symbol, called = {})
         # A function is a function of its parameters.  Whatever else the block
         # reaches for is refused, and the reason differs by what it is -- so
         # the captures are looked at before the body is walked, or the body
@@ -633,7 +670,8 @@ class CArray
                 "#{parameters.size == 1 ? 'parameter' : 'parameters'}, and " \
                 "the block takes #{names.size}"
         end
-        refuse_captures(source, node, block, names, name && name.to_sym)
+        refuse_captures(source, node, block, names + called.keys,
+                        name && name.to_sym)
 
         # `void` is a return type a body may have: a function whose work is
         # through its pointer parameters has nothing to hand back, and C says
@@ -668,6 +706,7 @@ class CArray
         analyzer = Analyzer.new(source, node: node, function: true,
                                 returns: !returns_nothing,
                                 pointers: pointers,
+                                c_functions: called,
                                 recursion: (name && [name.to_sym, parameters,
                                                      return_type.computation]))
         names = analyzer.parameter_names
@@ -707,10 +746,11 @@ class CArray
         types = names.zip(parameters).reject { |_, type| type.pointer }
                      .to_h { |parameter, type| [parameter, type.computation] }
 
-        assignment = TypeAssignment.new(analyzer.body, {}, {}, {},
+        assignment = TypeAssignment.new(analyzer.body, {}, {}, called,
                                         scalar_types: types,
                                         pointer_types: pointer_types)
         generator = CGenerator.new(analyzer, {}, assignment.scalar_types,
+                                   c_functions: called,
                                    origin: origin, block_source: source)
         c_source = generator.generate_function(
           symbol, names, parameters, return_type.text, return_type.computation)
@@ -728,6 +768,7 @@ class CArray
         pasted = generator
         if generator.uses_error_flag?
           pasted = CGenerator.new(analyzer, {}, assignment.scalar_types,
+                                  c_functions: called,
                                   origin: origin, block_source: source)
           pasted.generate_function(symbol, names, parameters, return_type.text,
                                    return_type.computation,
@@ -738,6 +779,7 @@ class CArray
                   origin: origin, error: error,
                   definition: pasted.function_definition,
                   helpers: pasted.helper_needs,
+                  dependencies: called.values,
                   takes_error: generator.uses_error_flag?,
                   raise_messages: generator.raise_messages)
       end
@@ -771,11 +813,19 @@ class CArray
                 rescue NameError
                   nil
                 end
-        kind = case value
-               when CArray then "an array"
-               when CFunction  then "another C function"
-               else             "a value"
-               end
+        if value.is_a?(CFunction)
+          # A function compiled here is pasted into this one, so it is no
+          # longer a capture at all -- it never reaches the list above.  One
+          # borrowed from a library is only an address, and an address is
+          # what a compiled object has nowhere to keep: a kernel is handed
+          # its own at call time, and a function has no such moment.
+          raise Unsupported,
+                "this function reaches `#{name}`, which was bound with " \
+                "`jit_extern` and so is only an address; a compiled function " \
+                "has nowhere to keep one. Take it as a parameter, or compile " \
+                "the body here with `CArray.jit_function`"
+        end
+        kind = value.is_a?(CArray) ? "an array" : "a value"
         raise Unsupported,
               "this function reaches `#{name}`, which is #{kind} outside it; " \
               "a compiled function takes everything it needs through its " \
