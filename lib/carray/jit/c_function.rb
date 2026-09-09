@@ -759,22 +759,13 @@ class CArray
                    "the signature rather than a value; the body cannot read it"
                  end)
         end
-        # A body is handed its values through the kernel's three scalar buses,
-        # which carry doubles, int64s and complexes.  A uint64 argument is the
-        # one numeric type none of them can carry whole -- that is what having
-        # its own computation type means -- so it is refused here, where the
-        # declaration is, rather than deeper down as a kernel that cannot be
-        # built.  A `uint64_t *` reaches an array of them, and a uint64_t
-        # value comes back out of a body unharmed.
-        names.zip(parameters).each do |parameter, type|
-          next if type.pointer || type.computation != :uint64
-          raise Unsupported,
-                "`#{parameter}` is declared `#{type.text}`, and a value is " \
-                "handed to a body as a double, an int64 or a complex -- a " \
-                "uint64 fits none of them without losing a bit. Take " \
-                "`#{type.text} *` and index it, or take an int64 where the " \
-                "values are small enough to be one"
-        end
+        # A parameter of any computation type the body can work in, uint64
+        # included.  A kernel's captures have three buses to travel in and
+        # uint64 is not one of them, but these are not captures: they are the
+        # parameters of this function's own C signature, and arrive in the
+        # type the declaration named.  So `size_t n` is a value the body can
+        # be handed, which is the point -- it is how the C that counts bytes
+        # is spelled.
         types = names.zip(parameters).reject { |_, type| type.pointer }
                      .to_h { |parameter, type| [parameter, type.computation] }
 
@@ -783,7 +774,8 @@ class CArray
                                         pointer_types: pointer_types)
         generator = CGenerator.new(analyzer, {}, assignment.scalar_types,
                                    c_functions: called,
-                                   origin: origin, block_source: source)
+                                   origin: origin, block_source: source,
+                                   scalar_parameters: types.keys)
         c_source = generator.generate_function(
           symbol, names, parameters, return_type.text, return_type.computation)
         handle, = Compiler.build(c_source, symbol, header: generator.provenance)
@@ -801,7 +793,8 @@ class CArray
         if generator.uses_error_flag?
           pasted = CGenerator.new(analyzer, {}, assignment.scalar_types,
                                   c_functions: called,
-                                  origin: origin, block_source: source)
+                                  origin: origin, block_source: source,
+                                  scalar_parameters: types.keys)
           pasted.generate_function(symbol, names, parameters, return_type.text,
                                    return_type.computation,
                                    error_parameter: true)

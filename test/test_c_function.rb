@@ -1316,17 +1316,172 @@ class TestCFunction < Minitest::Test
     assert_equal(4, doubled.call(2))
   end
 
-  # A value reaches a body through one of the kernel's three scalar buses --
-  # doubles, int64s, complexes -- and uint64 is the one numeric type none of
-  # them carries whole.  Saying so where the declaration is beats a kernel
-  # that cannot be built.
+  # A *capture* reaches a kernel's body through one of three scalar buses --
+  # doubles, int64s, complexes -- and uint64 travels in none of them.  A
+  # compiled function's parameters are not captures: they are its own C
+  # signature, and arrive in the type the declaration named.  So a uint64 is
+  # a value a body can be handed, and it is handed the whole of it -- which
+  # for a while it was not, the bus check having been read as a rule about
+  # every scalar rather than about the ones a buffer carries.
   def test_a_uint64_parameter_by_value
+    increment = CArray.jit_function("uint64_t (*)(uint64_t)") { |n| n + 1 }
+    assert_equal(2**64 - 1, increment.call(2**64 - 2))
+    assert_equal(increment.block.call(2**63), increment.call(2**63))
+    # Unsigned arithmetic, not int64 arithmetic wearing the name: this
+    # quotient is the one an int64 division would get wrong.
+    half = CArray.jit_function("uint64_t (*)(uint64_t a, uint64_t b)") { |a, b|
+      a / b
+    }
+    assert_equal((2**64 - 1) / 3, half.call(2**64 - 1, 3))
+    assert_raises(ZeroDivisionError) { half.call(5, 0) }
+  end
+
+  # Pasted into a kernel it is the same body reached the other way, and the
+  # argument is an expression the kernel computes in uint64 rather than a slot
+  # in a buffer.
+  def test_a_uint64_parameter_from_a_kernel
+    half = CArray.jit_function("uint64_t (*)(uint64_t a, uint64_t b)") { |a, b|
+      a / b
+    }
+    large = CArray.uint64(3) { |i| 2**64 - 1 - i }
+    out = CArray.uint64(3)
+    CArray.jit_for(3) { |i| out[i] = half.call(large[i], 3) }
+    3.times { |i| assert_equal(half.block.call(large[i], 3), out[i]) }
+  end
+
+  # Above the width, `uint64_t` wraps and a Ruby Integer does not -- which is
+  # the difference CArray's own uint64 operators already have, so the body
+  # agrees with the array type it was written for rather than with Integer.
+  def test_a_uint64_parameter_wraps_where_carray_wraps
+    doubled = CArray.jit_function("uint64_t (*)(uint64_t)") { |n| n * 2 }
+    assert_equal(10, doubled.call(2**63 + 5))
+    assert_equal((CArray.uint64(1) { 2**63 + 5 } * 2)[0], doubled.call(2**63 + 5))
+  end
+
+  # ---------- size_t, and the widths that are not spellings ----------
+  #
+  # `uint64_t` is a width.  `size_t` is not: it is whatever the platform's
+  # unsigned word is, and the declaration says so without saying which.  So
+  # nothing here maps the spelling to a type -- Fiddle is asked what the word
+  # is on this machine, and the tables that decide the computation type and
+  # the CArray type are read by the code it answers with.  These tests state
+  # that rule rather than this machine's answer to it, which is why they
+  # derive what they expect from `Fiddle::SIZEOF_SIZE_T`.
+
+  def test_size_t_is_the_platforms_word_rather_than_a_spelling
+    _, return_type, parameters = CArray::JIT::CDeclaration.parse(
+      "size_t f(size_t n, size_t counts[], ptrdiff_t offset)")
+    # The spelling is kept as written: it is what the generated C says, so the
+    # C compiler decides the width there as Fiddle decided it here.
+    assert_equal("size_t", return_type.text)
+    assert_equal(["size_t", "size_t []", "ptrdiff_t"],
+                 parameters.map(&:text))
+    assert_equal(Fiddle::TYPE_SIZE_T, return_type.fiddle)
+    # A word that int64 holds exactly is computed in int64; one that it does
+    # not gets uint64, which is the whole reason uint64 is a computation type.
+    expected = Fiddle::SIZEOF_SIZE_T < 8 ? :int64 : :uint64
+    assert_equal(expected, return_type.computation)
+    # `ptrdiff_t` is the signed one, and int64 holds it either way.
+    assert_equal(:int64, parameters.last.computation)
+  end
+
+  def test_a_size_t_array_takes_the_array_of_that_width
+    wanted = Fiddle::SIZEOF_SIZE_T < 8 ? "uint32" : "uint64"
+    count = CArray.jit_function("void (*)(size_t *counts, int64_t n)") { |counts, n|
+      (0...n).each { |i| counts[i] = counts[i] + 1 }
+    }
+    counts = CArray.send(wanted, 3) { |i| i }
+    count.call(counts, 3)
+    assert_equal([1, 2, 3], counts.to_a)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_function("uint64_t (*)(uint64_t)") { |n| n + 1 }
+      count.call(CArray.int32(3), 3)
     end
-    assert_match(/a value is handed to a body as a double, an int64 or a complex/,
-                 error.message)
-    assert_match(/uint64_t \*/, error.message)
+    assert_match(/takes a #{wanted} array, and this one is int32/, error.message)
+  end
+
+  # A `size_t` return comes back out whole, as `uint64_t`'s does.  Written as
+  # the platform's word, so above 2**63 it is the value and not a negative
+  # number -- where the platform's word is that wide.
+  def test_a_size_t_return_value
+    doubled = CArray.jit_function("size_t (*)(int64_t)") { |n| n * 2 }
+    assert_equal(84, doubled.call(42))
+    skip "this platform's word is narrower than 64 bits" if
+      Fiddle::SIZEOF_SIZE_T < 8
+    high = CArray.jit_function("size_t (*)(int64_t)") { |n| n * 2 + 1 }
+    assert_equal(2**63 + 1, high.call(2**62))
+  end
+
+  # The whole reason `size_t` is worth reading: a body written here can take
+  # one, so a function that counts bytes or elements is declared the way C
+  # declares it rather than in a translation of it.  The parameter is emitted
+  # under the spelling it was written with, and the platform's compiler gives
+  # that its width.
+  def test_a_size_t_parameter_by_value
+    stride = CArray.jit_function("size_t (*)(size_t n, size_t width)") { |n, width|
+      n * width
+    }
+    assert_equal(48, stride.call(6, 8))
+    assert_equal(stride.block.call(6, 8), stride.call(6, 8))
+    assert_match(/^size_t\ncarray_jit_function_[0-9a-f]{12} \(size_t n, size_t width\)$/,
+                 stride.c_source)
+    counts = CArray.send(Fiddle::SIZEOF_SIZE_T < 8 ? "uint32" : "uint64", 4)
+    CArray.jit_for(4) { |i| counts[i] = stride.call(i, 8) }
+    assert_equal([0, 8, 16, 24], counts.to_a)
+  end
+
+  # The shape such a parameter is usually for: a count, used as a loop bound
+  # and as a subscript.  `void f(double out[], size_t n)` is how C writes a
+  # pointer and a length, and a body written here can now be declared that way
+  # rather than with an int64 standing in for the count.
+  def test_a_size_t_count_as_a_bound_and_a_subscript
+    fill = CArray.jit_function("void fill(double out[], size_t n)") { |out, n|
+      (0...n).each { |i| out[i] = i * 2.0 }
+    }
+    a = CArray.double(4).fill(-1.0)
+    fill.call(a, 4)
+    assert_equal([0.0, 2.0, 4.0, 6.0], a.to_a)
+
+    last = CArray.jit_function("double last(const double v[], size_t n)") { |v, n|
+      v[n - 1]
+    }
+    assert_bits_equal(6.0, last.call(a, 4))
+    assert_bits_equal(last.block.call(a, 4), last.call(a, 4))
+  end
+
+  # A bound function takes one too, and by the road C already has: the
+  # argument is an expression the kernel computes and the call converts, which
+  # is what makes the libc and GSL declarations that count bytes callable at
+  # all.  `memcmp` is declared here over doubles rather than `void *`, which is
+  # the same function at the ABI and lets the kernel hand its own arrays to
+  # it.
+  def test_a_bound_function_that_takes_a_size_t
+    memcmp = CArray.jit_extern(
+      "int memcmp(const double *a, const double *b, size_t n)")
+    a = CArray.double(3).seq!(1.0)
+    same = a.copy
+    other = a.copy
+    other[2] = 99.0
+    out = CArray.int32(2)
+    CArray.jit_for(0...1) { |i|
+      out[0] = memcmp.call(a, same, 24)
+      out[1] = memcmp.call(a, other, 24)
+    }
+    assert_equal(0, out[0])
+    refute_equal(0, out[1])
+    assert_equal(0, memcmp.call(a, same, 24))
+  end
+
+  # A size_t coming back through a kernel, from a function nothing here
+  # compiled: `strlen` counts to a size_t and the cell holds what it counted.
+  def test_a_bound_function_that_returns_a_size_t
+    strlen = CArray.jit_extern("size_t strlen(const int8_t *s)")
+    text = CArray.int8(6)
+    "abcde".each_byte.with_index { |byte, i| text[i] = byte }
+    text[5] = 0
+    out = CArray.uint64(1)
+    CArray.jit_for(0...1) { |i| out[i] = strlen.call(text) }
+    assert_equal(5, out[0])
+    assert_equal(5, strlen.call(text))
   end
 
   # `ptrdiff_t` is a type this reads, and for a while it was one the generated

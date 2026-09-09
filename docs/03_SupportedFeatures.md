@@ -406,7 +406,7 @@ Nothing in the generated C reaches Ruby to do that. The function returns a numbe
 
 A float division is not this case: `1.0 / 0.0` is an infinity in Ruby, in C and here, so a body that only divides floats declares no flag and pays nothing for one. Neither is a subscript on a pointer parameter, which is unchecked by design -- the caller's business, as it is in C.
 
-The declaration stays C rather than becoming a vocabulary of this compiler's own, because what is being declared is a C function and the types it has to meet belong to whatever will call it. `void *params` is the point of the exercise, not an edge of it. C's spellings come with C's own asymmetry: the integer types have exact-width names, so `uint16_t` and `int32_t` read, while the floating types are `float` and `double` and there is no `float64_t`.
+The declaration stays C rather than becoming a vocabulary of this compiler's own, because what is being declared is a C function and the types it has to meet belong to whatever will call it. `void *params` is the point of the exercise, not an edge of it. C's spellings come with C's own asymmetry: the integer types have exact-width names, so `uint16_t` and `int32_t` read, while the floating types are `float` and `double` and there is no `float64_t`. The names that stand for whatever the platform made them -- `size_t` and its kin -- read too, and have [their own section](#the-widths-a-declaration-may-name) below.
 
 The return type is stated rather than derived from the body, although it could be derived. The reason is the one already given for writing a loop's direction at the call site: a signature is what something outside agrees to, and editing the body must not silently change it.
 
@@ -433,6 +433,42 @@ Factoring it out costs nothing to run. A function written here is not called thr
 A borrowed function still goes through the pointer: there is no body here to paste, only an address, and for it inlining was never on offer.
 
 A body that can fail is pasted like any other. Standing alone it reports a division with no divisor through a flag in its own compiled object, which is what `f.call(0)` reads to raise `ZeroDivisionError`; pasted, there is no such object around it, and the failure belongs to the kernel that is running -- so the pasted copy takes the kernel's error slot as a last argument and reports there. The same body called either way raises the same thing, and under a masked cell it reports nothing, exactly as the kernel's own arithmetic does.
+
+#### The widths a declaration may name
+
+`uint16_t` is a width. `size_t` is not: it is whatever the platform's unsigned word turned out to be, and a declaration that uses it says so without saying which. So nothing here maps the spelling to a type. Fiddle is asked what the word is on the machine the function is being compiled on, and the answer is read through the same table that decides `uint64_t` -- on an LP64 machine `size_t` lands on `uint64`, on Windows x64 it lands there by the other code, and where the word is 32 bits it lands on `uint32`. The signed ones -- `ssize_t`, `ptrdiff_t`, `intptr_t` -- are an `int64` the same way, and `uintptr_t` joins `size_t`.
+
+The generated C keeps the spelling it was given, so the C compiler gives it its width there. The two agree because they are the same platform's answer to the same question, and a compiled object is cached under the platform it was built for.
+
+A parameter may be one, which is the point of reading them: a body that counts bytes or elements is declared the way C declares it rather than in a translation of it.
+
+```ruby
+stride = CArray.jit_function("size_t stride(size_t n, size_t width)") { |n, w|
+  n * w
+}
+
+stride.call(6, 8)         # => 48
+```
+
+Which is what makes the ordinary C signature sayable -- a pointer and a length, counted the way C counts:
+
+```ruby
+fill = CArray.jit_function("void fill(double out[], size_t n)") { |out, n|
+  (0...n).each { |i| out[i] = i * 2.0 }
+}
+```
+
+That is wider than what a *captured* scalar may be. A kernel's captures travel in the buffers its signature has -- doubles, integers, complexes -- and a `uint64` fits none of them whole; a compiled function's parameters are not carried in a buffer at all, they *are* its signature, so a value of any type the body can compute in may be handed to one. Above 2^63 it arrives whole:
+
+```ruby
+half = CArray.jit_function("size_t half(size_t a, size_t b)") { |a, b| a / b }
+
+half.call(2**64 - 1, 3)   # => 6148914691236517205, the unsigned quotient
+```
+
+Where the arithmetic leaves the width it wraps, as CArray's own `uint64` operators wrap and as C does -- so the body agrees with the array type it was written for rather than with `Integer`, which would have grown instead. `stride.block.call` is the one place the two part company, and `(2**63 + 5) * 2` is the smallest way to see it.
+
+A pointer to one takes the array of that width: `size_t counts[]` wants a `uint64` CArray where the word is 64 bits and a `uint32` one where it is not. That is `size_t`'s own bargain rather than this compiler's -- the declaration is portable and the array it asks for is not the same array everywhere -- so where a program means the width and not the word, `uint64_t` says the width.
 
 #### One of these calling another
 

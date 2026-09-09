@@ -146,6 +146,13 @@ own, callable from a kernel, from Ruby, and by a C library that knows nothing
 about either -- and from another `jit_function` body, which is the one thing
 such a body may reach outside its parameters.
 
+A signature is written in C's own spellings: `float` and `double`, the
+exact-width integers `int8_t`..`int64_t` and `uint8_t`..`uint64_t`, and the
+platform's own words `size_t`, `ssize_t`, `ptrdiff_t`, `intptr_t` and
+`uintptr_t`. A word is whatever the platform made it, so `size_t` computes as
+a `uint64` and `size_t counts[]` takes a `uint64` array where that word is 64
+bits; `uint64_t` is the spelling that says the width itself.
+
 ---
 
 ## What comes back

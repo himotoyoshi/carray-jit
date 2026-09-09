@@ -266,7 +266,8 @@ class CArray
 
       def initialize (analyzer, storage_types, scalar_types, c_functions: {},
                       masked: false, reassociate: false,
-                      steps: nil, origin: nil, block_source: nil, border: nil)
+                      steps: nil, origin: nil, block_source: nil, border: nil,
+                      scalar_parameters: [])
         @masked = masked
         # What a window read gets where it falls off the array.  Nil for every
         # kernel but a stencil's, and for a stencil whose border is the frame
@@ -291,17 +292,23 @@ class CArray
           position += analyzer.array_ranks.fetch(array, analyzer.rank)
         end
         @array_ranks = analyzer.array_ranks
-        @reals = analyzer.scalar_names.select { |name| scalar_types[name] == :double }.sort
-        @integers = analyzer.scalar_names.select { |name| scalar_types[name] == :int64 }.sort
+        # A compiled function's scalars are the parameters of its own C
+        # signature: they arrive by the ABI, in whatever type the declaration
+        # named, so no buffer carries them and they take no bus.  Set aside
+        # here, which leaves the check below about captures -- what it was
+        # always about.
+        carried_names = analyzer.scalar_names - scalar_parameters
+        @reals = carried_names.select { |name| scalar_types[name] == :double }.sort
+        @integers = carried_names.select { |name| scalar_types[name] == :int64 }.sort
         # A captured Complex rides in the reals buffer as its two parts, so
         # that the kernel signature stays the one shape every kernel has.
-        @complexes = analyzer.scalar_names.select { |name| scalar_types[name] == :complex }.sort
+        @complexes = carried_names.select { |name| scalar_types[name] == :complex }.sort
         # Three buses and no fourth: a capture whose type is none of these
         # would be packed into nothing and read as whatever the slot held, so
         # it is caught here rather than at the cell it computes wrongly.
         carried = @reals.size + @integers.size + @complexes.size
-        unless carried == analyzer.scalar_names.size
-          missing = analyzer.scalar_names - @reals - @integers - @complexes
+        unless carried == carried_names.size
+          missing = carried_names - @reals - @integers - @complexes
           raise Error,
                 "captured #{missing.join(", ")} travel in none of the kernel's " \
                 "three scalar buses; a computation type was added without a " \

@@ -39,6 +39,14 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a `jit_function` body may take an unsigned 64-bit value by parameter --
+  `CArray.jit_function("size_t stride(size_t n, size_t width)") { |n, w| n * w }`
+  -- where before only a pointer to one could be taken. The value arrives
+  whole above 2^63 and the arithmetic on it is unsigned, wrapping at the width
+  as CArray's own `uint64` operators wrap. A kernel's captured scalars are
+  unchanged: those travel in the kernel's own buffers, which carry doubles,
+  int64s and complexes.
+
 - Fix: a C declaration written with `ptrdiff_t` compiles. `size_t` and the
   other `<stddef.h>` names have read since 0.1.0, but the C generated for a
   body that took one declared no such type, so `CArray.jit_function("ptrdiff_t
@@ -224,9 +232,7 @@ version you have and a newer one.
   `CArray.jit_function("void (*)(uint64_t *, int64_t)")` reached its cells as
   an opaque slot rather than an array, and a `uint64_t` return type was
   refused as "no value a compiled body can produce" -- from a table written
-  before uint64 was a type a kernel computes in. A `uint64_t` parameter taken
-  by value is still refused, and now says why: a value reaches a body as a
-  double, an int64 or a complex, and a uint64 fits none of them whole.
+  before uint64 was a type a kernel computes in.
 
 - Fix: `CArray.jit_map` collects a cmplx64 value into a cmplx64 array rather
   than refusing to allocate one. Nothing else changes type: a block whose value
