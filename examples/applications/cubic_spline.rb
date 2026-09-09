@@ -15,7 +15,11 @@
 #
 # Evaluating the result is a second kernel, and a different shape of one --
 # every query point searches for its interval on its own, so the body is a
-# bisection with the bound in the extent.
+# bisection with the bound in the extent.  That search is where the time goes,
+# and it is not always needed: query points that arrive sorted -- resampling
+# onto a grid gives that -- let the interval be carried forward instead of
+# looked up, which is a sweep of the kind the solver already is.  Both are
+# here, and they agree bit for bit.
 #
 #   ruby examples/applications/cubic_spline.rb
 
@@ -100,6 +104,46 @@ def evaluate (x, y, moment, n, query, value, derivative)
   }
 end
 
+# The same evaluation where the query points are sorted.  Then nothing has to
+# search: the interval only moves forward, so one sweep carries it from cell to
+# cell and passes each knot once -- O(m + n) against O(m log n).  How far it
+# advances at one cell is the data's business, which is what `while` is for;
+# there is no bound to put in an extent.
+#
+# The first cell has no k-1 to read, so it is seeded here and the sweep starts
+# at 1 -- `jit_for(points)` over a body reading interval[k-1] is refused, and
+# says so, exactly as the Thomas sweeps above are stated from 1.
+#
+# The intervals are found first and evaluated second, which is what keeps the
+# seed from needing a copy of the polynomial: it is one entry in `interval`,
+# and the second kernel does every point the same way.  Fusing the two into a
+# single kernel is worth about 30% more, at that price.
+def resample (x, y, moment, n, query, value, derivative, interval)
+  points = query.dim[0]
+
+  seed = 0
+  seed += 1 while seed < n - 2 && x[seed+1] <= query[0]
+  interval[0] = seed
+
+  CArray.jit_for(1...points) { |k|
+    lo = interval[k-1]
+    while lo < n - 2 && x[lo+1] <= query[k]
+      lo = lo + 1
+    end
+    interval[k] = lo
+  }
+
+  CArray.jit_for(points) { |k|
+    lo = interval[k]
+    h = x[lo+1] - x[lo]
+    t = query[k] - x[lo]
+    linear = (y[lo+1] - y[lo]) / h - h * (2.0 * moment[lo] + moment[lo+1]) / 6.0
+    cubic = (moment[lo+1] - moment[lo]) / (6.0 * h)
+    value[k] = y[lo] + t * (linear + t * (0.5 * moment[lo] + t * cubic))
+    derivative[k] = linear + t * (moment[lo] + t * 3.0 * cubic)
+  }
+end
+
 # ------------------------------------------------------------------ the fit
 
 n = 15
@@ -149,6 +193,14 @@ at_knots = CArray.double(n)
 at_knots_slope = CArray.double(n)
 evaluate(x, y, natural, n, knots, at_knots, at_knots_slope)
 puts format("  max |S(x_i) - y_i| = %.2e", (at_knots - y).abs.max)
+
+# The query grid above is sorted, so the sweep applies to it -- and gives back
+# the same doubles, not merely close ones: the interval a point lands in is the
+# same interval, and the polynomial evaluated in it is the same expression.
+swept = CArray.double(points)
+swept_slope = CArray.double(points)
+resample(x, y, clamped, n, query, swept, swept_slope, CArray.int32(points))
+puts "  the sorted sweep agrees bit for bit  #{swept.to_a == results["clamped"][0].to_a}"
 
 # The curve, and the samples it was built from.
 rows, columns = 15, 74
@@ -233,7 +285,11 @@ puts
   moment = moments(knots, values, size, scratch, nil)
   sample = time(5) { evaluate(knots, values, moment, size, at, out, slopes) }
   sample_ruby = time(2) { ruby_evaluate(knots, values, moment, size, at, out, slopes) }
+  cells = CArray.int32(sampled)
+  swept = time(5) { resample(knots, values, moment, size, at, out, slopes, cells) }
 
   puts format("  n = %5d   fit %7.1f us vs %8.1f us Ruby (%3.0fx)", size, fit * 1e6, fit_ruby * 1e6, fit_ruby / fit)
   puts format("  m = %6d  eval %7.1f us vs %8.1f us Ruby (%3.0fx)", sampled, sample * 1e6, sample_ruby * 1e6, sample_ruby / sample)
+  puts format("             sorted %7.1f us -- the same points, with the search taken out (%.1fx)",
+              swept * 1e6, sample / swept)
 end
