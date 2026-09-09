@@ -18,6 +18,7 @@ Applications
 | [game_of_life.rb](applications/game_of_life.rb) | Conway's rules as a stencil, twice: with the indices named, and as a window on a torus |
 | [moving_average.rb](applications/moving_average.rb) | a price series: exponential smoothing, running peak, drawdown |
 | [heat_equation.rb](applications/heat_equation.rb) | implicit diffusion in a rod -- a tridiagonal solve every step |
+| [cubic_spline.rb](applications/cubic_spline.rb) | a C2 curve through uneven samples: the moments by Thomas, natural ends against clamped |
 | [sobel_edges.rb](applications/sobel_edges.rb) | edge detection on an image, printed as ASCII |
 | [sensor_gaps.rb](applications/sensor_gaps.rb) | quality control on a record with holes in it |
 | [point_cloud.rb](applications/point_cloud.rb) | rotating points, their covariance, projecting onto a basis |
