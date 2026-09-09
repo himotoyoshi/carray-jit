@@ -48,6 +48,9 @@ class CArray
         @written_arrays = analyzer.written_arrays
         @array_ranks = analyzer.array_ranks
         @inner_ranges = analyzer.inner_ranges
+        # An index the block wrote twice has two identifiers here; the
+        # messages speak the name it was written with.
+        @index_sources = analyzer.index_sources
         @axis_uses = @arrays.to_h { |array|
           [array, (0...array_rank(array)).map { |axis| analyzer.axis_use(array, axis) }]
         }
@@ -376,9 +379,10 @@ class CArray
           ranges[name] = covered_span(bounds[axis])
         end
         flat = bounds.flatten
-        @inner_ranges.each do |name, (from, to)|
-          ranges[name] = [evaluate(from, scalar_values, flat),
-                          evaluate(to, scalar_values, flat)]
+        @inner_ranges.each do |name, (from, to, step)|
+          ranges[name] = covered_span([evaluate(from, scalar_values, flat),
+                                       evaluate(to, scalar_values, flat),
+                                       step || 1])
         end
         ranges
       end
@@ -463,18 +467,19 @@ class CArray
           walkers.each do |index, offsets|
             low, high = ranges.fetch(index)
             next if low >= high
+            spelled = @index_sources.fetch(index, index)
             minimum, maximum = offset_span(offsets, scalars)
             if low + minimum < 0
               raise Unsupported,
                     "`#{name}` is indexed at " \
-                    "#{offset_text(name, index, minimum)}, so " \
-                    "the range on `#{index}` cannot start at #{low}"
+                    "#{offset_text(name, spelled, minimum)}, so " \
+                    "the range on `#{spelled}` cannot start at #{low}"
             end
             if high - 1 + maximum > extent - 1
               raise Unsupported,
                     "`#{name}` is indexed at " \
-                    "#{offset_text(name, index, maximum)}, so " \
-                    "the range on `#{index}` cannot end at #{high} " \
+                    "#{offset_text(name, spelled, maximum)}, so " \
+                    "the range on `#{spelled}` cannot end at #{high} " \
                     "for an extent of #{extent}"
             end
           end

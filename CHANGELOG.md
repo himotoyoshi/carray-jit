@@ -39,6 +39,26 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: an inner loop counts by a stride, written the way an extent writes
+  one: `(n-1).step(0, -1) { |k| ... }` is a downward sweep and
+  `(0...n).step(2) { |k| ... }` a stride of two. `step` includes the index it
+  is given, as Ruby's does, where a `...` range excludes it, and the stride
+  is a literal because it is what says which way the loop runs. This is the
+  other half of a row of workspace -- filling one and walking back down it no
+  longer needs `k = width - 1 - t`, which made the position a value the
+  kernel worked out and so put a bounds test on every cell of the sweep: 0.41
+  ns/cell against 0.24 for the same sweep written with `step`. An accumulator
+  is split into partial sums only for a loop counting by one; a stride keeps
+  the serial chain, and so keeps Ruby's order. `downto`, `upto` and
+  `reverse_each` are refused by name, naming `step` as what to write.
+
+- Fix: two inner loops in one body may both be written `{ |k| ... }`. They
+  are one name in the block and were one index here, so the second loop's
+  range replaced the first's and a reach was checked against the wrong one --
+  `a[k-1]` in a loop from 1 was refused for starting at 0 once a later loop
+  started there. Each loop now counts in an identifier of its own, and the
+  messages go on speaking the name the block wrote.
+
 - New: an inner loop's index may address a write, so a cell can be given a
   row of workspace -- `(0...width).each { |k| work[i, k] = ... }` fills it,
   and `work[i, k]` reads it back inside the same cell. That is what an

@@ -145,12 +145,16 @@ class CArray
     # Nothing is written through it: a kernel writes the cell its outer
     # indices are on, and the inner loop is what runs within that cell.
     class InnerLoop < Node
-      attr_reader :index, :from, :to, :statements
-      def initialize (index, from, to, statements, location = nil)
+      # `step` is the stride the loop counts by, and `to` is exclusive of it:
+      # a descending loop ends one below the last index it visits, as an
+      # extent written with `step` does.
+      attr_reader :index, :from, :to, :step, :statements
+      def initialize (index, from, to, statements, location = nil, step = 1)
         super(location)
         @index = index
         @from = from
         @to = to
+        @step = step
         @statements = statements
       end
       def children

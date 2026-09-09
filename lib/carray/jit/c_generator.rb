@@ -1336,8 +1336,10 @@ class CArray
         return emit_split_reduction(loop_node, accumulation, indent) if accumulation
 
         index = loop_node.index
+        step = loop_node.step
         text = "#{indent}for (int64_t #{index} = #{emit(loop_node.from, :int64)}; " \
-               "#{index} < #{emit(loop_node.to, :int64)}; #{index}++) {\n" +
+               "#{index} #{step.positive? ? '<' : '>'} " \
+               "#{emit(loop_node.to, :int64)}; #{stride_step(index, step)}) {\n" +
                inner_loop_guard(indent)
         text += loop_node.statements.map { |statement|
           emit_statement(statement, indent + "  ")
@@ -1357,6 +1359,11 @@ class CArray
         # A masked accumulator carries a mask beside its value, and a partial
         # sum would need one each.  Left out rather than half-done.
         return nil if @masked
+        # The split walks the index a round at a time from one end, so it is
+        # written for a loop that counts by one.  A stride or a downward
+        # sweep keeps the serial loop -- which costs nothing that was there
+        # before, those loops having been unwritable until now.
+        return nil unless loop_node.step == 1
         return nil unless loop_node.statements.size == 1
 
         assignment = loop_node.statements.first
@@ -1420,6 +1427,15 @@ class CArray
       # the operator's identity, so it is folded in exactly once.  Each chain
       # keeps the term's own operand order -- what is licensed here is the
       # order the *iterations* are grouped in, not the order within one.
+      # `k++`, `k--`, or the stride written out.
+      def stride_step (index, step)
+        case step
+        when 1  then "#{index}++"
+        when -1 then "#{index}--"
+        else step.positive? ? "#{index} += #{step}" : "#{index} -= #{-step}"
+        end
+      end
+
       def emit_split_reduction (loop_node, accumulation, indent)
         assignment, operator = accumulation
         name  = assignment.binding_name

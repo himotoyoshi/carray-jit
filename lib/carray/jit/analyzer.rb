@@ -101,6 +101,12 @@ class CArray
         :rad_pi  => "no math.h counterpart",
       }.freeze
 
+      # Ruby's other ways of counting a loop.  Each is a loop this could run,
+      # and each is refused by name rather than by the generic message, so
+      # that the answer is the spelling to use rather than a list to search.
+      INNER_LOOP_SPELLINGS = %i[downto upto reverse_each each_with_index
+                                each_with_object].freeze
+
       ARITHMETIC_OPERATORS = [:+, :-, :*, :/, :%].freeze
       # Ruby's bit operators on Integers, which C has too.  What they do at
       # the edges is C's answer rather than Ruby's -- a shift wraps and takes
@@ -187,6 +193,7 @@ class CArray
       attr_reader :windows
       attr_reader :index_names, :array_names, :scalar_names, :c_function_names, :body,
                   :written_arrays, :array_ranks, :subscripts, :inner_ranges,
+                  :index_sources,
                   :contracted_names
 
       # A kernel that mentions UNDEF is a masked kernel whatever its arrays
@@ -298,6 +305,9 @@ class CArray
         @calls_for_effect = false
         @outer_names = []
         @inner_names = []
+        @inner_sources_seen = []
+        @inner_aliases = {}
+        @index_sources = {}
         # How many loops the statement being built stands inside.  `break`
         # needs a loop to leave and does not care which kind: an inner loop
         # brings an index and a `while` brings none, but both are loops in C
@@ -400,7 +410,7 @@ class CArray
       def walking_subscripts? (subscripts)
         subscripts.all? { |index, offset|
           if index
-            index_in_scope?(index)
+            index_identifier_in_scope?(index)
           else
             !offset.is_a?(Node) || Analyzer.fixed_subscript?(offset)
           end
@@ -577,6 +587,7 @@ class CArray
             inner = per_axis.map(&:first).find { |index|
               @inner_names_seen.include?(index)
             }
+            spelled = @index_sources.fetch(inner, inner) if inner
             next unless inner
             per_axis.each_with_index do |(index, _), axis|
               name = outer_name_written(writes, axis)
@@ -584,7 +595,7 @@ class CArray
               raise Unsupported.new(
                 "`#{array}` is written on axis #{axis} through `#{name}`, " \
                 "so it cannot also be read through the inner index " \
-                "`#{inner}`: a read that carries one addresses axis " \
+                "`#{spelled}`: a read that carries one addresses axis " \
                 "#{axis} through `#{name}` too, or it reaches cells another " \
                 "outer iteration owns")
             end
@@ -801,6 +812,19 @@ class CArray
       # block's locals, and the indices -- an index called `contraction` would
       # have shared the identifier with the accumulator and the sum would have
       # come out zero, with nothing said.
+      # The identifier an inner index gets in the generated C: its own name
+      # the first time it is written, and a numbered one after that.  Every
+      # name the block has said is avoided, so nothing collides with a local
+      # or another index.
+      def free_index_name (index)
+        return index unless @inner_sources_seen.include?(index)
+        taken = @local_names + @index_names + @outer_names + @inner_names +
+                @inner_names_seen + @contracted_names
+        suffix = 2
+        suffix += 1 while taken.include?(:"#{index}__#{suffix}")
+        :"#{index}__#{suffix}"
+      end
+
       def free_local_name
         taken = @local_names + @index_names + @outer_names + @inner_names +
                 @contracted_names
@@ -1149,7 +1173,12 @@ class CArray
       def build_inner_loop (node)
         counted = node.name == :times
         range = unwrap(node.receiver)
-        if !counted && !range.is_a?(Prism::RangeNode)
+        # Two spellings carry a stride, and they are Ruby's two: a range
+        # steps within the ends it already states, and an integer steps to
+        # one it is given.  Which is which is the receiver.
+        stepped = node.name == :step && !range.is_a?(Prism::RangeNode)
+        walked = node.name == :step && range.is_a?(Prism::RangeNode)
+        if !counted && !stepped && !range.is_a?(Prism::RangeNode)
           raise Unsupported.new(
             "an inner loop runs over a range, as in `(0...n).each { |j| ... }`",
             node.location)
@@ -1165,7 +1194,7 @@ class CArray
         if index_in_scope?(index)
           raise Unsupported.new("`#{index}` is already an index here", node.location)
         end
-        unless counted || (range.left && range.right)
+        unless counted || stepped || (range.left && range.right)
           raise Unsupported.new("an inner loop needs both ends of its range",
                                 node.location)
         end
@@ -1173,26 +1202,100 @@ class CArray
         # `n.times` is `(0...n).each`: the count is the exclusive end, and it
         # is built from the same vocabulary a range end is, so a literal and a
         # captured integer both serve.
+        #
+        # `from.step(to, s)` is the spelling an extent already says a stride
+        # or a downward sweep with, and it means here what it means there --
+        # `to` included, which is Ruby's own reading of it and the opposite of
+        # a `...` range's.  It is turned into an exclusive end at once, so
+        # everything below this line counts the way `each` does.
+        step = 1
         if counted
           from = IntegerLiteral.new(0, node.location)
           to = build(node.receiver)
+        elsif stepped
+          from = build(node.receiver)
+          arguments = node.arguments ? node.arguments.arguments : []
+          unless arguments.size == 2
+            raise Unsupported.new(
+              "an inner loop written with `step` gives it both the last " \
+              "index and the stride, as in `(n-1).step(0, -1) { |k| ... }`",
+              node.location)
+          end
+          step = inner_loop_step(arguments.last)
+          to = build(arguments.first)
+          to = BinaryOperation.new(step.positive? ? :+ : :-, to,
+                                   IntegerLiteral.new(1, node.location),
+                                   node.location)
         else
           from = build(range.left)
           to = build(range.right)
           to = BinaryOperation.new(:+, to, IntegerLiteral.new(1, node.location),
                                    node.location) unless range.exclude_end?
+          if walked
+            arguments = node.arguments ? node.arguments.arguments : []
+            unless arguments.size == 1
+              raise Unsupported.new(
+                "a range steps by one stride, as in `(0...n).step(2) " \
+                "{ |j| ... }`", node.location)
+            end
+            step = inner_loop_step(arguments.first)
+            if step.negative?
+              raise Unsupported.new(
+                "a range cannot step backwards, in Ruby either -- count " \
+                "down with `(n-1).step(0, -1) { |j| ... }`, which is the " \
+                "spelling an extent takes too",
+                node.location)
+            end
+          end
         end
 
+        # Two sibling loops may both be written `{ |k| ... }`, and each has
+        # a range of its own -- a forward sweep from 1 and the sweep back
+        # down from the far end are exactly that pair.  They are one name in
+        # the block and cannot be one variable here, because the reach of
+        # `a[k-1]` is checked against the loop it sits in.  So the second
+        # gets an identifier of its own, and the name in the block goes on
+        # meaning whichever loop it is inside.
+        internal = free_index_name(index)
         @inner_names << index
-        @inner_names_seen << index
-        @inner_ranges[index] = [from, to]
+        @inner_sources_seen << index
+        @inner_names_seen << internal
+        @inner_aliases[index] = internal
+        @index_sources[internal] = index
+        @inner_ranges[internal] = [from, to, step]
         @loop_depth += 1
         statements = statements_of(node.block.body).map { |inner|
           build_statement(inner)
         }
         @loop_depth -= 1
         @inner_names.pop
-        InnerLoop.new(index, from, to, statements, node.location)
+        @inner_aliases.delete(index)
+        InnerLoop.new(internal, from, to, statements, node.location, step)
+      end
+
+      # The stride is read off the page rather than computed, because it is
+      # what says which way the loop runs and the C has to be written one way
+      # or the other before anything is known.  A captured integer would
+      # leave that open.
+      def inner_loop_step (node)
+        value = case node
+                when Prism::IntegerNode then node.value
+                when Prism::CallNode
+                  if node.name == :-@ && node.receiver.is_a?(Prism::IntegerNode)
+                    -node.receiver.value
+                  end
+                end
+        if value.nil?
+          raise Unsupported.new(
+            "an inner loop's stride says which way it runs, so it is an " \
+            "integer literal -- `step(0, -1)` for a downward sweep",
+            node.location)
+        end
+        if value.zero?
+          raise Unsupported.new("an inner loop's stride cannot be zero",
+                                node.location)
+        end
+        value
       end
 
       def unwrap (node)
@@ -1226,7 +1329,9 @@ class CArray
       end
 
       def build_element_write (node)
-        return build_inner_loop(node) if node.name == :each || node.name == :times
+        if node.name == :each || node.name == :times || node.name == :step
+          return build_inner_loop(node)
+        end
         unless node.name == :[]=
           # An expression standing alone in this spelling is a computation
           # nobody can see: there is no index to have written it against, and
@@ -1238,9 +1343,17 @@ class CArray
               "`CArray.jit_map`",
               node.location)
           end
+          if INNER_LOOP_SPELLINGS.include?(node.name)
+            raise Unsupported.new(
+              "an inner loop is written `(a...b).each`, `n.times` or " \
+              "`a.step(b, s)`, which is the spelling an extent takes a " \
+              "stride and a direction in -- `#{node.name}` is not one of " \
+              "them",
+              node.location)
+          end
           raise Unsupported.new(
-            "a kernel body holds assignments, `if`, `while`, `(a...b).each` " \
-            "and `n.times` only, got a call to `#{node.name}`",
+            "a kernel body holds assignments, `if`, `while`, `(a...b).each`, " \
+            "`n.times` and `a.step(b, s)` only, got a call to `#{node.name}`",
             node.location)
         end
         if (pointer = pointer_subscript(node, write: true))
@@ -1348,7 +1461,9 @@ class CArray
       def build_name_read (name, location)
         axis = @outer_names.index(name)
         return IndexVariable.new(name, axis, location) if axis
-        return IndexVariable.new(name, nil, location) if @inner_names.include?(name)
+        if @inner_names.include?(name)
+          return IndexVariable.new(@inner_aliases.fetch(name, name), nil, location)
+        end
         if @local_names.include?(name)
           return LocalRead.new(name, location)
         end
@@ -1813,7 +1928,7 @@ class CArray
       # in scope, so that the offset is a compile-time constant.
       def read_subscript (node, location)
         name = index_name(node)
-        return [name, 0] if name && index_in_scope?(name)
+        return [index_identifier(name), 0] if name && index_in_scope?(name)
         if node.is_a?(Prism::CallNode) && [:+, :-].include?(node.name) &&
            (receiver = index_name(node.receiver)) && index_in_scope?(receiver)
           return walked_subscript(node)
@@ -1884,10 +1999,12 @@ class CArray
             raise Unsupported.new("write the offset as `j - c` with c >= 0",
                                   node.location)
           end
-          return [receiver.name, node.name == :+ ? constant : -constant]
+          return [index_identifier(receiver.name),
+                  node.name == :+ ? constant : -constant]
         end
         offset = pinned_subscript(argument)
-        [receiver.name, node.name == :+ ? offset : UnaryMinus.new(offset)]
+        [index_identifier(receiver.name),
+         node.name == :+ ? offset : UnaryMinus.new(offset)]
       end
 
       # An index the block names as a parameter reads as a local variable.
@@ -1902,6 +2019,19 @@ class CArray
         when Prism::CallNode
           node.name if node.receiver.nil? && node.arguments.nil? && node.block.nil?
         end
+      end
+
+      # An index as this compiler knows it: the name the block wrote, unless
+      # that name belongs to a second loop of the same name, which has an
+      # identifier of its own.
+      def index_identifier (name)
+        @inner_aliases.fetch(name, name)
+      end
+
+      # The same question asked of an identifier a subscript carries, which
+      # for a second loop of the same name is not the name the block wrote.
+      def index_identifier_in_scope? (name)
+        @outer_names.include?(name) || @inner_aliases.value?(name)
       end
 
       def index_in_scope? (name)

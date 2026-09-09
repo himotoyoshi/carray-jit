@@ -62,6 +62,17 @@ each, an Integer `n` standing for `0...n`. Naming an index is what lets a cell
 reach `x[i-1]`, and reaching a cell the kernel will later write is what fixes
 the direction the axis runs -- derived from the dependencies, not chosen.
 
+An inner loop counts up with `(a...b).each` or `n.times`, and by a stride with
+`a.step(b, s)` -- `(n-1).step(0, -1)` for a sweep back down a row. Its index
+addresses writes as well as reads, which is a cell's own workspace:
+
+```ruby
+CArray.jit_for(rows) { |i|
+  (0...width).each { |k| work[i, k] = ... }          # fill the row
+  (width-1).step(0, -1) { |k| ... work[i, k] ... }   # and walk back down it
+}
+```
+
 `reassociate:` says whether a reduction's accumulator may be split into partial
 sums. Default is `CArray::JIT.reassociate` (`true`). Pass `false` for the
 serial order -- a compensated summation, or checking against the loop.

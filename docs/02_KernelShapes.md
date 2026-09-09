@@ -367,14 +367,13 @@ CArray.jit_for(rows) { |i|                       # a tridiagonal solve per row
     carried[i, k] = (right[i, k] - lower[i, k] * carried[i, k-1]) / denominator
   }
   answer[i, width-1] = carried[i, width-1]
-  (0...(width-1)).each { |t|                     # an inner loop counts up, so
-    k = width - 2 - t                            # a downward sweep says so here
+  (width-2).step(0, -1) { |k|                    # back down the row it just filled
     answer[i, k] = carried[i, k] - swept[i, k] * answer[i, k+1]
   }
 }
 ```
 
-The cell an inner index reaches is bounds-checked before the kernel runs, as `i`'s is: its loop states its extent the same way an extent does. Two outer iterations landing on the same cell is not an ambiguity either -- the extent states the order, so the array holds what the same Ruby loop would have left in it.
+An inner loop counts by the stride it was written with -- `(width-2).step(0, -1)` above is the pass back down, and it is the spelling an extent takes a direction in. The cell it reaches is bounds-checked before the kernel runs, as `i`'s is: its loop states its extent the same way an extent does. Two outer iterations landing on the same cell is not an ambiguity either -- the extent states the order, so the array holds what the same Ruby loop would have left in it.
 
 Which cells are the cell's own is decided by the axes the **outer** indices pick it by. So a read carrying an inner index has to walk those axes with the same outer index -- at whatever offset, `work[i-1, k]` being the row before this one and a recurrence like any other displaced read. Inside the row the body may do as it likes: sort it, walk it backwards, land on a position it works out. This is a median filter, which has no expression as an extra axis at all -- the window has to be somewhere while it is being sorted:
 

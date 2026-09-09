@@ -25,8 +25,8 @@ class TestWorkspace < Minitest::Test
     assert_equal(expected_work.map(&:sum), out.to_a)
   end
 
-  # Walking back down the row is the other half of it, and is written with
-  # the index reversed -- an inner loop counts up.
+  # Walking back down the row is the other half of it, and says so with the
+  # stride an extent says a downward sweep with.
   def test_walking_the_row_back_down
     rows, width = 3, 5
     work = CArray.double(rows, width)
@@ -35,10 +35,7 @@ class TestWorkspace < Minitest::Test
     CArray.jit_for(rows) { |i|
       (0...width).each { |k| work[i, k] = i + k * 0.5 }
       carried = 0.0
-      (0...width).each { |t|
-        k = width - 1 - t
-        carried = carried * 0.5 + work[i, k]
-      }
+      (width-1).step(0, -1) { |k| carried = carried * 0.5 + work[i, k] }
       out[i] = carried
     }
 
@@ -76,8 +73,7 @@ class TestWorkspace < Minitest::Test
         carried[i, k] = (right[i, k] - lower[i, k] * carried[i, k-1]) / denominator
       }
       answer[i, width-1] = carried[i, width-1]
-      (0...(width-1)).each { |t|
-        k = width - 2 - t
+      (width-2).step(0, -1) { |k|
         answer[i, k] = carried[i, k] - swept[i, k] * answer[i, k+1]
       }
     }
