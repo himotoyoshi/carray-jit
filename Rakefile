@@ -58,6 +58,8 @@ task :benchmark => :compile do
   ruby "-Ilib benchmark/contraction.rb"
   puts
   ruby "-Ilib benchmark/break_even.rb"
+  puts
+  ruby "-Ilib benchmark/call_overhead.rb"
 end
 
 desc "Run every example"
