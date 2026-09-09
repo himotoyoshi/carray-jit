@@ -39,6 +39,19 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a compiled function may take and return a C99 complex --
+  `CArray.jit_function("double _Complex step(double _Complex z)") { |z| z * z
+  + Complex(0.0, 1.0) }`. `double _Complex`, `float _Complex` and
+  `<complex.h>`'s `double complex` all read, by value or as a pointer, where
+  `double _Complex v[]` takes a `cmplx128` array as `double v[]` takes a
+  `float64` one. A kernel calls such a function as C calls it. A call from
+  Ruby goes through a second entry point compiled beside the body, since
+  Fiddle has no type to carry a complex by value in; it calls the body rather
+  than repeating it, so `f.call` and `f.block.call` stay the same body run
+  two ways. A function bound with `jit_extern` and declared with a complex is
+  callable from a kernel but not from Ruby -- there is no source here to
+  compile an entry point beside -- and says so.
+
 - Fix: a captured Integer above 2**63-1 reaches a kernel whole. It was packed
   into the int64 slot the kernel reads its integers from, which took the value
   modulo the width and said nothing: `big / 3`, `big > 100` and `big * 1.0`

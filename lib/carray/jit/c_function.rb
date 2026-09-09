@@ -26,6 +26,18 @@ class CArray
         pointer && !element.nil?
       end
 
+      # A C99 complex passed or returned by value.  Fiddle cannot carry one,
+      # so a call from Ruby goes through a shim; a call from a kernel is C
+      # calling C and needs nothing.
+      def complex?
+        !pointer && CDeclaration::COMPLEX_CODES.value?(fiddle)
+      end
+
+      # `CMPLX` for a double complex, `CMPLXF` for a float one.
+      def complex_build
+        fiddle == :float_complex ? "CMPLXF" : "CMPLX"
+      end
+
       # C's own declarator puts an array's length where a reader can see it,
       # so `const double coef[3]` and `const double *coef` are different
       # declarations of the same ABI.  The length is kept rather than folded
@@ -86,7 +98,7 @@ class CArray
       def initialize (name, prototype, return_type, parameters, pointer,
                       block: nil, c_source: nil, origin: nil, error: nil,
                       definition: nil, helpers: nil, takes_error: false,
-                      raise_messages: {}, dependencies: [])
+                      raise_messages: {}, dependencies: [], shim: nil)
         @name = name && name.to_sym
         @prototype = prototype
         @return_type = return_type
@@ -110,6 +122,10 @@ class CArray
         # Where the compiled body says a division had no divisor, or a
         # subscript ran off its array.  Nil when the body can do neither.
         @error = error
+        # The address of the entry point a call from Ruby takes where the
+        # signature carries a complex by value; nil where it does not, which
+        # is every other signature and every borrowed function.
+        @shim = shim
         @function = nil
       end
 
@@ -214,6 +230,13 @@ class CArray
                 "wrong number of arguments (given #{arguments.size}, " \
                 "expected #{@parameters.size})"
         end
+        return call_through_shim(arguments) if @shim
+        if carries_a_complex?
+          raise Unsupported,
+                "`#{self}` carries a C99 complex by value, which Fiddle has " \
+                "no type for, so it cannot be called from Ruby; a kernel " \
+                "calls it as C calls it"
+        end
         @function ||= Fiddle::Function.new(@pointer, argument_types,
                                            @return_type.fiddle,
                                            name: @name.to_s)
@@ -245,6 +268,71 @@ class CArray
       end
 
       alias [] call
+
+      # Whether a call from Ruby has to go round through the shim.
+      def carries_a_complex?
+        @return_type.complex? || @parameters.any?(&:complex?)
+      end
+
+      # Fiddle carries no complex, so the shim takes each complex argument as
+      # a pair of doubles and writes a complex result back the same way.
+      # Everything else keeps the type the declaration gave it and goes
+      # through Fiddle as before -- including a pointer parameter, which is
+      # still a CArray on this side.
+      #
+      # It is the same compiled body either way: the shim calls the function,
+      # it does not reimplement it.
+      def call_through_shim (arguments)
+        returns_complex = @return_type.complex?
+        types = @parameters.map { |type|
+          type.complex? ? Fiddle::TYPE_VOIDP : type.fiddle
+        }
+        types << Fiddle::TYPE_VOIDP if returns_complex
+        @shim_function ||=
+          Fiddle::Function.new(@shim, types,
+                               returns_complex ? Fiddle::TYPE_VOID
+                                               : @return_type.fiddle)
+        result = returns_complex ? String.new("\0" * 16) : nil
+        arrays = []
+        prepared = arguments.zip(@parameters).map { |argument, type|
+          next pack_complex(argument, type) if type.complex?
+          next argument unless type.indexable? && argument.is_a?(CArray)
+          buffer = check_array(argument, type)
+          arrays << [argument, buffer, type]
+          buffer
+        }
+        clear_error
+        Access.open(arrays.map { |_, buffer, _| buffer },
+                    arrays.map { |_, _, type| !type.const },
+                    arrays.map { nil }, arrays.map { nil }) do |bases|
+          slot = -1
+          passed = prepared.map { |value|
+            next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
+            Fiddle::Pointer.new(bases[slot += 1][:pointer])
+          }
+          passed << result if returns_complex
+          @result = @shim_function.call(*passed)
+        end
+        report_error
+        arrays.each do |array, buffer, type|
+          array[] = buffer unless type.const || array.equal?(buffer)
+        end
+        @result = Complex(*result.unpack("dd")) if returns_complex
+        @result
+      end
+
+      # A Ruby number of any kind arrives as the two doubles the shim reads.
+      # `Complex()` is what Ruby itself converts with, so an Integer and a
+      # Float are taken where a Complex is asked for, as they are in Ruby.
+      def pack_complex (value, type)
+        number = begin
+                   Complex(value)
+                 rescue TypeError, ArgumentError
+                   raise Unsupported,
+                         "`#{type.text}` takes a number, got #{value.class}"
+                 end
+        String.new([number.real.to_f, number.imaginary.to_f].pack("dd"))
+      end
 
       # @return [String] the function's name.
       def to_s
@@ -358,10 +446,24 @@ class CArray
       # aliases and its floating types are `float` and `double`.
       KEYWORDS = %w[
         const unsigned signed void char short int long float double
+        _Complex complex
         int8_t int16_t int32_t int64_t
         uint8_t uint16_t uint32_t uint64_t
         size_t ssize_t ptrdiff_t intptr_t uintptr_t
       ].freeze
+
+      # Fiddle has no code for a C99 complex -- its parser does not know the
+      # word and the ABI it answers for has nowhere to put one -- so these
+      # stand where a Fiddle code stands elsewhere.  Symbols rather than
+      # numbers, so that one reaching Fiddle by mistake is a TypeError there
+      # and not a silently wrong width.
+      COMPLEX_CODES = { "double" => :double_complex,
+                        "float"  => :float_complex }.freeze
+
+      # `double complex` is `<complex.h>`'s spelling of `double _Complex`,
+      # and both are written; which words a declaration used says nothing
+      # about what it declared.
+      COMPLEX_WORDS = %w[_Complex complex].freeze
 
       # Fiddle answers `long double` with the code for `long`, silently, so it
       # is refused by name rather than trusted.
@@ -369,6 +471,9 @@ class CArray
         "long double" => "`long double` is not a type this reads: Fiddle " \
                          "reports it as `long`, which would be the wrong " \
                          "width without saying so",
+        "long double _Complex" =>
+          "`long double _Complex` is not a type this reads: there is no " \
+          "long double here to make one of",
       }.freeze
 
       # The CArray data type a pointer parameter takes, by the code Fiddle
@@ -376,6 +481,8 @@ class CArray
       # already holds, read the other way round -- nothing new is decided
       # here about how a C type and a CArray type correspond.
       DATA_TYPES = {
+        :double_complex        => :cmplx128,
+        :float_complex         => :cmplx64,
         Fiddle::TYPE_DOUBLE    => :float64,
         Fiddle::TYPE_FLOAT     => :float32,
         Fiddle::TYPE_CHAR      => :int8,
@@ -396,6 +503,11 @@ class CArray
       # Absent means the type may be written down but holds no value a body
       # can compute with -- `void`, and a pointer to it.
       COMPUTATION = {
+        # A `float _Complex` computes in double complex, as a `float`
+        # computes in double: the declaration says what the signature is,
+        # and the body works in what Ruby would have worked in.
+        :double_complex         => :complex,
+        :float_complex          => :complex,
         Fiddle::TYPE_DOUBLE     => :double,
         Fiddle::TYPE_FLOAT      => :double,
         Fiddle::TYPE_CHAR       => :int64,
@@ -500,12 +612,17 @@ class CArray
                    else
                      ""
                    end
-        code = fiddle_code(pointer ? "void *" : spelling, text, prototype)
+        code = if !pointer && (complex = complex_code(spelling))
+                 complex
+               else
+                 fiddle_code(pointer ? "void *" : spelling, text, prototype)
+               end
         # What it points at, for a pointer that points at numbers.  `void *`
         # has no element, which is what keeps it a slot.
         element = nil
         if pointer && spelling != "void"
-          element_code = fiddle_code(spelling, text, prototype)
+          element_code = complex_code(spelling) ||
+                         fiddle_code(spelling, text, prototype)
           if COMPUTATION[element_code]
             element = CType.new(spelling, element_code,
                                 COMPUTATION[element_code], false, nil, nil,
@@ -514,6 +631,15 @@ class CArray
         end
         CType.new(written, code, pointer ? nil : COMPUTATION[code], pointer,
                   array, element, keywords.include?("const"))
+      end
+
+      # The code for a complex spelling, or nil for anything else.  `float
+      # _Complex`, `complex float`, `float complex` -- the word may sit on
+      # either side, as C allows.
+      def complex_code (spelling)
+        words = spelling.split(/\s+/)
+        return nil unless (words & COMPLEX_WORDS).any?
+        COMPLEX_CODES[(words - COMPLEX_WORDS).join(" ")]
       end
 
       def fiddle_code (spelling, text, prototype)
@@ -778,6 +904,16 @@ class CArray
                                    scalar_parameters: types.keys)
         c_source = generator.generate_function(
           symbol, names, parameters, return_type.text, return_type.computation)
+        # A signature carrying a complex by value gets a second entry point
+        # for Ruby to reach it by, since Fiddle has no such type to call
+        # with.  Only such a signature: everything else is called directly,
+        # and pays nothing for a road it does not take.
+        shim_symbol = nil
+        if return_type.complex? || parameters.any?(&:complex?)
+          shim_symbol = "#{symbol}_from_ruby"
+          c_source += shim_source(shim_symbol, symbol, names, parameters,
+                                  return_type)
+        end
         handle, = Compiler.build(c_source, symbol, header: generator.provenance)
         # Where the body can divide by zero or reach outside an array, the
         # object carries a place to say so.  Reading it is what lets a call
@@ -800,6 +936,7 @@ class CArray
                                    error_parameter: true)
         end
         CFunction.new(symbol, prototype, return_type, parameters, handle[symbol],
+                  shim: shim_symbol && handle[shim_symbol],
                   block: block, c_source: generator.provenance + c_source,
                   origin: origin, error: error,
                   definition: pasted.function_definition,
@@ -807,6 +944,49 @@ class CArray
                   dependencies: called.values,
                   takes_error: generator.uses_error_flag?,
                   raise_messages: generator.raise_messages)
+      end
+
+      # The entry point a call from Ruby takes where the signature carries a
+      # complex by value.  Each complex argument arrives as the two doubles
+      # C99 lays one out as, and a complex result is written back the same
+      # way; every other parameter keeps its own type, so a pointer is still
+      # a pointer and an integer is still that integer.
+      #
+      # It calls the function rather than repeating it, so there is one body
+      # and both roads reach it.
+      def shim_source (shim_symbol, symbol, names, parameters, return_type)
+        declarations = names.zip(parameters).map { |name, type|
+          type.complex? ? "const double *#{name}" : type.declare(name)
+        }
+        passed = names.zip(parameters).map { |name, type|
+          next name unless type.complex?
+          "#{type.complex_build}(#{name}[0], #{name}[1])"
+        }
+        call = "#{symbol}(#{passed.join(', ')})"
+        if return_type.complex?
+          declarations << "double *carray_jit_result"
+          body = <<~C
+            #{return_type.text} carray_jit_value = #{call};
+              carray_jit_result[0] = creal(carray_jit_value);
+              carray_jit_result[1] = cimag(carray_jit_value);
+          C
+          head = "void"
+        else
+          body = "#{return_type.computation ? 'return ' : ''}#{call};\n"
+          head = return_type.text
+        end
+        <<~C
+
+          /* Fiddle has no type for a C99 complex, so a call from Ruby comes
+             through here: the complex arguments arrive as the two doubles
+             one is laid out as, and a complex result goes back the same way.
+             A kernel calls the function above directly, C to C. */
+          #{head}
+          #{shim_symbol} (#{declarations.join(', ')})
+          {
+            #{body.strip}
+          }
+        C
       end
 
       # Nothing outside the parameter list may be reached.  A number could in
