@@ -73,6 +73,9 @@ CArray.jit_for(rows) { |i|
 }
 ```
 
+An operator assignment is the assignment it stands for: `total += a[i]`,
+`work[i, k] *= 2.0`, `counts[bin[i]] += 1`.
+
 `reassociate:` says whether a reduction's accumulator may be split into partial
 sums. Default is `CArray::JIT.reassociate` (`true`). Pass `false` for the
 serial order -- a compensated summation, or checking against the loop.

@@ -39,6 +39,21 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: the operator assignments -- `+= -= *= /= %= **= &= |= ^= <<= >>=` --
+  on a local, on a cell (`out[i] += e`, `work[i, k] += e`, a scatter such as
+  `counts[bin[i]] += 1`), on a CScalar and through a `jit_function`'s pointer
+  parameter. Each is read as the assignment it stands for, `x = x + e`, so
+  the type rules, the mask propagation and the fold that splits an
+  accumulator into partial sums are the ones already there: a reduction
+  written `total += values[j]` is still split. `||=` and `&&=` are refused,
+  being about whether a value is nil or false rather than about arithmetic.
+
+- Change: a statement outside the subset is named as it was written --
+  ``got `unless` -- write it as `if` with the condition negated`` rather than
+  `got Unless`, which was this compiler's reading of it and not anything
+  anyone typed. The list of what a body may hold was written out in two
+  places and they had come apart; it is one place now.
+
 - New: an inner loop counts by a stride, written the way an extent writes
   one: `(n-1).step(0, -1) { |k| ... }` is a downward sweep and
   `(0...n).step(2) { |k| ... }` a stride of two. `step` includes the index it

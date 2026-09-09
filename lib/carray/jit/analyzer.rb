@@ -531,7 +531,8 @@ class CArray
         # A block that ends in an assignment still has that assignment's
         # value, which is what Ruby says it has -- so jit_map keeps the
         # statement and reads the cell back for the value.
-        map_assignment = @map && last.is_a?(Prism::LocalVariableWriteNode)
+        map_assignment = @map && (last.is_a?(Prism::LocalVariableWriteNode) ||
+                                  last.is_a?(Prism::LocalVariableOperatorWriteNode))
         returns_value = (@function && @returns) || (@map && !map_assignment) ||
                         (@contract &&
                          !(last.is_a?(Prism::CallNode) && last.name == :[]=))
@@ -842,10 +843,20 @@ class CArray
         extract_block(result.value)
       end
 
+      # Every spelling that binds a local: `x = e` and the operator forms,
+      # which read the name and write it back.  A name the block assigns is
+      # not a name it captures, and one that is an array outside is the array
+      # the whole-array spelling writes -- so an operator form left out here
+      # would have `out += a` reaching for a capture that is not there.
+      ASSIGNMENT_NODES = [Prism::LocalVariableWriteNode,
+                          Prism::LocalVariableOperatorWriteNode,
+                          Prism::LocalVariableOrWriteNode,
+                          Prism::LocalVariableAndWriteNode].freeze
+
       def collect_assigned_names (node)
         return [] unless node
         names = []
-        names << node.name if node.is_a?(Prism::LocalVariableWriteNode)
+        names << node.name if ASSIGNMENT_NODES.any? { |kind| node.is_a?(kind) }
         node.compact_child_nodes.each do |child|
           names.concat(collect_assigned_names(child))
         end
@@ -1013,29 +1024,19 @@ class CArray
             return MaskWrite.new(node.name, node.location)
           end
           expression = build(node.value)
-          # In the whole-array spelling every name in the block is a cell, so
-          # an assignment to a name that is an array outside writes that
-          # array's cell -- the one the loop is on, the same cell every read
-          # in the block is at.  A name that is not an array is a local, as
-          # it is anywhere else.
-          if @whole_array && @array_names.include?(node.name)
-            return whole_array_write(node.name, expression, node.location)
-          end
-          # An index is the loop's, not the block's.  Ruby reads `i = 2` as
-          # rebinding the parameter and leaves the loop alone; the C would
-          # assign to the counter, so the loop would walk somewhere else --
-          # to cells outside the array, given a value outside its extent.
-          # The two do not mean the same thing, so this is not compiled.
-          if index_in_scope?(node.name)
-            raise Unsupported.new(
-              "`#{node.name}` is a loop index, and assigning to it here would " \
-              "move the loop rather than the value: in Ruby the same line " \
-              "rebinds the parameter and the loop runs on. Use a local of " \
-              "another name",
-              node.location)
-          end
-          @local_names << node.name unless @local_names.include?(node.name)
-          Assignment.new(node.name, expression, node.location)
+          assign_local(node.name, expression, node.location)
+        when Prism::LocalVariableOperatorWriteNode
+          build_operator_assignment(node)
+        when Prism::IndexOperatorWriteNode
+          build_operator_element_write(node)
+        when Prism::LocalVariableOrWriteNode, Prism::LocalVariableAndWriteNode,
+             Prism::IndexOrWriteNode, Prism::IndexAndWriteNode
+          raise Unsupported.new(
+            "`#{node.is_a?(Prism::LocalVariableOrWriteNode) ||
+                node.is_a?(Prism::IndexOrWriteNode) ? '||=' : '&&='}` asks " \
+            "whether the value is already nil or false, which a number in a " \
+            "kernel never is; write the assignment out",
+            node.location)
         when Prism::CallNode
           if node.receiver.nil? && node.name == :printf
             return build_print(node)
@@ -1060,11 +1061,50 @@ class CArray
         when Prism::BreakNode
           build_loop_jump(node, LoopStop, "break")
         else
-          raise Unsupported.new(
-            "a kernel body holds assignments, `if`, `while`, `(a...b).each` " \
-            "and `n.times` only, got #{node_name(node)}",
-            node.location)
+          refuse_as_a_statement(node, statement_description(node))
         end
+      end
+
+      # What a body may hold, said in one place: it was said in two, and they
+      # had already come apart -- one of them listing `step` and the other
+      # not.
+      def refuse_as_a_statement (node, description)
+        hint = STATEMENT_HINTS[node.class]
+        raise Unsupported.new(
+          "a kernel body holds assignments, `if`, `while`, `(a...b).each`, " \
+          "`n.times` and `a.step(b, s)` only, got #{description}" +
+          (hint ? " -- #{hint}" : ""),
+          node.location)
+      end
+
+      # A refusal names what was written rather than the node this compiler
+      # read it as: `Prism::UnlessNode` is not a thing anyone typed.
+      STATEMENT_DESCRIPTIONS = {
+        Prism::UnlessNode                 => "`unless`",
+        Prism::UntilNode                  => "`until`",
+        Prism::CaseNode                   => "`case`",
+        Prism::CaseMatchNode              => "`case ... in`",
+        Prism::ForNode                    => "`for`",
+        Prism::ReturnNode                 => "`return`",
+        Prism::BeginNode                  => "`begin`",
+        Prism::RescueModifierNode         => "`rescue`",
+        Prism::MultiWriteNode             => "a parallel assignment",
+        Prism::InstanceVariableWriteNode  => "an instance variable",
+        Prism::GlobalVariableWriteNode    => "a global variable",
+        Prism::ConstantWriteNode          => "an assignment to a constant",
+        Prism::DefNode                    => "a method definition",
+      }.freeze
+
+      STATEMENT_HINTS = {
+        Prism::UnlessNode  => "write it as `if` with the condition negated",
+        Prism::UntilNode   => "write it as `while` with the condition negated",
+        Prism::CaseNode    => "write the branches out with `if` and `elsif`",
+        Prism::ReturnNode  => "a body is one expression, and its value is " \
+                              "the last thing in it",
+      }.freeze
+
+      def statement_description (node)
+        STATEMENT_DESCRIPTIONS.fetch(node.class) { node_name(node) }
       end
 
       # `next` skips the rest of this iteration, `break` leaves the loop.  Both
@@ -1328,6 +1368,72 @@ class CArray
         node ? node.body : []
       end
 
+      # In the whole-array spelling every name in the block is a cell, so an
+      # assignment to a name that is an array outside writes that array's
+      # cell -- the one the loop is on, the same cell every read in the block
+      # is at.  A name that is not an array is a local, as it is anywhere
+      # else.
+      def assign_local (name, expression, location)
+        if @whole_array && @array_names.include?(name)
+          return whole_array_write(name, expression, location)
+        end
+        # An index is the loop's, not the block's.  Ruby reads `i = 2` as
+        # rebinding the parameter and leaves the loop alone; the C would
+        # assign to the counter, so the loop would walk somewhere else -- to
+        # cells outside the array, given a value outside its extent.  The two
+        # do not mean the same thing, so this is not compiled.
+        if index_in_scope?(name)
+          raise Unsupported.new(
+            "`#{name}` is a loop index, and assigning to it here would " \
+            "move the loop rather than the value: in Ruby the same line " \
+            "rebinds the parameter and the loop runs on. Use a local of " \
+            "another name",
+            location)
+        end
+        @local_names << name unless @local_names.include?(name)
+        Assignment.new(name, expression, location)
+      end
+
+      # `x += e` is `x = x + e`, and is read as exactly that: the name is
+      # read where Ruby reads it -- before the right-hand side, and by the
+      # same rule, so a name the block has not assigned yet says so rather
+      # than starting from whatever C left in the variable.
+      def build_operator_assignment (node)
+        operator = assignment_operator(node)
+        read = build_name_read(node.name, node.location)
+        expression = combined(operator, read, build(node.value), node.location)
+        assign_local(node.name, expression, node.location)
+      end
+
+      # `a[i] += e` is `a[i] = a[i] + e`, cell for cell -- including under a
+      # mask, where the read is a read like any other and carries what it
+      # finds into what is written.
+      def build_operator_element_write (node)
+        operator = assignment_operator(node)
+        indices = node.arguments ? node.arguments.arguments : []
+        read = build_element_read(node, indices)
+        expression = combined(operator, read, build(node.value), node.location)
+        element_write(node, indices, expression, node.location)
+      end
+
+      # The operators an assignment may carry are the ones an expression may:
+      # `||=` and `&&=` are refused where they are read, being about nil and
+      # false rather than about arithmetic.
+      def assignment_operator (node)
+        operator = node.binary_operator
+        unless (ARITHMETIC_OPERATORS + BIT_OPERATORS + [:**]).include?(operator)
+          raise Unsupported.new(
+            "`#{operator}=` is not one of the operators a kernel computes " \
+            "with", node.location)
+        end
+        operator
+      end
+
+      def combined (operator, left, right, location)
+        return power_node(left, right, location) if operator == :**
+        BinaryOperation.new(operator, left, right, location)
+      end
+
       def build_element_write (node)
         if node.name == :each || node.name == :times || node.name == :step
           return build_inner_loop(node)
@@ -1351,31 +1457,38 @@ class CArray
               "them",
               node.location)
           end
-          raise Unsupported.new(
-            "a kernel body holds assignments, `if`, `while`, `(a...b).each`, " \
-            "`n.times` and `a.step(b, s)` only, got a call to `#{node.name}`",
-            node.location)
+          refuse_as_a_statement(node, "a call to `#{node.name}`")
         end
-        if (pointer = pointer_subscript(node, write: true))
-          name, index = pointer
-          arguments = node.arguments.arguments
-          return PointerWrite.new(name, index, build(arguments.last),
-                                  node.location)
-        end
-        array = array_name(node.receiver, node.location)
         arguments = node.arguments ? node.arguments.arguments : []
+        element_write(node, arguments[0..-2], nil, node.location,
+                      value_node: arguments.last)
+      end
+
+      # The write itself, with the indices and the value already told apart:
+      # `a[i] = e` puts the value last among the arguments, while `a[i] += e`
+      # keeps it somewhere else, and everything from here down is the same
+      # for both.  `value_node` is passed where the value is still a Prism
+      # node, since `a[i] = UNDEF` is a mark rather than a value and is read
+      # off the node.
+      def element_write (node, indices, expression, location, value_node: nil)
+        if (pointer = pointer_subscript(node, write: true, indices: indices))
+          name, index = pointer
+          return PointerWrite.new(name, index,
+                                  expression || build(value_node), location)
+        end
+        array = array_name(node.receiver, location)
         # `out[] = ...` was how a block that had to run as Ruby said "the
         # whole array", `[]=` being the only spelling Ruby has for it.  The
         # block is read rather than run, and every name in it is a cell, so
         # the assignment is Ruby's own: `out = ...`.
-        if @whole_array && arguments.size == 1
+        if @whole_array && indices.empty?
           raise Unsupported.new(
             "`#{array}[] = ...` writes the cell the loop is on, which is what " \
             "`#{array} = ...` says; the block is read rather than run, so the " \
             "assignment is an ordinary one",
-            node.location)
+            location)
         end
-        subscripts = read_subscripts(array, arguments[0..-2], node.location)
+        subscripts = read_subscripts(array, indices, location)
         # A kernel writes a cell one of its own indices reaches -- an outer
         # one or an inner one -- or one it works out, which is a scatter and
         # is checked as it is reached rather than in advance.  What it may not
@@ -1390,16 +1503,17 @@ class CArray
             "`#{array}[...]` on the left of `=` is addressed by " \
             "#{available_indices}, by a position fixed before the loop runs " \
             "-- or by a value the kernel works out, which is a scatter",
-            node.location)
+            location)
         end
         record_subscripts(array, subscripts)
         record_write_subscripts(array, subscripts)
         @written_arrays << array unless @written_arrays.include?(array)
-        if undef_constant?(arguments.last)
+        if value_node && undef_constant?(value_node)
           @uses_undef = true
-          return MaskWrite.new(array, node.location)
+          return MaskWrite.new(array, location)
         end
-        ElementWrite.new(array, build(arguments.last), node.location, subscripts)
+        ElementWrite.new(array, expression || build(value_node), location,
+                         subscripts)
       end
 
       def build (node)
@@ -1674,7 +1788,7 @@ class CArray
       # does not.  A pointer declared const is refused on the left rather than
       # silently written through: the declaration is a promise to the caller,
       # not decoration.
-      def pointer_subscript (node, write: false)
+      def pointer_subscript (node, write: false, indices: nil)
         name = captured_name(node.receiver)
         return nil unless name && @pointers.key?(name)
         case @pointers.fetch(name)
@@ -1690,8 +1804,11 @@ class CArray
               "not write through it", node.location)
           end
         end
-        arguments = node.arguments ? node.arguments.arguments : []
-        arguments = arguments[0..-2] if write
+        arguments = indices
+        unless arguments
+          arguments = node.arguments ? node.arguments.arguments : []
+          arguments = arguments[0..-2] if write
+        end
         unless arguments.size == 1
           raise Unsupported.new(
             "`#{name}` is a pointer, so it takes one index", node.location)
@@ -1820,12 +1937,15 @@ class CArray
         ElementWrite.new(name, expression, location, subscripts)
       end
 
-      def build_element_read (node)
-        if (pointer = pointer_subscript(node))
+      # `indices` is given where the node is not a plain `a[i]` -- `a[i] += e`
+      # carries its indices and its value in different places, and the read
+      # it stands for is the same read either way.
+      def build_element_read (node, indices = nil)
+        if (pointer = pointer_subscript(node, indices: indices))
           return PointerRead.new(pointer.first, pointer.last, node.location)
         end
         array = array_name(node.receiver, node.location)
-        arguments = node.arguments ? node.arguments.arguments : []
+        arguments = indices || (node.arguments ? node.arguments.arguments : [])
         subscripts = read_subscripts(array, arguments, node.location)
         record_subscripts(array, subscripts)
         ElementRead.new(array, subscripts, node.location)
@@ -2104,8 +2224,10 @@ class CArray
       # A non-negative literal exponent can still be squared out; anything
       # else has to be asked for in floating point.
       def build_power (receiver, exponent, location)
-        base = build(receiver)
-        power = build(exponent)
+        power_node(build(receiver), build(exponent), location)
+      end
+
+      def power_node (base, power, location)
         if power.is_a?(IntegerLiteral) && power.value < 0
           raise Unsupported.new(
             "a negative exponent gives a Rational in Ruby; write `1.0 / x ** n`",
