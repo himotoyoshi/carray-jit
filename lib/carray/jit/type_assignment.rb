@@ -137,7 +137,7 @@ class CArray
       def self.scalar_type (value)
         case value
         when Float   then :double
-        when Integer then :int64
+        when Integer then integer_type(value)
         when Complex then :complex
         else
           # A generator captured by name is worth its own answer: it is not a
@@ -153,6 +153,32 @@ class CArray
                 "captured scalars must be Float, Integer or Complex, got " \
                 "#{value.class}"
         end
+      end
+
+      # Which of the two integer widths a captured Integer travels in.  Ruby's
+      # Integer has none, so the value decides: int64 while it fits one, and
+      # uint64 above that, which is the width CArray has for those values and
+      # the one a kernel already computes them in.  A value that fits neither
+      # is refused here rather than packed, because packing it is what would
+      # not say so -- `pack("q")` takes 2**64 modulo the width and hands back
+      # a zero.
+      #
+      # This is the value deciding a type, which nothing else about a capture
+      # does, and it is sound only because the value is in the kernel's cache
+      # key: 5 and 2**63 + 5 are two kernels, compiled and cached apart.
+      INT64_MIN = -(2**63)
+      INT64_MAX = 2**63 - 1
+      UINT64_MAX = 2**64 - 1
+
+      def self.integer_type (value)
+        return :int64 if value >= INT64_MIN && value <= INT64_MAX
+        return :uint64 if value >= 0 && value <= UINT64_MAX
+        raise Unsupported,
+              "#{value} is outside the integers a kernel computes in -- an " \
+              "int64 down to -2**63, a uint64 up to 2**64-1 -- and Ruby's " \
+              "Integer, which has no width, is the only thing here that can " \
+              "hold it. Capture it as a Float where the value's precision " \
+              "allows one"
       end
 
       def self.storage_type (name)
@@ -655,12 +681,38 @@ class CArray
         # side's width rather than the other side widening to Ruby's.
         return scalar.type if KIND_RANK[scalar_kind] > KIND_RANK[typed_kind]
         if scalar_kind == typed_kind
+          refuse_wide_capture(scalar, typed)
           # The scalar becomes that type rather than being widened to meet it,
           # and says so: a literal emitted as a double would take the C
           # expression back to double however this node is typed.
           scalar.type = typed.type
         end
         typed.type
+      end
+
+      # A captured Integer above int64 meeting an integer, which absorption
+      # has no answer for: the scalar is supposed to take the other side's
+      # width, and this value did not come from a width -- it came from a Ruby
+      # Integer, which has none.
+      #
+      # CArray refuses the same expression, `u + 2**63` raising `bignum too
+      # big to convert into 'long long'` whatever the array's own type is, and
+      # this follows it rather than inventing an answer beside it.  Where the
+      # other side is a Float or a Complex there is nothing to refuse: the
+      # wider kind wins, CArray converts the same way, and the value reaches a
+      # double as it does in Ruby.
+      def refuse_wide_capture (scalar, typed)
+        return unless scalar.is_a?(CaptureRead) && scalar.type == :uint64
+        width = typed.type == :uint64 ? "a uint64" : "an int64"
+        raise Unsupported.new(
+          "`#{scalar.name}` is a captured Integer above 2**63-1, and it is " \
+          "meeting #{width}: a captured Integer brings no width of its own -- " \
+          "it takes the width of what it meets -- and this value came from " \
+          "none. CArray refuses the same expression, whatever the array's own " \
+          "type is. Give the value a width: `CScalar.uint64() " \
+          "{ #{scalar.name} }`, which a kernel reads as the one-cell array it " \
+          "is",
+          scalar.location)
       end
 
       def join (left, right)

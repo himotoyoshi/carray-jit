@@ -310,6 +310,34 @@ CArray.result_type(:uint64, :float64)       #=> :float64
 
 That order is C's usual arithmetic conversions as well. It is not containment -- neither integer type holds the other -- but it is what both of the languages with an opinion say.
 
+#### A captured Integer takes the width its value asks for
+
+A captured Integer has no data type to read a width off, so the value decides: `int64` while it fits one, `uint64` above that, and a value neither holds is refused where the capture is read rather than packed into a slot that cannot hold it.
+
+```ruby
+big = 2**64 - 1
+out = CArray.uint64(1)
+
+CArray.jit_for(1) { |i| out[i] = big / 3 }
+out[0]                                      #=> 6148914691236517205, Ruby's quotient
+```
+
+This is the one thing about a capture that its *value* settles rather than its class, and it is sound because the value's width is part of the kernel's cache key: the same block with `5` and with `2**63 + 5` is two kernels, compiled and cached apart. What travels is unchanged -- the kernel's three buffers are what they were, and a `uint64` rides in the integers one as the eight bytes it is, packed as its own bits and cast back on the way in.
+
+What it may not do is meet an integer. A bare Ruby Numeric is absorbed -- it takes the other operand's dtype rather than widening it, which is what keeps `f32 * 2.0` a float32 -- and there is no width to hand this one, since the value came from none. CArray refuses the same expression, and refuses it whatever the array's own type is:
+
+```ruby
+u = CArray.uint64(1) { 5 }
+
+u + (2**63 + 5)         #=> RangeError: bignum too big to convert into 'long long'
+u + CScalar.uint64() { 2**63 + 5 }
+                        #=> [9223372036854775818], the width said once
+```
+
+So a kernel refuses it too, and names the same way through -- `CScalar.uint64() { big }`, which a kernel reads as the one-cell array it is. A Float or a Complex on the other side is a different question: there the wider kind wins rather than a width being handed over, and the value reaches a double as it does in Ruby and in CArray.
+
+An accumulator is that refusal reached from the other side. `total = 0` is an Integer, and by the second pass it carries a width for the capture to meet, so the loop is refused and a `CScalar` is what states both: one for the seed, as [Giving an accumulator the type](#giving-an-accumulator-the-type) has it, and one for the value.
+
 #### Giving an accumulator the type
 
 A local has no data type of its own, so it takes Ruby's: `total = 0` is an `int64`. Added to a `uint64` cell it would come back round the loop as a `uint64`, and one C variable is one type, so the kernel says so:

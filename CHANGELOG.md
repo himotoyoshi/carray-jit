@@ -39,6 +39,25 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a captured Integer above 2**63-1 reaches a kernel whole. It was packed
+  into the int64 slot the kernel reads its integers from, which took the value
+  modulo the width and said nothing: `big / 3`, `big > 100` and `big * 1.0`
+  answered from a negative number, while `+` and `*` came out right and hid it.
+  Such a capture is a uint64 now -- the width CArray has for those values --
+  and a value neither an int64 nor a uint64 holds is refused where the capture
+  is read, naming the value.
+
+- Change: a captured Integer above 2**63-1 meeting an integer is refused,
+  where before it was absorbed into that integer's width and computed from a
+  wrapped value. CArray refuses the same expression whatever the array's own
+  type is -- `CArray.uint64(1) { 5 } + 2**63` raises `bignum too big to
+  convert into 'long long'` -- and this follows it: a bare Integer brings no
+  width, and the message names `CScalar.uint64() { big }`, which a kernel reads
+  as the one-cell array it is. A Float or a Complex on the other side is
+  unaffected, and so is a capture that fits an int64. A loop that adds such a
+  capture to an accumulator is refused for the same reason: state the width
+  once with a CScalar, for the seed and for the value.
+
 - New: a `jit_function` body may take an unsigned 64-bit value by parameter --
   `CArray.jit_function("size_t stride(size_t n, size_t width)") { |n, w| n * w }`
   -- where before only a pointer to one could be taken. The value arrives

@@ -19,7 +19,8 @@ class CArray
       #   @return [Boolean] whether this call invoked the compiler, rather
       #     than reusing a cached object.
       attr_reader :source, :c_source, :arrays, :storage_types, :reals,
-                  :integers, :complexes, :rank, :index_names, :written_arrays,
+                  :integers, :complexes, :unsigned_integers,
+                  :rank, :index_names, :written_arrays,
                   :compiled, :masked, :directions, :contracted_names,
                   :index_axes,
                   # How far a stencil's windows reach on each axis, as
@@ -38,6 +39,7 @@ class CArray
         @reals = generator.reals
         @integers = generator.integers
         @complexes = generator.complexes
+        @unsigned_integers = generator.unsigned_integers
         # Per array, the axes read at an index only the running kernel knows,
         # and the extents it checks them against.
         @extent_slots = generator.extent_slots
@@ -119,9 +121,7 @@ class CArray
         error = [0].pack("l")
         packed_bounds = bounds.flatten.pack("q*")
         reals = packed_reals(scalar_values)
-        integers = (@integers.map { |name| Integer(scalar_values.fetch(name)) } +
-                    @extent_slots.map { |name, axis| array_values.fetch(name).dim[axis] })
-                   .pack("q*")
+        integers = packed_integers(scalar_values, array_values)
         functions = @c_function_names.map { |name|
           c_function_values.fetch(name).pointer.to_i
         }.pack("Q*")
@@ -181,10 +181,7 @@ class CArray
 
         error = [0].pack("l")
         reals = packed_reals(scalar_values)
-        integers = (@integers.map { |name| Integer(scalar_values.fetch(name)) } +
-                    @extent_slots.map { |name, axis|
-                      array_values.fetch(name).dim[axis]
-                    }).pack("q*")
+        integers = packed_integers(scalar_values, array_values)
         functions = @c_function_names.map { |name|
           c_function_values.fetch(name).pointer.to_i
         }.pack("Q*")
@@ -281,6 +278,24 @@ class CArray
            value = scalar_values.fetch(name)
            [Float(value.real), Float(value.imaginary)]
          }).pack("d*")
+      end
+
+      # The `integers` slots the kernel reads: the signed captures, then the
+      # unsigned ones, then the extents an index is checked against.  A uint64
+      # is packed as the bits it is -- `pack("q")` would take 2**63 modulo the
+      # width and say nothing -- and the kernel casts the slot back, so the
+      # two directives are what makes one buffer carry both widths.
+      #
+      # One method because both loops pack it, and the same buffer packed in
+      # two places is what `packed_reals` is one method about.
+      def packed_integers (scalar_values, array_values)
+        @integers.map { |name| Integer(scalar_values.fetch(name)) }.pack("q*") +
+          @unsigned_integers.map { |name|
+            Integer(scalar_values.fetch(name))
+          }.pack("Q*") +
+          @extent_slots.map { |name, axis|
+            array_values.fetch(name).dim[axis]
+          }.pack("q*")
       end
 
       def address_buffer (name, array)

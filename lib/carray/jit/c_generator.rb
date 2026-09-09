@@ -303,15 +303,25 @@ class CArray
         # A captured Complex rides in the reals buffer as its two parts, so
         # that the kernel signature stays the one shape every kernel has.
         @complexes = carried_names.select { |name| scalar_types[name] == :complex }.sort
-        # Three buses and no fourth: a capture whose type is none of these
-        # would be packed into nothing and read as whatever the slot held, so
-        # it is caught here rather than at the cell it computes wrongly.
-        carried = @reals.size + @integers.size + @complexes.size
+        # And a captured uint64 rides in the integers buffer, which is the
+        # same eight bytes read the other way: the caller packs the value's
+        # bits and the kernel casts the slot back, so nothing is lost and the
+        # signature keeps its three buffers.  Behind the signed ones, in the
+        # order the caller packs them.
+        @unsigned_integers =
+          carried_names.select { |name| scalar_types[name] == :uint64 }.sort
+        # Three buffers and no fourth: a capture whose type rides in none of
+        # them would be packed into nothing and read as whatever the slot
+        # held, so it is caught here rather than at the cell it computes
+        # wrongly.
+        carried = @reals.size + @integers.size + @complexes.size +
+                  @unsigned_integers.size
         unless carried == carried_names.size
-          missing = carried_names - @reals - @integers - @complexes
+          missing = carried_names - @reals - @integers - @complexes -
+                    @unsigned_integers
           raise Error,
                 "captured #{missing.join(", ")} travel in none of the kernel's " \
-                "three scalar buses; a computation type was added without a " \
+                "scalar buffers; a computation type was added without a " \
                 "way to hand a value of it to the C"
         end
         # Only the ones the block actually called, in a fixed order, because
@@ -376,7 +386,8 @@ class CArray
         @block_source = block_source
       end
 
-      attr_reader :arrays, :reals, :integers, :complexes, :masked, :extent_slots,
+      attr_reader :arrays, :reals, :integers, :complexes, :unsigned_integers,
+                  :masked, :extent_slots,
                   :c_functions, :pasted_functions, :address_functions,
                   :address_arrays, :address_parameters,
                   # The messages `raise` in the block gave, by the code a cell
@@ -990,9 +1001,16 @@ class CArray
         @integers.each_with_index do |name, index|
           lines << "  const int64_t #{c_name(name)} = integers[#{index}];\n"
         end
+        # The cast is the whole of how a uint64 capture travels: the caller
+        # packed the value's bits into the slot, and reading them as what they
+        # are is what puts the value back.
+        @unsigned_integers.each_with_index do |name, index|
+          lines << "  const uint64_t #{c_name(name)} = " \
+                   "(uint64_t) integers[#{@integers.size + index}];\n"
+        end
         @extent_slots.each_with_index do |(array, axis), slot|
           lines << "  const int64_t #{extent_name(array, axis)} = " \
-                   "integers[#{@integers.size + slot}];\n"
+                   "integers[#{@integers.size + @unsigned_integers.size + slot}];\n"
         end
         @address_functions.each_key.with_index do |name, index|
           lines << "  const #{c_function_type_name(name)} #{c_name(name)} = " \

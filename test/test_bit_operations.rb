@@ -207,6 +207,158 @@ class TestBitOperations < Minitest::Test
     assert_equal((2**64 - 1 + 5) % 2**64, out[0])
   end
 
+  # ---------- a captured Integer, and which width it travels in ----------
+  #
+  # Ruby's Integer has no width, so a capture's value is what decides one:
+  # int64 while it fits, uint64 above that.  It is the only thing about a
+  # capture the value decides, and it is sound because the value is in the
+  # kernel's cache key -- `5` and `2**63 + 5` are two kernels.
+  #
+  # Before that, a capture above 2**63 was packed into the int64 slot and read
+  # back as a negative number.  Addition and multiplication survived it, two's
+  # complement being what it is; division, comparison and the conversion to a
+  # double did not, and said nothing.
+
+  def test_a_captured_integer_above_int64_is_carried_whole
+    big = 2**64 - 1
+    quotient = CArray.uint64(1)
+    CArray.jit_for(1) { |i| quotient[i] = big / 3 }
+    assert_equal(big / 3, quotient[0], "the quotient Ruby gives")
+
+    marks = CArray.boolean(1)
+    CArray.jit_for(1) { |i| marks[i] = big > 100 }
+    assert_equal([true], marks.to_a, "`big > 100` is true, as it is in Ruby")
+
+    real = CArray.float64(1)
+    CArray.jit_for(1) { |i| real[i] = big * 1.0 }
+    assert_bits_equal(big * 1.0, real[0])
+  end
+
+  # The same source, twice, with the width the value asks for each time -- and
+  # the second kernel is a second kernel rather than the first one handed back.
+  def test_a_captured_integers_width_follows_its_value
+    [[3, 3 / 3], [2**63 + 3, (2**63 + 3) / 3]].each do |value, expected|
+      out = CArray.uint64(1)
+      kernel = CArray.jit_for(1) { |i| out[i] = value / 3 }
+      assert_equal(expected, out[0], "#{value} / 3")
+      wanted = value > 2**63 - 1 ? /const uint64_t value = \(uint64_t\) integers\[0\]/
+                                 : /const int64_t value = integers\[0\]/
+      assert_match(wanted, kernel.c_source, "how #{value} arrives")
+    end
+  end
+
+  # Both widths at once, beside an extent the kernel reads at run time -- the
+  # three of them share the integers buffer, and the slots have to line up
+  # between what the caller packs and what the C reads.  A scatter is what
+  # asks for the extent.
+  def test_a_captured_uint64_travels_beside_a_signed_integer
+    big = 2**63 + 5
+    small = 7
+    bin = CArray.int32(4) { |i| i % 2 }
+    counts = CArray.uint64(2)
+    kernel = CArray.jit_for(4) { |i|
+      counts[bin[i]] = counts[bin[i]] + (big / 3 + small)
+    }
+    assert_equal([(2 * (big / 3 + small)) % 2**64] * 2, counts.to_a)
+    # The order, said out loud, because it is the one thing the caller and the
+    # C have to agree about and neither can see the other doing it.
+    assert_match(/const int64_t small = integers\[0\];/, kernel.c_source)
+    assert_match(/const uint64_t big = \(uint64_t\) integers\[1\];/,
+                 kernel.c_source)
+    assert_match(/const int64_t counts_n0 = integers\[2\];/, kernel.c_source)
+  end
+
+  # The other loop packs the same buffer, so it carries the same capture.
+  def test_a_captured_uint64_reaches_the_swept_loop
+    big = 2**64 - 1
+    out = CArray.uint64(3)
+    CArray.jit_each { out = big / 3 }
+    assert_equal([big / 3] * 3, out.to_a)
+  end
+
+  # Meeting an integer is where it stops, and CArray is why.  A bare Ruby
+  # Integer is absorbed -- it takes the other side's width rather than widening
+  # it, which is what keeps `f32 * 2.0` a float32 -- and this value came from
+  # no width at all.  CArray refuses the same expression whatever the array's
+  # own type is, `u + 2**63` raising `bignum too big to convert into 'long
+  # long'` over a uint64 array as over an int64 one, so this refuses it too
+  # rather than answering beside it.
+  def test_a_captured_uint64_meeting_an_integer_is_refused
+    big = 2**64 - 1
+    out = CArray.uint64(1)
+    [[CArray.int64(1) { 3 }, "int64"], [CArray.uint64(1) { 3 }, "uint64"]].each do |divisor, type|
+      error = assert_raises(CArray::JIT::Unsupported, "over a #{type} array") do
+        CArray.jit_for(1) { |i| out[i] = big / divisor[i] }
+      end
+      assert_match(/captured Integer above 2\*\*63-1/, error.message)
+      assert_match(/CScalar\.uint64\(\) \{ big \}/, error.message,
+                   "the message names the way through")
+    end
+
+    # And that way through is a one-cell array, so it meets the other array as
+    # an array does -- which is CArray's own answer to the same expression.
+    scalar = CScalar.uint64() { big }
+    divisor = CArray.uint64(1) { 3 }
+    CArray.jit_for(1) { |i| out[i] = scalar / divisor[i] }
+    assert_equal(big / 3, out[0])
+  end
+
+  # A Float or a Complex on the other side is not the same question: the wider
+  # kind wins, no width is being handed to the capture, and CArray converts it
+  # the same way.
+  def test_a_captured_uint64_still_meets_a_float_and_a_complex
+    big = 2**64 - 1
+    scale = CArray.float32(1) { 2.0 }
+    real = CArray.float32(1)
+    CArray.jit_for(1) { |i| real[i] = scale[i] * big }
+    assert_bits_equal((scale * CScalar.uint64() { big })[0], real[0])
+
+    turn = CArray.cmplx128(1) { Complex(1, 2) }
+    spun = CArray.cmplx128(1)
+    CArray.jit_for(1) { |i| spun[i] = turn[i] * big }
+    assert_bits_equal((turn * CScalar.uint64() { big })[0], spun[0])
+  end
+
+  # An accumulator is the same refusal reached from the other side: `total`
+  # carries a width by the second pass, and the capture meets it.
+  def test_a_captured_uint64_in_an_accumulator_is_refused
+    big = 2**64 - 1
+    out = CArray.uint64(1)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(1) { |i|
+        total = 0
+        (0...2).each { |j| total = total + big }
+        out[i] = total
+      }
+    end
+    assert_match(/captured Integer above 2\*\*63-1/, error.message)
+
+    # With the width said once, the loop is the one the uint64 section above
+    # is about: a CScalar seeds the accumulator and another carries the value.
+    value = CScalar.uint64() { big }
+    seed = CScalar.uint64() { 0 }
+    CArray.jit_for(1) { |i|
+      total = seed
+      (0...2).each { |j| total = total + value }
+      out[i] = total
+    }
+    assert_equal((2 * big) % 2**64, out[0])
+  end
+
+  # And a value neither width holds is refused where the capture is read.
+  # `pack("q")` would have taken it modulo the width and handed back a number
+  # nobody wrote -- 2**64 arriving as a zero.
+  def test_a_captured_integer_wider_than_uint64_is_refused
+    out = CArray.uint64(1)
+    [2**64, -(2**63) - 1].each do |value|
+      error = assert_raises(CArray::JIT::Unsupported) do
+        CArray.jit_for(1) { |i| out[i] = value + 1 }
+      end
+      assert_match(/outside the integers a kernel computes in/, error.message,
+                   "#{value} is not one")
+    end
+  end
+
   def test_a_uint64_divisor_of_zero_is_reported
     source = CArray.uint64(1) { 10 }
     zero = CArray.uint64(1) { 0 }
