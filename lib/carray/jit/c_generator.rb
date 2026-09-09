@@ -350,7 +350,7 @@ class CArray
         # this kernel is what answers for them.  The codes agree because they
         # are taken from the messages, not counted off.
         @raise_messages = {}
-        @pasted_functions.each_value do |function|
+        pasted_closure.each do |function|
           (function.raise_messages || {}).each do |code, message|
             register_raise(code, message)
           end
@@ -547,7 +547,7 @@ class CArray
         # A pasted body wants the same helpers here that it had in its own
         # file, and it is emitted below them, so this is asked before any of
         # them is written out.
-        @pasted_functions.each_value do |function|
+        pasted_closure.each do |function|
           needs = function.helpers || {}
           @uses_integer_power ||= needs[:integer_power]
           @uses_unsigned_divide ||= needs[:unsigned_divide]
@@ -829,16 +829,44 @@ class CArray
       # one.  The name carries the digest of the body, so two of them are the
       # same function, and one is pasted once however many names the block
       # reached it by.
+      # Every function whose definition ends up in this file: the ones the
+      # block named, and the ones those call.  Helpers and raise messages
+      # are asked of all of them, since a body pasted three deep reports
+      # through the same slot and wants the same preamble.
+      def pasted_closure
+        found = {}
+        walk = lambda do |function|
+          next if found[function.name]
+          found[function.name] = function
+          (function.dependencies || []).each { |called| walk.call(called) }
+        end
+        @pasted_functions.each_value { |function| walk.call(function) }
+        found.values
+      end
+
+      # A pasted body may itself call a function compiled here, which it
+      # reaches by symbol -- so that one is pasted too, and ahead of it, or
+      # the call would be to a name this file has not defined yet.  The same
+      # `seen` covers both: one definition per symbol however many ways it
+      # was reached.
       def pasted_definitions
         seen = {}
         text = +""
         @pasted_functions.each_value do |function|
-          next if seen[function.name]
-          seen[function.name] = true
-          text << "/* #{function} */\n" \
-                  "static #{function.definition}\n"
+          text << paste_definition(function, seen)
         end
         text
+      end
+
+      def paste_definition (function, seen)
+        return "" if seen[function.name]
+        seen[function.name] = true
+        text = +""
+        (function.dependencies || []).each do |called|
+          text << paste_definition(called, seen)
+        end
+        text << "/* #{function} */\n" \
+                "static #{function.definition}\n"
       end
 
       # One compiled object holds both loops and picks between them once,

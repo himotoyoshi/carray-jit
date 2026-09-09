@@ -499,12 +499,13 @@ class TestCFunction < Minitest::Test
 
   # ---------- what a compiled function may not reach ----------
   #
-  # Its parameters are its whole surface.  A captured value could be written
-  # into the C as a literal and a captured function's address as a constant,
-  # but either would put something in the compiled object that the cache keys
-  # nothing on -- an object built for one capture handed back for another.
-  # The kernel path passes captures in buffers at call time; a C function has
-  # no buffers.
+  # Its parameters are its whole surface, with one exception: a function
+  # compiled here, which is pasted rather than captured and whose symbol is
+  # in the cache key beside the body's text.  Everything else would put
+  # something in the compiled object that the key covers nothing of -- an
+  # object built for one capture handed back for another.  The kernel path
+  # passes captures in buffers at call time; a C function has no buffers,
+  # which is also why a borrowed function, being only an address, stays out.
 
   def test_it_may_not_close_over_a_value
     scale = 2.0
@@ -522,13 +523,89 @@ class TestCFunction < Minitest::Test
     assert_match(/reaches `a`, which is an array outside it/, error.message)
   end
 
-  def test_it_may_not_close_over_another_c_function
+  def test_it_may_not_close_over_a_borrowed_function
     j0 = @j0
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double (*)(double)") { |x| j0.call(x) + 1.0 }
     end
-    assert_match(/reaches `j0`, which is another C function outside it/,
+    assert_match(/reaches `j0`, which was bound with `jit_extern`/,
                  error.message)
+  end
+
+  # ---------- one compiled function calling another ----------
+
+  def test_a_body_calls_a_function_compiled_here
+    square = CArray.jit_function("double square(double)") { |x| x * x }
+    plus = CArray.jit_function("double (*)(double)") { |x| square.call(x) + 1.0 }
+    assert_equal(10.0, plus.call(3.0))
+  end
+
+  # The body is pasted, not reached through a pointer: that is what a
+  # compiler can see through, and it is what the kernel path already does
+  # with a function written here.
+  def test_the_called_body_is_pasted_into_the_caller
+    twice = CArray.jit_function("double twice(double)") { |x| x + x }
+    outer = CArray.jit_function("double (*)(double)") { |x| twice.call(x) }
+    assert_match(/^static double\n#{twice.name}/, outer.c_source)
+    assert_match(/return #{twice.name}\(x\);/, outer.c_source)
+  end
+
+  # The reason the capture is allowed at all: the callee's symbol is in the
+  # key, so two blocks spelled the same that call different functions are
+  # two functions.  Without it the first compiled would answer for both.
+  def test_two_bodies_spelled_the_same_calling_different_functions_differ
+    square = CArray.jit_function("double square(double)") { |x| x * x }
+    cube = CArray.jit_function("double cube(double)") { |x| x * x * x }
+    wrap = lambda { |g|
+      CArray.jit_function("double (*)(double)") { |x| g.call(x) + 1.0 }
+    }
+    assert_equal(5.0, wrap.call(square).call(2.0))
+    assert_equal(9.0, wrap.call(cube).call(2.0))
+  end
+
+  def test_the_same_body_calling_the_same_function_is_compiled_once
+    square = CArray.jit_function("double square(double)") { |x| x * x }
+    wrap = lambda { |g|
+      CArray.jit_function("double (*)(double)") { |x| g.call(x) + 1.0 }
+    }
+    assert_same(wrap.call(square), wrap.call(square))
+  end
+
+  # A failure travels up the chain the way it travels out of one body: the
+  # called definition takes the caller's error slot, whatever depth it is at.
+  def test_a_raise_in_a_called_body_reaches_the_outermost_caller
+    root = CArray.jit_function("double root(double)") { |x|
+      raise "no square root of a negative" if x < 0
+      Math.sqrt(x)
+    }
+    hyp = CArray.jit_function("double hyp(double a, double b)") { |a, b|
+      root.call(a * a + b * b)
+    }
+    outer = CArray.jit_function("double (*)(double, double)") { |a, b|
+      hyp.call(a, b) / 2
+    }
+    assert_equal(2.5, outer.call(3.0, 4.0))
+    error = assert_raises(RuntimeError) { root.call(-1.0) }
+    assert_equal("no square root of a negative", error.message)
+  end
+
+  # And a kernel that pastes the outer one has to paste what that one calls,
+  # or the symbol it reaches is in no translation unit.
+  def test_a_kernel_pastes_the_whole_chain
+    half = CArray.jit_function("double half(double)") { |x| x / 2 }
+    quarter = CArray.jit_function("double (*)(double)") { |x|
+      half.call(half.call(x))
+    }
+    a = CArray.double(3).seq!(4.0, 4.0)
+    assert_equal(CArray.double(3) { |i| (i + 1) }, CArray.jit_map { quarter.call(a) })
+  end
+
+  def test_a_body_calls_another_beside_calling_itself
+    half = CArray.jit_function("double half(double)") { |x| x / 2 }
+    down = CArray.jit_function("double down(double n)") { |n|
+      n < 1 ? n : down.call(half.call(n))
+    }
+    assert_equal(0.5, down.call(8.0))
   end
 
   # ---------- what the declaration must say ----------
