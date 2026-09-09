@@ -126,6 +126,15 @@ class CArray
       # would.  Only the ones a kernel actually uses are emitted, and the
       # reason each exists is at emit_complex_binary.
       COMPLEX_HELPERS = {
+        "complex_finite" => <<~C,
+          /* Complex#finite? is both parts finite, which is what Ruby asks
+             and is not what isfinite of a complex would mean. */
+          static inline int
+          carray_jit_complex_finite (double _Complex z)
+          {
+            return isfinite(creal(z)) && isfinite(cimag(z));
+          }
+        C
         "complex_add_real" => <<~C,
           /* Ruby leaves the imaginary part of `z + x` exactly as it was,
              rather than adding the real operand's zero to it. */
@@ -1915,6 +1924,7 @@ class CArray
             [cell, LEAF_PRECEDENCE]
           end
         when MaskTest         then emit_mask_test(node)
+        when NumericPredicate then emit_numeric_predicate(node)
         when UnaryMinus
           operand, precedence = emit_raw(node.operand)
           ["-#{parenthesize(operand, precedence, UNARY_PRECEDENCE)}", UNARY_PRECEDENCE]
@@ -1985,6 +1995,22 @@ class CArray
       end
 
       # `a[i] == UNDEF` reads the mask byte, never the value.
+      # `isnan` and `isfinite` are C's own, and take a number of any width.
+      # A Complex answers `finite?` the way Ruby answers it -- both parts
+      # finite -- through a helper, so that the number is computed once.
+      # An Integer is finite whatever it holds, and goes through `isfinite`
+      # all the same rather than being answered here: the read it stands for
+      # is a read, and dropping it would drop what the read reports.
+      def emit_numeric_predicate (node)
+        type = node.operand.type
+        function = node.name == :nan? ? "isnan" : "isfinite"
+        if complex_type?(type)
+          return emit_helper_call("complex_finite", [emit(node.operand, type)],
+                                  type == :float_complex)
+        end
+        ["#{function}(#{emit(node.operand, type)})", LEAF_PRECEDENCE]
+      end
+
       def emit_mask_test (node)
         cell = cell_reference(node.array, node.subscripts, :mask)
         node.negated ? ["! #{cell}", UNARY_PRECEDENCE] : [cell, LEAF_PRECEDENCE]

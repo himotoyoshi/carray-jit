@@ -115,12 +115,16 @@ class CArray
       # every one of these answers false for it, so a guard written as "refuse
       # unless this is a number" refuses it rather than letting it through.
       def self.integer? (type)  = KINDS[type] == :integer
+      # A Float, and not an Integer standing on the same line: `nan?` is
+      # asked of one and refused by the other, as Ruby refuses it.
+      def self.floating? (type) = KINDS[type] == :real
       def self.real? (type)     = REAL_TYPES.include?(type)
       def self.complex? (type)  = KINDS[type] == :complex
       def self.boolean? (type)  = KINDS[type] == :boolean
       def self.numeric? (type)  = NUMERIC_TYPES.include?(type)
 
       def integer? (type) = self.class.integer?(type)
+      def floating? (type) = self.class.floating?(type)
       def real? (type)    = self.class.real?(type)
       def complex? (type) = self.class.complex?(type)
       def boolean? (type) = self.class.boolean?(type)
@@ -214,6 +218,9 @@ class CArray
           node.type = element_type(node.array, node.location)
         when MaskTest
           walk_subscripts(node.subscripts)
+          node.type = :boolean
+        when NumericPredicate
+          walk(node.operand)
           node.type = :boolean
         when InnerLoop
           walk(node.from)
@@ -682,6 +689,22 @@ class CArray
           # Nothing to check: no value is computed.
         when MaskTest
           # Nothing to check: it reads a mask byte.
+        when NumericPredicate
+          verify(node.operand)
+          unless numeric?(node.operand.type)
+            raise Unsupported.new("`#{node.name}` asks about a number",
+                                  node.location)
+          end
+          # `nan?` is Float's alone: an Integer has no NaN to be and a
+          # Complex has no such method, and both raise NoMethodError in Ruby
+          # rather than answering false.  `finite?` is on all three.
+          if node.name == :nan? && !floating?(node.operand.type)
+            raise Unsupported.new(
+              "`nan?` is a Float's question -- " \
+              "#{complex?(node.operand.type) ? 'a Complex' : 'an Integer'} " \
+              "has no method by that name and raises NoMethodError in Ruby",
+              node.location)
+          end
         when While
           verify(node.condition)
           unless boolean?(node.condition.type)

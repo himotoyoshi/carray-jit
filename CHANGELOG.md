@@ -39,6 +39,16 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `x.nan?` and `x.finite?`, which compile to C's `isnan` and `isfinite`
+  and answer what Ruby answers. `nan?` is a Float's question: an Integer and
+  a Complex have no method by that name and raise `NoMethodError` in Ruby, so
+  a kernel refuses both rather than answering false. `finite?` answers for an
+  Integer (true, whatever it holds) and for a Complex (both parts finite, as
+  Ruby asks it) as well as for a Float. `infinite?` is refused: Ruby answers
+  it with nil, 1 or -1 rather than true or false, and a kernel has no nil to
+  answer with -- the message names `x.abs == Float::INFINITY`, or
+  `x == Float::INFINITY` where the sign is the question.
+
 - New: the operator assignments -- `+= -= *= /= %= **= &= |= ^= <<= >>=` --
   on a local, on a cell (`out[i] += e`, `work[i, k] += e`, a scatter such as
   `counts[bin[i]] += 1`), on a CScalar and through a `jit_function`'s pointer

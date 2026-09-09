@@ -107,6 +107,12 @@ class CArray
       INNER_LOOP_SPELLINGS = %i[downto upto reverse_each each_with_index
                                 each_with_object].freeze
 
+      # The two questions about a number that answer true or false in Ruby,
+      # and that C answers with a macro of its own.  What each accepts is
+      # Ruby's business and is checked with the types: `nan?` is Float's
+      # alone, while `finite?` answers for an Integer and a Complex too.
+      NUMERIC_PREDICATES = %i[nan? finite?].freeze
+
       ARITHMETIC_OPERATORS = [:+, :-, :*, :/, :%].freeze
       # Ruby's bit operators on Integers, which C has too.  What they do at
       # the edges is C's answer rather than Ruby's -- a shift wraps and takes
@@ -1683,6 +1689,18 @@ class CArray
         end
         if node.name == :** && arguments.size == 1
           return build_power(node.receiver, arguments.first, node.location)
+        end
+        if arguments.empty? && NUMERIC_PREDICATES.include?(node.name)
+          return NumericPredicate.new(node.name, build(node.receiver),
+                                      node.location)
+        end
+        if arguments.empty? && node.name == :infinite?
+          raise Unsupported.new(
+            "`infinite?` answers nil, 1 or -1 in Ruby rather than true or " \
+            "false, and a kernel has no nil to answer with; ask " \
+            "`x.abs == Float::INFINITY`, or `x == Float::INFINITY` where " \
+            "the sign is the question",
+            node.location)
         end
         if arguments.empty?
           if (function = postfix_math(node.name))

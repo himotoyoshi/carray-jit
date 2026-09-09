@@ -110,6 +110,22 @@ class CArray
       end
     end
 
+    # `x.nan?` and `x.finite?`: a question about a number, answered true or
+    # false whatever the number's width.  `infinite?` is not one of these --
+    # Ruby answers it with nil or 1 or -1, which is not a boolean and has no
+    # nil to be.
+    class NumericPredicate < Node
+      attr_reader :name, :operand
+      def initialize (name, operand, location = nil)
+        super(location)
+        @name = name
+        @operand = operand
+      end
+      def children
+        [@operand]
+      end
+    end
+
     # Zero of whatever type another expression has.
     #
     # A sum has to start from a zero of the summand's type: start it from an

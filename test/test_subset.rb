@@ -28,7 +28,7 @@ class TestSubset < Minitest::Test
   end
 
   def test_unknown_method
-    refuse("->(i) { a[i] = a[i].nan? ? 0.0 : a[i] }", /unsupported method `nan\?`/)
+    refuse("->(i) { a[i] = a[i].to_r }", /unsupported method `to_r`/)
   end
 
   def test_math_function_without_c_counterpart
@@ -277,7 +277,7 @@ class TestSubset < Minitest::Test
   end
 
   def test_error_reports_location
-    error = refuse("->(i) {\n  a[i] = a[i].nan?\n}", /unsupported method/)
+    error = refuse("->(i) {\n  a[i] = a[i].to_r\n}", /unsupported method/)
     assert_match(/line 2/, error.message)
   end
 
@@ -290,9 +290,9 @@ class TestSubset < Minitest::Test
   def test_a_rejected_block_raises_from_jit_for
     values = CArray.double(4)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_for(0...4) { |i| values[i] = values[i].nan? ? 0.0 : 1.0 }
+      CArray.jit_for(0...4) { |i| values[i] = values[i].to_r }
     end
-    assert_match(/unsupported method `nan\?`/, error.message)
+    assert_match(/unsupported method `to_r`/, error.message)
   end
 
   # `rand` is Kernel's, so "not defined where the block was written" would be

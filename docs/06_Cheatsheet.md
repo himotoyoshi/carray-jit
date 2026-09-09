@@ -73,6 +73,9 @@ CArray.jit_for(rows) { |i|
 }
 ```
 
+`x.nan?` and `x.finite?` are the guards; `infinite?` is refused, answering
+nil or ±1 rather than a boolean.
+
 An operator assignment is the assignment it stands for: `total += a[i]`,
 `work[i, k] *= 2.0`, `counts[bin[i]] += 1`.
 
