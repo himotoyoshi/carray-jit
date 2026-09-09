@@ -248,6 +248,11 @@ class CArray
         when NumericPredicate
           walk(node.operand)
           node.type = :boolean
+        when Clamp
+          node.children.each { |child| walk(child) }
+          # The receiver's, which is exact where the three agree -- and
+          # where they do not, verify refuses rather than choosing.
+          node.type = node.value.type
         when InnerLoop
           walk(node.from)
           walk(node.to)
@@ -741,6 +746,42 @@ class CArray
           # Nothing to check: no value is computed.
         when MaskTest
           # Nothing to check: it reads a mask byte.
+        when Clamp
+          node.children.each { |child| verify(child) }
+          types = node.children.map(&:type)
+          unless types.all? { |type| numeric?(type) }
+            raise Unsupported.new("`clamp` orders numbers", node.location)
+          end
+          if complex?(node.value.type)
+            raise Unsupported.new(
+              "`clamp` has no meaning for a Complex, and raises " \
+              "NoMethodError in Ruby; take `.abs` or `.real` first",
+              node.location)
+          end
+          # Ruby hands back the receiver in one branch and a bound in the
+          # other, so where the two are different *classes* the answer's
+          # class is decided by the value: `1.clamp(0.0, 3.0)` is the
+          # Integer 1 and `5.clamp(0.0, 3.0)` the Float 3.0.  No type
+          # assigned here is both, so that is refused rather than settled
+          # one way and wrong the other.
+          #
+          # Two widths of the same class are not that case.  A float32 cell
+          # is a Ruby Float, as a double is, so `f[i].clamp(0.0, 1.0)` has
+          # one class throughout and the answer is the receiver's width --
+          # the rule every other expression over that cell already takes.
+          unless types.map { |type| integer?(type) }.uniq.size == 1
+            value, bound = if integer?(node.value.type)
+                             ["an Integer", "a Float"]
+                           else
+                             ["a Float", "an Integer"]
+                           end
+            raise Unsupported.new(
+              "`clamp` hands back the value or one of the bounds, so with " \
+              "#{value} value and #{bound} bound Ruby's answer is one class " \
+              "in one branch and the other in the other; write the bounds " \
+              "#{integer?(node.value.type) ? 'as Integers' : 'with a decimal point'}",
+              node.location)
+          end
         when NumericPredicate
           verify(node.operand)
           unless numeric?(node.operand.type)

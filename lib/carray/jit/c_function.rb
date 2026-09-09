@@ -368,6 +368,13 @@ class CArray
         case code
         when 0 then nil
         when 1 then raise ZeroDivisionError, "divided by 0"
+        when 2 then raise IndexError, "index out of range"
+        when 3 then raise ArgumentError,
+                            "min argument must be less than or equal to " \
+                            "max argument"
+        when 4 then raise ArgumentError,
+                            "comparison with a NaN failed, so `clamp` has " \
+                            "no answer"
         else
           # `raise "..."` in the body.  The message did not come back through
           # the C -- it was registered when this was compiled -- so it is

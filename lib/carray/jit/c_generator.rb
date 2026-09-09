@@ -356,6 +356,7 @@ class CArray
         @uses_clamp = false
         @uses_wrap = false
         @uses_real_arg = false
+        @clamp_types = []
         @complex_helpers = []
         @uses_floor_divide = false
         @uses_floor_modulo = false
@@ -481,6 +482,7 @@ class CArray
           :unsigned_power => @uses_unsigned_power,
           :floor_modulo_float => @uses_floor_modulo_float,
           :real_arg => @uses_real_arg,
+          :clamp => @clamp_types.dup,
           :complex => @complex_helpers.dup,
           :index_check => @uses_index_check,
           :floor_divide => @uses_floor_divide,
@@ -582,6 +584,7 @@ class CArray
           @uses_unsigned_power ||= needs[:unsigned_power]
           @uses_floor_modulo_float ||= needs[:floor_modulo_float]
           @uses_real_arg ||= needs[:real_arg]
+          @clamp_types |= needs[:clamp] || []
           @complex_helpers |= needs[:complex] || []
           @uses_index_check ||= needs[:index_check]
           @uses_floor_divide ||= needs[:floor_divide]
@@ -716,6 +719,35 @@ class CArray
             text << (narrow ? self.class.narrowed_complex_helper(definition)
                             : definition) << "\n"
           end
+        end
+        @clamp_types.each do |type|
+          suffix, c_type, has_nan = CLAMP_C_TYPES.fetch(type)
+          refusal = lambda { |test, code|
+            "  if ( #{test} ) {\n" \
+            "    if ( error ) *error = #{code};\n" \
+            "    return value;\n" \
+            "  }\n"
+          }
+          tests = +""
+          tests << refusal.call("isnan(low) || isnan(high)", 4) if has_nan
+          tests << refusal.call("low > high", 3)
+          tests << refusal.call("isnan(value)", 4) if has_nan
+          text << <<~C
+            /* `x.clamp(low, high)`, and the two things Ruby raises
+               ArgumentError for: bounds the wrong way round, and a
+               comparison that cannot be made because a NaN is in it.  The
+               order is Ruby's -- the bounds are ordered against each other
+               before the value is looked at. */
+            static inline #{c_type}
+            carray_jit_clamp_#{suffix} (#{c_type} value, #{c_type} low, #{c_type} high, int32_t *error)
+            {
+            #{tests.chomp}
+              if ( value < low ) return low;
+              if ( value > high ) return high;
+              return value;
+            }
+
+          C
         end
         if @uses_real_arg
           text << <<~C
@@ -1736,6 +1768,15 @@ class CArray
       # what the kernel raises.  Nothing in the C reaches Ruby to do it: the
       # function still returns a number and touches no Ruby value, which is
       # what lets its address be handed to a library, or called off the GVL.
+      # The widths `clamp` is emitted for: the suffix its helper takes, the C
+      # type, and whether that type has a NaN to refuse.
+      CLAMP_C_TYPES = {
+        :double => ["double", "double", true],
+        :float  => ["float", "float", true],
+        :int64  => ["int64", "int64_t", false],
+        :uint64 => ["uint64", "uint64_t", false],
+      }.freeze
+
       ERROR_FLAG = "carray_jit_error"
 
       # A computation type this generator has no C for.  Nothing reaches here
@@ -1956,6 +1997,7 @@ class CArray
           end
         when MaskTest         then emit_mask_test(node)
         when NumericPredicate then emit_numeric_predicate(node)
+        when Clamp            then emit_clamp(node)
         when UnaryMinus
           operand, precedence = emit_raw(node.operand)
           ["-#{parenthesize(operand, precedence, UNARY_PRECEDENCE)}", UNARY_PRECEDENCE]
@@ -2026,6 +2068,18 @@ class CArray
       end
 
       # `a[i] == UNDEF` reads the mask byte, never the value.
+      # `x.clamp(low, high)` through a helper of its own width, so that each
+      # of the three is computed once and the two failures Ruby raises for
+      # are reported where they happen.
+      def emit_clamp (node)
+        type = node.type
+        unhandled_type(node, "clamp") unless CLAMP_C_TYPES.key?(type)
+        @clamp_types |= [type]
+        ["carray_jit_clamp_#{CLAMP_C_TYPES.fetch(type).first}(" \
+         "#{emit(node.value, type)}, #{emit(node.low, type)}, " \
+         "#{emit(node.high, type)}, #{error_argument})", LEAF_PRECEDENCE]
+      end
+
       # `isnan` and `isfinite` are C's own, and take a number of any width.
       # A Complex answers `finite?` the way Ruby answers it -- both parts
       # finite -- through a helper, so that the number is computed once.

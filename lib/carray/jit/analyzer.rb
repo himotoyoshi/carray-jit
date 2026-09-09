@@ -1690,6 +1690,16 @@ class CArray
         if node.name == :** && arguments.size == 1
           return build_power(node.receiver, arguments.first, node.location)
         end
+        if node.name == :clamp
+          unless arguments.size == 2
+            raise Unsupported.new(
+              "`clamp` takes the two bounds, as in `x.clamp(0.0, 1.0)`" +
+              (arguments.size == 1 ? " -- the range form is not in the subset" : ""),
+              node.location)
+          end
+          return Clamp.new(build(node.receiver), build(arguments.first),
+                           build(arguments.last), node.location)
+        end
         if arguments.empty? && NUMERIC_PREDICATES.include?(node.name)
           return NumericPredicate.new(node.name, build(node.receiver),
                                       node.location)

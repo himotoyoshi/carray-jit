@@ -240,6 +240,15 @@ class CArray
         when 0 then nil
         when 1 then raise ZeroDivisionError, "divided by 0"
         when 2 then raise IndexError, "index out of range"
+        when 3 then raise ArgumentError,
+                            "min argument must be less than or equal to " \
+                            "max argument"
+        # Ruby's own wording names the value it could not compare, and the
+        # slot carries a code rather than a number, so the reason is named
+        # instead.  The class and the failure are Ruby's.
+        when 4 then raise ArgumentError,
+                            "comparison with a NaN failed, so `clamp` has " \
+                            "no answer"
         else
           message = @raise_messages[code]
           # A code with no message behind it is this compiler's bug, not the

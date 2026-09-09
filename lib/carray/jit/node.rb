@@ -110,6 +110,24 @@ class CArray
       end
     end
 
+    # `x.clamp(low, high)`: the value, or whichever bound it ran past.
+    #
+    # Ruby hands back the receiver or one of the bounds, so which type the
+    # answer has is decided by the value -- which is why all three have to
+    # be the same type here, and why the answer is then the receiver's.
+    class Clamp < Node
+      attr_reader :value, :low, :high
+      def initialize (value, low, high, location = nil)
+        super(location)
+        @value = value
+        @low = low
+        @high = high
+      end
+      def children
+        [@value, @low, @high]
+      end
+    end
+
     # `x.nan?` and `x.finite?`: a question about a number, answered true or
     # false whatever the number's width.  `infinite?` is not one of these --
     # Ruby answers it with nil or 1 or -1, which is not a boolean and has no

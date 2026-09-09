@@ -39,6 +39,20 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `x.clamp(low, high)`, which answers the value or whichever bound it
+  ran past. The value and both bounds have to be one class: Ruby hands back
+  the receiver in one branch and a bound in the other, so `1.clamp(0.0, 3.0)`
+  is an Integer and `5.clamp(0.0, 3.0)` a Float, and no type settled before
+  the loop runs is both -- the refusal says which way round it is and what to
+  write. Two widths of one class are not that case, so a float32 cell keeps
+  its width. What Ruby raises `ArgumentError` for is raised here too: bounds
+  the wrong way round, and a NaN that cannot be ordered. The class is Ruby's
+  and so are the words for the first; for the NaN the message names the
+  reason rather than the value, since what comes back from a kernel is a code
+  and not a number. A cell with no value in it does not raise. The range
+  form, `x.clamp(0.0..1.0)`, is not in the subset -- two bounds are two
+  bounds.
+
 - New: a compiled function may take and return a C99 complex --
   `CArray.jit_function("double _Complex step(double _Complex z)") { |z| z * z
   + Complex(0.0, 1.0) }`. `double _Complex`, `float _Complex` and
