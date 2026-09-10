@@ -8,6 +8,40 @@ rescue LoadError
   # yard gem not installed; `rake yard` will be unavailable.
 end
 
+# A checkout of CArray to run against, in place of the installed gem.  The two
+# gems are developed together, and a change on the CArray side is invisible
+# here until its tree is on the load path -- which is what kept a suite run
+# from saying anything about a CArray change that had not been installed yet.
+#
+#     CARRAY_TREE=../carray rake test
+#
+# The tree has to carry a built extension.  Falling back to the gem would run
+# against something other than what the caller asked for and say nothing about
+# it, which is the failure this exists to prevent.
+CARRAY_TREE = ENV["CARRAY_TREE"]
+
+def carray_tree_libs
+  return [] unless CARRAY_TREE
+  tree = File.expand_path(CARRAY_TREE)
+  extension = File.join(tree, "ext")
+  library = File.join(tree, "lib")
+  built = File.join(extension, "carray_ext.#{RbConfig::CONFIG['DLEXT']}")
+  unless File.directory?(library)
+    abort "CARRAY_TREE=#{CARRAY_TREE} is not a CArray checkout (no lib/)"
+  end
+  unless File.exist?(built)
+    abort "CARRAY_TREE=#{CARRAY_TREE} has no built extension at #{built}; " \
+          "run `rake build_ext` there first"
+  end
+  [extension, library]
+end
+
+# The `-I` flags for a `ruby` invocation from here, so a benchmark or a probe
+# reaches the same CArray the suite does.
+def carray_tree_flags
+  carray_tree_libs.map { |path| "-I#{path}" }.join(" ")
+end
+
 EXTENSION_DIRECTORY = "ext/carray_jit_access"
 EXTENSION_NAME = "access.#{RbConfig::CONFIG['DLEXT']}"
 # mkmf names the target carray/jit/access so that `gem install` puts it under
@@ -33,17 +67,27 @@ desc "Build the memory extension"
 task :compile => INSTALLED_EXTENSION
 
 Rake::TestTask.new(:test) do |task|
+  task.libs.concat(carray_tree_libs)
   task.libs << "lib" << "test"
   task.test_files = FileList["test/test_*.rb"]
   task.warning = false
 end
-task :test => :compile
+task :test => [:compile, :carray_in_use]
+
+desc "Say which CArray a run here will use"
+task :carray_in_use do
+  script = 'puts "CArray #{CArray::VERSION} - #{$LOADED_FEATURES.grep(/carray_ext/).first}"'
+  # The array form of `sh` runs the command directly, so the script keeps its
+  # own `#{}` instead of losing them to a shell.
+  sh RbConfig.ruby, *carray_tree_libs.map { |path| "-I#{path}" },
+     "-rcarray", "-e", script, :verbose => false
+end
 
 desc "Compare compiled kernels against the same loops written in Ruby"
 task :benchmark => :compile do
-  ruby "-Ilib benchmark/recurrence.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/recurrence.rb"
   puts
-  ruby "-Ilib benchmark/views.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/views.rb"
   puts
   ruby "-Ilib benchmark/thomas.rb"
   puts
@@ -92,6 +136,9 @@ task :default => :test
 # tested against.
 desc "Check that the CArray in use satisfies the gemspec's declared range"
 task :dependency_check do
+  # The same CArray the suite ran against, so the range is checked on what was
+  # tested rather than on whatever happens to be installed.
+  $LOAD_PATH.unshift(*carray_tree_libs)
   require "carray"
   spec = eval File.read("carray-jit.gemspec")
   carray = spec.dependencies.find { |dependency| dependency.name == "carray" }
