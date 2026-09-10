@@ -463,13 +463,39 @@ class CArray
         # Kept apart from the file it is compiled in: the definition alone is
         # what a kernel pastes into its own translation unit, where the
         # includes are already written and the helpers are shared.
-        @function_definition =
-          "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n" +
-          lines + (@returns_nothing ? "}\n" : "  return #{value};\n}\n")
-        preamble + flag + @function_definition
+        opening = "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n"
+        body = lines + (@returns_nothing ? "}\n" : "  return #{value};\n}\n")
+        @function_definition = opening + body
+        preamble + flag + opening + standing_gate + body
       end
 
       attr_reader :function_definition
+
+      # A body standing on its own does no more work once its flag stands.
+      #
+      # The `!ERROR_FLAG` at each `raise` keeps a later report from overwriting
+      # an earlier one, and that is enough for a caller that stops: a kernel
+      # ends its loop, and `CFunction#call` was one call to begin with.  A
+      # library handed the address does not stop.  It calls again, and without
+      # this the body skips the report it has already made and answers as
+      # though nothing had happened -- so an adaptive routine converges on
+      # values that are fiction, which is worse than a wrong answer because it
+      # looks like a right one.
+      #
+      # What the gate says is that the body does no more work.  It does not
+      # say what the call is worth: the flag is the contract, and the zero is
+      # a courtesy to a caller who never looks at it.  A `void` body has no
+      # courtesy to offer and leaves its out-parameters alone, which is the
+      # same refusal to work.
+      #
+      # It goes in the file and not in the definition, so that the form a
+      # kernel pastes cannot pick it up whichever way the two forms are
+      # generated.  A kernel reads its slot once, after a loop it stopped
+      # itself, and has no use for it.
+      def standing_gate
+        return "" unless @uses_error_flag && !@error_parameter
+        "  if ( #{ERROR_FLAG} ) #{@returns_nothing ? "return;" : "return 0;"}\n\n"
+      end
 
       # What the body took from the preamble, so that a definition pasted
       # somewhere else can be given the same helpers.  Only the ones a pasted

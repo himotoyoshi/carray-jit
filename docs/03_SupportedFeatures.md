@@ -428,7 +428,7 @@ A pointer parameter may be handed on -- `total.call(n - 1, v)` passes the addres
 
 #### Dividing by zero
 
-`6 % 0` raises in Ruby, and the kernel raises it too: it is handed a place to report through, and reports. A compiled function has no such place -- it has the signature its declaration gave it and nothing else, which is the point of it. So the object carries one of its own: a single exported `int` that the division helpers write into, declared only when the body can actually reach it.
+`6 % 0` raises in Ruby, and the kernel raises it too: it is handed a place to report through, and reports. A compiled function has no such place -- it has the signature its declaration gave it and nothing else, which is the point of it. So the object carries one of its own: a single exported `int32_t` that a division with no divisor and a `raise` in the body both write into, declared only when the body can actually reach it.
 
 ```ruby
 r = CArray.jit_function("int r(int a, int b)") { |a, b| a % b }
@@ -436,7 +436,29 @@ r.call(7, 3)       # => 1
 r.call(7, 0)       # => ZeroDivisionError: divided by 0, as r.block would
 ```
 
-Nothing in the generated C reaches Ruby to do that. The function returns a number and touches no Ruby value, so its address is still safe to hand to a library or to call off the GVL; `CFunction#call` is what looks at the flag afterwards and raises. A caller coming from C sees what C arranges for a function that has to return something regardless -- the value, and the flag standing beside it.
+Nothing in the generated C reaches Ruby to do that. The function returns a number and touches no Ruby value, so its address is still safe to hand to a library or to call off the GVL; `CFunction#call` is what looks at the flag afterwards and raises. A caller coming from C sees what C arranges for a function that has to return something regardless -- a stand-in, and the flag standing beside it. Which one of those is the answer is the [next section](#lending-the-address).
+
+#### Lending the address
+
+`#call` is one call and answers for it. A library given `#pointer` calls whenever it likes, as often as it likes, and what wants an answer is the whole of that -- so the window is what the flag is put down for, and what it is read for:
+
+```ruby
+f.watching do
+  Integration.qags(f.pointer, 0.0, 1.0)
+end
+```
+
+That is the arrangement a kernel already keeps with its own slot: cleared once before a sweep, read once after it, never per cell. `#clear_error` and `#report_error` are the two halves on their own, for a window that is not a block -- one opened in one method and closed in another, or one whose block belongs to somebody else. Asking does not put the flag down; the window that put it down is what picks it up.
+
+Once the flag stands, the body does no more work. It is asked again -- the library has no idea anything went wrong, and nothing has told it to stop -- and it returns the stand-in without running. **The stand-in is not the answer. The flag says so.** A body that returns nothing has no stand-in to offer and leaves its out-parameters alone, which is the same refusal.
+
+This matters more than it sounds. Without it a body would report its failure once and then answer normally, and an adaptive routine would do what adaptive routines do: see one bad point, subdivide around it, find every subdivision well behaved, and converge. The number that comes back is not wrong in a way anybody can see. It is worse than a wrong answer, because it looks like a right one.
+
+A failure inside the window outranks whatever the library made of it. The body returned a stand-in, so the library is usually the first to complain -- that the endpoints do not straddle, that the iteration did not converge -- and those complaints are consequences rather than what happened, so `#watching` reads the flag before letting the exception through. Where nothing stands, the library's own story is the story.
+
+A window may be opened inside a window, and `#call` may be made inside one: both borrow the flag and put it back as they found it, so an inner window answers for its own block and no other, and a call answers for itself without disarming whoever is watching. A kernel run inside a window is untouched either way -- a kernel is handed its own slot, and never reaches this flag at all.
+
+One flag per compiled object, so two functions never share a window. Threads do share one, though: the flag is a single `int32_t` beside the body, so lending the same function to two threads at once is not a window that can be made to mean anything. That is C's bargain again, taken along with `void *params`.
 
 A float division is not this case: `1.0 / 0.0` is an infinity in Ruby, in C and here, so a body that only divides floats declares no flag and pays nothing for one. Neither is a subscript on a pointer parameter, which is unchecked by design -- the caller's business, as it is in C.
 

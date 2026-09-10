@@ -247,18 +247,29 @@ class CArray
           arrays << [argument, buffer, type]
           buffer
         }
-        clear_error
-        Access.open(arrays.map { |_, buffer, _| buffer },
-                    arrays.map { |_, _, type| !type.const },
-                    arrays.map { nil }, arrays.map { nil }) do |bases|
-          slot = -1
-          prepared = prepared.map { |value|
-            next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
-            Fiddle::Pointer.new(bases[slot += 1][:pointer])
-          }
-          @result = @function.call(*prepared)
+        # Borrowed rather than cleared, and borrowed here rather than on the
+        # way in: a call made inside a window -- someone else is holding this
+        # function's address and watching the same flag -- must answer for
+        # itself without disarming them.  The checks above never reach the C
+        # and so never touch the flag at all.
+        outer = error_code
+        write_error(0)
+        begin
+          Access.open(arrays.map { |_, buffer, _| buffer },
+                      arrays.map { |_, _, type| !type.const },
+                      arrays.map { nil }, arrays.map { nil }) do |bases|
+            slot = -1
+            prepared = prepared.map { |value|
+              next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
+              Fiddle::Pointer.new(bases[slot += 1][:pointer])
+            }
+            @result = @function.call(*prepared)
+          end
+          code = error_code
+        ensure
+          write_error(outer)
         end
-        report_error
+        raise_for(code)
         # A view was copied to be made contiguous; a writable one is copied
         # back, because the C wrote into the copy.
         arrays.each do |array, buffer, type|
@@ -301,19 +312,25 @@ class CArray
           arrays << [argument, buffer, type]
           buffer
         }
-        clear_error
-        Access.open(arrays.map { |_, buffer, _| buffer },
-                    arrays.map { |_, _, type| !type.const },
-                    arrays.map { nil }, arrays.map { nil }) do |bases|
-          slot = -1
-          passed = prepared.map { |value|
-            next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
-            Fiddle::Pointer.new(bases[slot += 1][:pointer])
-          }
-          passed << result if returns_complex
-          @result = @shim_function.call(*passed)
+        outer = error_code
+        write_error(0)
+        begin
+          Access.open(arrays.map { |_, buffer, _| buffer },
+                      arrays.map { |_, _, type| !type.const },
+                      arrays.map { nil }, arrays.map { nil }) do |bases|
+            slot = -1
+            passed = prepared.map { |value|
+              next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
+              Fiddle::Pointer.new(bases[slot += 1][:pointer])
+            }
+            passed << result if returns_complex
+            @result = @shim_function.call(*passed)
+          end
+          code = error_code
+        ensure
+          write_error(outer)
         end
-        report_error
+        raise_for(code)
         arrays.each do |array, buffer, type|
           array[] = buffer unless type.const || array.equal?(buffer)
         end
@@ -346,25 +363,87 @@ class CArray
         "#<CArray::JIT::CFunction #{self}>"
       end
 
-      private
+      # The window a caller opens when it hands the address out.
+      #
+      # `#call` is one call, and answers for it before it returns.  A library
+      # given `#pointer` calls whenever it likes, as often as it likes, and
+      # what wants an answer is the whole of that -- so the flag is put down
+      # once, the address is lent for as long as the block runs, and what
+      # happened is asked for once at the end.  It is the arrangement a kernel
+      # already keeps with its own slot, which is cleared before a sweep and
+      # read after it, never per cell.
+      #
+      #   f.watching do
+      #     Integration.qags(f.pointer, 0.0, 1.0)
+      #   end
+      #
+      # A failure inside the block outranks whatever the library made of it.
+      # A body that fails returns a stand-in, so the library is the first to
+      # complain -- that the endpoints do not straddle, that the iteration did
+      # not converge -- and those complaints are the failure's consequences,
+      # not what happened.  So the flag is read before that exception is let
+      # through, and only where nothing stands does the library's own story
+      # get to be the story.
+      #
+      # Windows nest, and a call made inside one leaves it armed: both borrow
+      # the flag and put it back as they found it, so an inner window answers
+      # for its own block and no other.
+      def watching
+        outer = error_code
+        write_error(0)
+        code = 0
+        begin
+          result = yield
+          code = error_code
+        rescue StandardError
+          raise_for(error_code)
+          raise
+        ensure
+          write_error(outer)
+        end
+        raise_for(code)
+        result
+      end
 
-      # What a pointer parameter will accept, and what has to be true of it.
-      # The length is checked only where the declaration carried one: C's own
-      # rule is that an unsized pointer is the caller's responsibility, and
-      # writing `coef[3]` is how the caller asks to be checked.
+      # Put the flag down, before lending the address to something that will
+      # call it more than once.  `#watching` is this and #report_error with
+      # the lending in between, and is what to reach for where the window is a
+      # block; these two are here for a window that is not -- one opened in
+      # one method and closed in another, or one whose block belongs to
+      # somebody else.
       def clear_error
-        @error[0, 4] = [0].pack("l") if @error
+        write_error(0)
       end
 
       # What the kernel raises for the same code, since it is the same thing
       # that happened: `6 % 0` is a ZeroDivisionError wherever it is written,
       # and the compiled body cannot raise it itself.  A caller reaching the
-      # address from C sees the number the helper returned and the flag
+      # address from C sees the stand-in the helper returned and the flag
       # standing, which is C's own arrangement for a function that has to
       # return something whatever happened.
+      #
+      # Quiet where nothing stands, so that a caller may ask having no idea
+      # whether anything failed -- which is the position a caller is in after
+      # handing the address to a library.  Asking does not put the flag down:
+      # it reads, and the window that put it down is what picks it up.
       def report_error
-        return unless @error
-        code = @error[0, 4].unpack1("l")
+        raise_for(error_code)
+      end
+
+      private
+
+      # 0 where the body cannot fail at all: one that neither divides nor
+      # raises is compiled without a flag to read, and has no failure to
+      # report rather than an unread one.
+      def error_code
+        @error ? @error[0, 4].unpack1("l") : 0
+      end
+
+      def write_error (code)
+        @error[0, 4] = [code].pack("l") if @error
+      end
+
+      def raise_for (code)
         case code
         when 0 then nil
         when 1 then raise ZeroDivisionError, "divided by 0"
@@ -389,6 +468,10 @@ class CArray
         end
       end
 
+      # What a pointer parameter will accept, and what has to be true of it.
+      # The length is checked only where the declaration carried one: C's own
+      # rule is that an unsized pointer is the caller's responsibility, and
+      # writing `coef[3]` is how the caller asks to be checked.
       def check_array (array, type)
         wanted = CDeclaration::DATA_TYPES.fetch(type.element.fiddle)
         unless array.data_type_name == wanted.to_s

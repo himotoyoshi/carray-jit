@@ -39,6 +39,24 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `CFunction#watching`, and `#clear_error` / `#report_error` beside it,
+  for the window in which a compiled function's address is lent to a C
+  library. `#call` answers for one call; a library given `#pointer` calls as
+  often as it likes, and `f.watching { ... }` is what puts the flag down
+  before that and raises what the body reported after it. A failure inside
+  the block outranks the library's own complaint about the stand-in it was
+  handed. Windows nest, and a `#call` made inside one leaves it armed.
+
+- Change: a compiled function whose body has failed does no more work until
+  its flag is put down again -- it returns 0 without running, and one
+  declared `void` leaves its out-parameters alone. Before, it reported the
+  first failure and then answered normally, so a library that kept calling
+  could converge on values it was no longer entitled to. Nothing changes for
+  a caller using `#call`, which puts the flag down for each call; a caller
+  holding `#pointer` opens a window with `#watching` or `#clear_error`. A
+  kernel is unaffected: it is handed its own error slot and never reaches
+  this flag.
+
 - New: `Math.gamma`, which is not `tgamma` and is not lowered to one: Ruby's
   answer is tgamma with a table of exact values in front of it for a whole
   number up to 23, and a `Math::DomainError` where tgamma answers a negative
