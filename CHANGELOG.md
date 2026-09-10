@@ -216,6 +216,16 @@ version you have and a newer one.
   may be a constant as well as a local, which is what lets a method reach
   one: `def` closes over nothing.
 
+- Fix: a block holding a character outside ASCII no longer raises. The file a
+  block sits in was read with `File.read`, which uses
+  `Encoding.default_external` -- a setting that has nothing to do with a
+  source's encoding: on a machine with no locale set it is US-ASCII, and the
+  file came back as its own bytes under a tag that the first `rstrip` on a
+  line holding a comment in Japanese raised on. The file is now read as bytes
+  and given the encoding the parser gave it: UTF-8, or what a `coding` magic
+  comment names on the first line or on the second where a shebang takes the
+  first.
+
 - Change: naming a contraction's axes now replaces the convention rather than
   adding a clause to it. `CArray.jit_contract(:i, :j) { ... }` names all of
   the result's axes, so every index left out of the list is summed at however

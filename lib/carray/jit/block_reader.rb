@@ -75,7 +75,7 @@ class CArray
 
           path = sequence.absolute_path
           if path && File.file?(path)
-            return File.read(path)
+            return read_script(path)
           end
 
           raise Unsupported,
@@ -83,6 +83,34 @@ class CArray
                 "(defined in eval or in a console?); " \
                 "pass the kernel as `source:`, or set " \
                 "RubyVM.keep_script_lines = true before defining it"
+        end
+
+        # Ruby reads a source file as UTF-8 unless a magic comment says
+        # otherwise, and `Encoding.default_external` has nothing to do with
+        # it.  Reading by that is what `File.read` does, and on a machine
+        # with no locale set it hands back the file's own bytes under a
+        # US-ASCII tag -- which every later `rstrip` on a line holding a
+        # non-ASCII comment raises on.  So the bytes are read as bytes and
+        # given the encoding the parser gave them.
+        def read_script (path)
+          source = File.binread(path)
+          source.force_encoding(script_encoding(source))
+        end
+
+        # The magic comment, on the first line or on the second where a
+        # shebang takes the first -- the two places Ruby looks for it.  The
+        # word is `coding`, with no boundary before it: `# encoding: euc-jp`
+        # and `# -*- coding: utf-8 -*-` are both spellings Ruby takes.
+        def script_encoding (source)
+          head = source.byteslice(0, 1024).lines.first(2)
+          head.shift if head.first&.start_with?("#!")
+          name = head.first&.slice(/coding\s*[:=]\s*([\w.\-]+)/, 1)
+          return Encoding::UTF_8 unless name
+          begin
+            Encoding.find(name)
+          rescue ArgumentError
+            Encoding::UTF_8
+          end
         end
 
         def locate (source, location)
