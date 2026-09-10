@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `CArray.jit_each` and `CArray.jit_map` no longer refuse a block that
+  hands a one-cell array to a C function. Those entries line their operands up
+  with the expression's shape, and an array passed to a pointer parameter was
+  lined up with the rest -- so a one-cell array holding state came back
+  stretched and read-only, and the copy-back after the call raised `can not
+  modify read-only array`. An array handed over by address is passed whole
+  rather than walked, so it is left as it is now. `jit_for` was never
+  affected, and a `CScalar` was affected the same way an array was.
+
 - New: `CFunction#watching`, and `#clear_error` / `#report_error` beside it,
   for the window in which a compiled function's address is lent to a C
   library. `#call` answers for one call; a library given `#pointer` calls as

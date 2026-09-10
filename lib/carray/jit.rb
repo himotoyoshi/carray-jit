@@ -1141,6 +1141,16 @@ class CArray
           aligned[name] = written
         end
 
+        # An array handed to a C function by address is passed whole rather
+        # than walked, so the expression's shape has nothing to say about it.
+        # Broadcasting it would stretch a one-cell state array into a
+        # read-only `CARepeat`, which the copy-back after the call cannot
+        # write through -- and a state array is exactly the shape a caller
+        # reaches for.
+        kernel.address_arrays.each do |name|
+          aligned[name] = arrays.fetch(name)
+        end
+
         if kernel.masked
           kernel.written_arrays.each do |name|
             array = arrays.fetch(name)

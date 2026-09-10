@@ -21,6 +21,11 @@ class CArray
       attr_reader :source, :c_source, :arrays, :storage_types, :reals,
                   :integers, :complexes, :unsigned_integers,
                   :rank, :index_names, :written_arrays,
+                  # The arrays handed to a C function whole, by address,
+                  # rather than walked a cell at a time.  A caller that lines
+                  # operands up has to leave these alone: their shape is the
+                  # C function's business, not the expression's.
+                  :address_arrays,
                   :compiled, :masked, :directions, :contracted_names,
                   :index_axes,
                   # How far a stencil's windows reach on each axis, as

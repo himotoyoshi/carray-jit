@@ -203,4 +203,74 @@ class TestCallStatement < Minitest::Test
     end
     assert_match(/puts it nowhere/, error.message)
   end
+
+  # An array handed to a C function by address is passed whole rather than
+  # walked, so the expression's shape has nothing to say about it.  The
+  # whole-array entries line their operands up, and lining this one up
+  # stretched a one-cell array into a read-only view that the copy-back
+  # after the call could not write through -- which is the shape a caller
+  # keeping state in an array reaches for first.
+  def counter_function
+    @counter_function ||= CArray.jit_function(
+      "double bump(int64_t counter[1])"
+    ) { |counter|
+      n = counter[0]
+      counter[0] = n + 1
+      n * 1.0
+    }
+  end
+
+  def test_an_addressed_array_is_not_lined_up_by_jit_each
+    bump = counter_function
+    counter = CArray.int64(1)
+    out = CArray.double(4)
+    CArray.jit_each { out = bump.call(counter) }
+    assert_equal([0.0, 1.0, 2.0, 3.0], out.to_a)
+    assert_equal(4, counter[0])
+  end
+
+  def test_an_addressed_array_is_not_lined_up_by_jit_map
+    bump = counter_function
+    counter = CArray.int64(1)
+    base = CArray.double(3)
+    out = CArray.jit_map { base + bump.call(counter) }
+    assert_equal([0.0, 1.0, 2.0], out.to_a)
+  end
+
+  # A CScalar goes through the same lining up, and came back stretched too.
+  def test_an_addressed_cscalar_is_not_lined_up
+    bump = counter_function
+    counter = CScalar.int64
+    counter[0] = 10
+    out = CArray.double(3)
+    CArray.jit_each { out = bump.call(counter) }
+    assert_equal([10.0, 11.0, 12.0], out.to_a)
+    assert_equal(13, counter[0])
+  end
+
+  # Two of them keep their own count, which is what a caller holding more
+  # than one piece of state needs.
+  def test_two_addressed_arrays_keep_their_own_state
+    bump = counter_function
+    first = CArray.int64(1)
+    second = CArray.int64(1)
+    second[0] = 100
+    one = CArray.double(3)
+    two = CArray.double(3)
+    CArray.jit_each { one = bump.call(first); two = bump.call(second) }
+    assert_equal([0.0, 1.0, 2.0], one.to_a)
+    assert_equal([100.0, 101.0, 102.0], two.to_a)
+  end
+
+  # The same block written with an index, which never lined anything up.
+  def test_jit_for_agrees_with_jit_each
+    bump = counter_function
+    counter = CArray.int64(1)
+    walked = CArray.double(4)
+    CArray.jit_for(4) { |i| walked[i] = bump.call(counter) }
+    counter[0] = 0
+    whole = CArray.double(4)
+    CArray.jit_each { whole = bump.call(counter) }
+    assert_equal(walked.to_a, whole.to_a)
+  end
 end
