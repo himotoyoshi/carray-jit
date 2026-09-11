@@ -71,7 +71,7 @@ legendre[0..5].to_a
 * [Supported features](docs/03_SupportedFeatures.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
 * [Compiling, caching and inspecting](docs/04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
 * [Design notes](docs/05_DesignNotes.md) — decisions that were not obvious, and why
-* [Cheatsheet](docs/06_Cheatsheet.md) — the eight `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
+* [Cheatsheet](docs/06_Cheatsheet.md) — the seven `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
 
 ## Contributing
 

@@ -343,44 +343,6 @@ class CArray
     JIT.function(prototype, &block)
   end
 
-  # Returns a random number generator a kernel can draw from:
-  #
-  #   rand = CArray.jit_rng(seed: 4)
-  #   CArray.jit_for(n) { |i| out[i] = random(rng: rand) }
-  #
-  # `random(rng: rand)` gives one double in [0.0, 1.0).  Each generator has its own
-  # state, so two of them in one kernel are two independent sequences, and
-  # the state survives the call: a second kernel over the same generator
-  # carries on rather than starting again.
-  #
-  # What comes back is a CArray::Rng, and it is a generator on both sides
-  # of the compiler.  So a sequence can begin in an array and continue in a
-  # kernel:
-  #
-  #   rand = CArray.jit_rng(seed: 4)
-  #   a.random!(rng: rand)                         # fills a, advancing rand
-  #   CArray.jit_for(n) { |i| b[i] = random(rng: rand) }   # b takes the next draws
-  #
-  # and those are the same numbers a single `random!` over `a` and `b` would
-  # have laid down, because CArray's generator and the kernel's are one text
-  # rather than two implementations.  `CArray::Rng.new` makes the same
-  # object; this is the spelling that says what it is for.
-  #
-  # Which draw lands in which cell is the loop's order, which is the
-  # caller's -- the same rule every kernel here follows.  Where that matters
-  # -- common random numbers, antithetic variates -- what is wanted is a
-  # generator addressed by position, and this is not one.
-  #
-  # @param seed [Integer, nil] the seed; nil draws one, so two generators
-  #   made without a seed differ.  The seed is data the kernel is handed and
-  #   not part of it, so the same compiled kernel serves every seed.
-  # @param generator [Symbol] which generator, from
-  #   `CArray::Rng::GENERATORS`.
-  # @return [CArray::Rng]
-  def self.jit_rng (seed: nil, generator: :xoshiro256pp)
-    JIT.rng(seed: seed, generator: generator)
-  end
-
   # @!endgroup
 
   # The compiler behind `CArray.jit_*`: it reads a block, generates C for it,
@@ -411,27 +373,6 @@ class CArray
       def reassociate
         return @reassociate unless @reassociate.nil?
         @reassociate = ENV["CARRAY_JIT_REASSOCIATE"] != "0"
-      end
-
-      # `CArray.jit_rng`.  The generator is CArray's -- this makes one and
-      # says why the making is here: a kernel can only draw from a generator
-      # whose C it can paste, and whether this CArray hands its C out is the
-      # thing to find out now rather than at the compile.
-      def rng (seed: nil, generator: :xoshiro256pp)
-        unless defined?(CArray::Rng) &&
-               CArray::Rng.const_defined?(:SOURCE)
-          raise Unsupported,
-                "this CArray does not hand out its generator's source " \
-                "(CArray::Rng::SOURCE), so a kernel cannot draw from " \
-                "one; CArray 3.0.2 or newer is what carries it"
-        end
-        unless CArray::Rng::SOURCE.key?(generator)
-          raise Unsupported,
-                "`#{generator.inspect}` is not a generator this CArray hands " \
-                "the source of; it has " \
-                "#{CArray::Rng::SOURCE.keys.map(&:inspect).join(', ')}"
-        end
-        CArray::Rng.new(generator, :seed => seed)
       end
 
       # @private
@@ -1583,11 +1524,54 @@ class CArray
           case value
           when CArray then arrays[name] = value
           when CFunction  then c_functions[name] = value
-          when CArray::Rng then randoms[name] = value
-          else             scalars[name] = value
+          else
+            if generator_class && value.is_a?(generator_class)
+              randoms[name] = refuse_an_unpasteable(name, value)
+            else
+              scalars[name] = value
+            end
           end
         end
         [arrays, scalars, c_functions, randoms]
+      end
+
+      # `CArray::Rng`, or nil where the CArray in use has none.
+      #
+      # Asked of the object rather than of the version, because the version
+      # cannot answer: 3.0.2 is where the class arrived and 3.0.2 is also
+      # what the release before it called itself.  Asked once and remembered,
+      # and reached only after a capture has failed to be an array or a
+      # function -- a bare `when CArray::Rng` is evaluated for every captured
+      # number, and against a CArray without the class that is a NameError
+      # loose in a kernel that never mentions a generator.
+      def generator_class
+        return @generator_class unless @generator_class.nil?
+        @generator_class = defined?(CArray::Rng) ? CArray::Rng : false
+      end
+
+      # A generator CArray can run but cannot hand the source of.
+      #
+      # Checked here rather than where a generator is made, because a
+      # generator is made by `CArray::Rng.new` and this gem is not on that
+      # path -- it learns one is in play when a block closes over it, which
+      # is here and is every route in.  What it costs to check late is
+      # nothing: a kernel that cannot paste the text cannot be compiled
+      # either way, and the question is which of the two says so.
+      #
+      # Nothing reaches this today: CArray hands out the source of every
+      # generator it has.  It is the seam between two of its hashes, and the
+      # failure without it is a `KeyError` out of the middle of code
+      # generation.
+      def refuse_an_unpasteable (name, generator)
+        kind = generator.generator
+        return generator if CArray::Rng::SOURCE.key?(kind)
+        raise Unsupported,
+              "`#{name}` is a #{kind.inspect} generator, and this CArray " \
+              "does not hand out that generator's C " \
+              "(CArray::Rng::SOURCE has " \
+              "#{CArray::Rng::SOURCE.keys.map(&:inspect).join(', ')}), so a " \
+              "kernel has nothing to paste. Fill an array with " \
+              "`CArray#random!` and read a cell of it instead"
       end
 
       # The name a generator's state array is an operand under.
@@ -1646,11 +1630,11 @@ class CArray
         # a draw with its generator missing.  It reaches here rather than
         # `random_call` because a bare name with no arguments is parsed as a
         # name read, and only the parentheses tell the two apart.
-        if name.to_sym == :random
+        if [:random, :randomn].include?(name.to_sym)
           raise Unsupported,
-                "`random` in a kernel draws from a generator and has to say " \
-                "which: `random(rng: r)`, where `r` is a `CArray::Rng` -- " \
-                "`CArray.jit_rng(seed: 4)` makes one"
+                "`#{name}` in a kernel draws from a generator and has to say " \
+                "which: `#{name}(rng: r)`, where `r` is a `CArray::Rng` -- " \
+                "`CArray::Rng.new(seed: 4)` makes one"
         end
         return unless DRAW_NAMES.include?(name.to_sym)
         raise Unsupported, draw_message("`#{name}`")
@@ -1674,7 +1658,7 @@ class CArray
       # loop runs with the GVL released, which is not where it may be reached
       # at all.  That is why this one is refused, and it is the only reason --
       # a kernel *can* draw, from a generator whose C it can paste, which is
-      # what `CArray.jit_rng` hands out.
+      # what `CArray::Rng` is.
       #
       # Both ways out are named because they are different answers.  A
       # generator draws in the order it is asked, and a kernel does not fix
@@ -1687,7 +1671,7 @@ class CArray
       def draw_message (what)
         "#{what} draws from a generator this compiler cannot reach: it is " \
         "Ruby's, and the loop runs without the GVL. Draw from " \
-        "`CArray.jit_rng`, which a kernel can; or, where which draw lands " \
+        "`CArray::Rng`, which a kernel can; or, where which draw lands " \
         "in which cell matters, fill an array with `CArray#random!` and read " \
         "a cell of it as the kernel reads any other array"
       end

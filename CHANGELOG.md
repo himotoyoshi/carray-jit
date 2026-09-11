@@ -39,24 +39,28 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
-- New: `CArray.jit_rng` gives a kernel random numbers. `rand =
-  CArray.jit_rng(seed: 4)` and then `random(rng: rand)` in a `jit_for`,
-  `jit_each` or `jit_map` block draws one double in `[0.0, 1.0)` per cell, at
-  about 0.8 ns. It is spelled as the array language spells it -- `a.random!(rng:
-  rand)` fills an array from the same generator -- and is the only keyword
-  argument the kernel subset accepts. Each generator has its own state, so two
-  in one kernel are two sequences, and the state survives the call: a second
-  kernel carries on rather than starting again. `seed:` is data rather than
-  code, so every seed shares one compiled kernel. What comes back is a
-  `CArray::Rng`, so a sequence can begin with `a.random!(rng: rand)` and
-  continue in a kernel: those are the same numbers one `random!` over both
-  arrays would have laid down, because CArray hands out the generator's C and
-  this gem pastes it. Needs CArray 3.0.2 or newer, which is where
-  `CArray::Rng` arrived. A draw is refused inside `jit_function`, which has
-  nowhere to keep a state; take `int64_t state[4]` as a parameter there and
-  pass `rand.state`. Which draw lands in which cell is still the loop's order,
-  so where that has to be settled, fill an array with `CArray#random!` before
-  the call.
+- New: a kernel can draw random numbers, from a `CArray::Rng`. `rand =
+  CArray::Rng.new(seed: 4)` and then `rand.random` in a `jit_for`, `jit_each`
+  or `jit_map` block draws one double in `[0.0, 1.0)` per cell, at about
+  0.8 ns; `random(rng: rand)` is the same draw spelled as
+  `CArray#random!(rng:)` spells it; `rand.randomn` is a standard normal, at
+  about 10 ns, and `randomn(rng: rand)` the same; and `rand.bits` is the raw
+  word a draw came from. All of them read one generator, so mixing them in a
+  kernel walks one sequence. The generator is CArray's and there is no entry point here: a
+  block closing over one is what a kernel needs. Each has its own state, so
+  two in one kernel are two sequences, and the state survives the call --
+  a second kernel carries on rather than starting again. `seed:` is data
+  rather than code, so every seed shares one compiled kernel. A sequence can
+  begin with `a.random!(rng: rand)` and continue in a kernel: those are the
+  same numbers one `random!` over both arrays would have laid down, because
+  CArray hands out the generator's C and this gem pastes it. Needs CArray
+  3.0.2 or newer, which is where `CArray::Rng` arrived; an older one is
+  refused where the block closes over the generator, and leaves every kernel
+  that draws nothing alone. A draw is refused inside `jit_function`, which
+  has nowhere to keep a state; take `int64_t state[4]` as a parameter there
+  and pass `rand.state`. Which draw lands in which cell is still the loop's
+  order, so where that has to be settled, fill an array with
+  `CArray#random!` before the call.
 
 - Fix: `CArray.jit_each` and `CArray.jit_map` no longer refuse a block that
   hands a one-cell array to a C function. Those entries line their operands up

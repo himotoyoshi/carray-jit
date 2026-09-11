@@ -371,34 +371,40 @@ class CArray
       end
     end
 
-# A draw from a captured CArray::Rng.
-#
-# The generator is not a function this kernel closed over -- nothing of
-# it is compiled here.  Its C arrives as text from CArray, is pasted into
-# the preamble beside the helpers this compiler writes itself, and the
-# draw is a call to it.  So the sequence a kernel gets is the sequence
-# `CArray#random!` gets, because it is the same code advancing the same
-# cells and not a second implementation agreeing with the first.
-#
-# The state is an ordinary captured array under a name this compiler made
-# up, handed over as an address the way any array a C function writes
-# through is.  That is what carries the sequence across the call: the
-# cells the kernel advanced are the cells the generator still holds when
-# it comes back.
-class RandomDraw < Node
-  # The name the block reached the generator by, for a message to say.
-  attr_reader :generator
-  # The made-up name of its state array.
-  attr_reader :state
-  def initialize (generator, state, location = nil)
-    super(location)
-    @generator = generator
-    @state = state
-  end
-  def children
-    []
-  end
-end
+    # A draw from a captured CArray::Rng.
+    #
+    # The generator is not a function this kernel closed over -- nothing of
+    # it is compiled here.  Its C arrives as text from CArray, is pasted into
+    # the preamble beside the helpers this compiler writes itself, and the
+    # draw is a call to it.  So the sequence a kernel gets is the sequence
+    # `CArray#random!` gets, because it is the same code advancing the same
+    # cells and not a second implementation agreeing with the first.
+    #
+    # The state is an ordinary captured array under a name this compiler made
+    # up, handed over as an address the way any array a C function writes
+    # through is.  That is what carries the sequence across the call: the
+    # cells the kernel advanced are the cells the generator still holds when
+    # it comes back.
+    class RandomDraw < Node
+      # The name the block reached the generator by, for a message to say.
+      attr_reader :generator
+      # The made-up name of its state array.
+      attr_reader :state
+      # What this draw answers: `:rand` a double in [0.0, 1.0), `:bits` the
+      # raw word the generator produced.  Both advance the same state by one
+      # draw -- one step of the generator read two ways, not two sequences --
+      # so a kernel mixing them is still walking the one sequence.
+      attr_reader :kind
+      def initialize (generator, state, kind, location = nil)
+        super(location)
+        @generator = generator
+        @state = state
+        @kind = kind
+      end
+      def children
+        []
+      end
+    end
 
     # `p[i]` where `p` is a pointer parameter of a compiled function.
     #

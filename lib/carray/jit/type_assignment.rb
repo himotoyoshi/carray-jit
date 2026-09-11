@@ -154,7 +154,7 @@ class CArray
             raise Unsupported,
                   "a generator draws in an order a kernel does not fix; fill " \
                   "an array with `CArray#random!` and read a cell of it, or " \
-                  "draw from `CArray.jit_rng`, which a kernel can reach"
+                  "draw from `CArray::Rng.new`, which a kernel can reach"
           end
           raise Unsupported,
                 "captured scalars must be Float, Integer or Complex, got " \
@@ -405,10 +405,10 @@ class CArray
           end
           node.type = node.result_type
         when RandomDraw
-          # `double`, because that is what the generator's C returns.  There
-          # is nothing to infer and no argument to convert: a draw reads the
-          # state and nothing the block wrote.
-          node.type = :double
+          # What the generator's C returns for this draw.  There is nothing
+          # to infer and no argument to convert: a draw reads the state and
+          # nothing the block wrote.
+          node.type = node.kind == :bits ? :uint64 : :double
         when CFunctionCall
           # Nothing is inferred here: the prototype said what the function
           # returns and what it takes, and the arguments are converted to

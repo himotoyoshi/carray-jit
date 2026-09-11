@@ -1,6 +1,6 @@
 # Cheatsheet
 
-Nine entry points: the eight `jit_` methods this gem puts on `CArray`, and
+Eight entry points: the seven `jit_` methods this gem puts on `CArray`, and
 `CArray.fuse`, which is CArray's own and gets the compiler from this gem being
 installed. Every example here runs as written.
 
@@ -17,7 +17,7 @@ installed. Every example here runs as written.
 | An index repeats and is *not* summed -- a point number, a batch | `CArray.jit_contract(:p)`, naming the result's axes |
 | Call a C function someone else compiled | `CArray.jit_extern` |
 | Compile a C function of your own | `CArray.jit_function` |
-| Draw random numbers inside a kernel | `CArray.jit_rng` + `random(rng:)` |
+| Draw random numbers inside a kernel | `CArray::Rng` + `r.random` |
 
 The dividing line among the first four is **what reaches what**. Element-wise
 work reaches no neighbour, so it names no index and needs no extent. A cell
@@ -160,32 +160,50 @@ bits; `uint64_t` is the spelling that says the width itself.
 ## Random numbers
 
 ```ruby
-rand = CArray.jit_rng(seed: 4)
+rand = CArray::Rng.new(seed: 4)
 
-CArray.jit_for(n) { |i| out[i] = random(rng: rand) }   # one draw per cell, [0.0, 1.0)
+CArray.jit_for(n) { |i| out[i] = rand.random }  # one draw per cell, [0.0, 1.0)
 ```
 
-Each generator has its own state, so two in one kernel are two sequences, and
-the state survives the call -- a second kernel carries on rather than starting
-again. `seed:` is data the kernel is handed and not part of it, so every seed
-shares one compiled kernel.
+The generator is CArray's, not this gem's, and there is no entry point of
+this gem's own: `CArray::Rng.new` makes one and a kernel draws from it.
+Five spellings, three meanings:
 
-`random(rng:)` is spelled as the array language spells it -- `a.random!(rng: r)`
-fills an array from a generator and `random(rng: r)` is the same sentence about
-one cell. It is the only keyword argument in the subset and the only bare name
-in it that Ruby itself does not have.
+| | |
+|---|---|
+| `r.random` | a double in `[0.0, 1.0)` |
+| `r.randomn` | a standard normal, which costs two draws |
+| `r.bits` | the raw word a draw came from, as a `uint64` |
+| `random(rng: r)`, `randomn(rng: r)` | the first two, as `a.random!(rng: r)` spells them |
 
-What comes back is a `CArray::Rng`, which is a generator on both sides of
-the compiler. So a sequence can begin in an array and continue in a kernel:
+The keyword forms are the only keyword arguments in the subset and the only
+bare names in it that Ruby itself does not have; both are paid for reading
+like the array language. All of these read one generator, so mixing them in
+a kernel walks one sequence rather than several.
+
+A normal is two draws and keeps no spare. Box-Muller classically gives two
+normals for two uniforms; the second would have to live in the generator's
+state between calls, and a spare held across the boundary between an array
+and a kernel is a second kind of state to keep in step. Two draws apiece
+costs about a nanosecond against the ten the transform itself takes, and
+buys a rule with nothing behind it.
+
+Each generator has its own state, so two in one kernel are two sequences,
+and the state survives the call -- a second kernel carries on rather than
+starting again. `seed:` is data the kernel is handed and not part of it, so
+every seed shares one compiled kernel.
+
+A generator is one on both sides of the compiler, so a sequence can begin in
+an array and continue in a kernel:
 
 ```ruby
-a.random!(rng: rand)                          # CArray fills, advancing rand
-CArray.jit_for(n) { |i| b[i] = random(rng: rand) }  # the kernel takes the next draws
+a.random!(rng: rand)                            # CArray fills, advancing rand
+CArray.jit_for(n) { |i| b[i] = rand.random }    # the kernel takes the next draws
 ```
 
-and those are the numbers one `random!` over both would have laid down. CArray
-compiles the generator and hands the same text out for the kernel to paste, so
-the two sides are one implementation rather than two that agree.
+and those are the numbers one `random!` over both would have laid down.
+CArray compiles the generator and hands the same text out for the kernel to
+paste, so the two sides are one implementation rather than two that agree.
 
 Which draw lands in which cell is the loop's order, which this compiler does
 not fix. Where that matters -- common random numbers, antithetic variates --
@@ -208,7 +226,6 @@ declare `int64_t state[4]` there and pass `rand.state`.
 | `jit_contract` | a new `CArray`, or the `CompiledKernel` when the block assigns |
 | `jit_extern` | `CFunction` |
 | `jit_function` | `CFunction` |
-| `jit_rng` | `CArray::Rng` -- a generator, and CArray's own |
 
 Every `CompiledKernel` answers `#c_source` with the C that ran.
 
@@ -218,7 +235,7 @@ Every `CompiledKernel` answers `#c_source` with the C that ran.
 |---|---|
 | `fuse` | works -- CArray walks it, same answer |
 | the six kernel forms and `jit_function` | `CArray::JIT::Unsupported` |
-| `jit_extern`, `jit_rng` | work -- neither compiles anything |
+| `jit_extern` | works -- it compiles nothing |
 
 That is what the prefix says. A block outside the subset is refused by name and
 line rather than run as a Ruby loop: nobody reaches for a compiler except to

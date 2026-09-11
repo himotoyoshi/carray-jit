@@ -974,7 +974,14 @@ class CArray
         kinds = @analyzer.random_names.map { |name|
           @randoms.fetch(name).generator
         }.uniq.sort
-        kinds.map { |kind|
+        return "" if kinds.empty?
+        # What every generator's text wants beside it and none of them owns.
+        # Once, ahead of them: two generators in this file would otherwise
+        # define it twice.
+        text = +"/* What a draw needs beside a generator, from\n" \
+                "   CArray::Rng::COMMON_SOURCE. */\n" +
+               CArray::Rng::COMMON_SOURCE + "\n"
+        text + kinds.map { |kind|
           "/* #{kind}, from CArray::Rng::SOURCE -- the same text CArray\n" \
           "   compiled, so a kernel continues the sequence `random!` left\n" \
           "   off at rather than agreeing with it by construction. */\n" +
@@ -2159,8 +2166,9 @@ class CArray
           # declarations above bound to a name; the draw advances it in
           # place, which is what leaves the generator where the kernel left
           # it.
-          symbol = CArray::Rng::DRAW_FUNCTION.fetch(
-                     @randoms.fetch(node.generator).generator)
+          symbol = CArray::Rng::DRAW_FUNCTIONS
+                     .fetch(@randoms.fetch(node.generator).generator)
+                     .fetch(node.kind)
           ["#{symbol}(#{c_name(node.state)})", LEAF_PRECEDENCE]
         when CFunctionCall
           c_function = @c_functions.fetch(node.name)

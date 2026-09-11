@@ -1779,8 +1779,6 @@ class CArray
             "as in `raise \"x is 0\" if x == 0`",
             node.location)
         end
-        receiver = captured_name(node.receiver)
-        refuse_a_generator_call(receiver, node) if receiver && @randoms.key?(receiver)
         raise Unsupported.new("unsupported method `#{node.name}`", node.location)
       end
 
@@ -1927,34 +1925,46 @@ class CArray
           CDeclaration.parse("double draw(int64_t state[4])").last.first
       end
 
-      # Every way of reaching a generator except the one spelling.  `r.rand`
-      # is the likeliest, because that is how it is drawn from in Ruby, and
-      # `r.call` is next, because `jit_rng` handed back an object.  Both are
-      # answered with the spelling rather than with "unsupported method".
-      def refuse_a_generator_call (name, node)
-        raise Unsupported.new(
-          "`#{name}` is a generator, and a kernel draws from one by naming " \
-          "it: `random(rng: #{name})`, as `CArray#random!` names it -- not " \
-          "`#{name}.#{node.name}`",
-          node.location)
-      end
+      # `r.rand` and `r.bits` -- a draw written as a method of the generator,
+      # which is how Ruby writes one.  `#rand` and `#bits` do these outside a
+      # kernel, and the same names inside it mean the same two things.
+      RANDOM_DRAW_METHODS =
+        { :random => :random, :randomn => :randomn, :bits => :bits }.freeze
 
-      # `random(rng: r)` -- one draw from a captured CArray::Rng.
+      # `random(rng: r)` -- the same draw as `r.rand`, written as the array
+      # language writes it.  `a.random!(rng: r)` fills an array from a
+      # generator, and this is that sentence about one cell, so a reader
+      # moving between the two reads one word rather than matching two up.
       #
-      # Spelled as the array language spells it.  `a.random!(rng: r)` fills an
-      # array from a generator, and this is the same sentence about one cell,
-      # so that a reader moving between the two is reading one word rather
-      # than matching two up.
-      #
-      # It is the only keyword argument in the subset, and the only bare name
-      # in it that Ruby does not have.  Both are paid for the same thing: the
-      # generator is named where `random!` names it.
-      RANDOM_DRAW_NAME = :random
+      # It is the only keyword argument in the subset and the only bare name
+      # in it that Ruby does not have; both are paid for that.
+      RANDOM_KEYWORD_NAMES =
+        { :random => :random, :randomn => :randomn }.freeze
       RANDOM_DRAW_KEYWORD = "rng"
 
+      # Returns the node for a draw from a captured CArray::Rng, or nil when
+      # this is not one.
       def random_call (node)
-        return nil unless node.receiver.nil? && node.name == RANDOM_DRAW_NAME
-        name = random_generator_name(node)
+        if node.receiver.nil? && (kind = RANDOM_KEYWORD_NAMES[node.name])
+          return build_random_draw(random_generator_name(node), kind, node)
+        end
+        name = captured_name(node.receiver)
+        return nil unless name && @randoms.key?(name)
+        kind = RANDOM_DRAW_METHODS[node.name]
+        refuse_a_generator_call(name, node) unless kind
+        unless (node.arguments ? node.arguments.arguments : []).empty?
+          bounded = node.name == :random ?
+            ". `CArray#random!` takes a range for a whole array; a kernel " \
+            "has no bounded draw, so scale the one you get" : ""
+          raise Unsupported.new(
+            "`#{name}.#{node.name}` in a kernel is one draw and takes no " \
+            "arguments#{bounded}",
+            node.location)
+        end
+        build_random_draw(name, kind, node)
+      end
+
+      def build_random_draw (name, kind, node)
         state = @randoms.fetch(name)
         @random_names << name unless @random_names.include?(name)
         # The state travels the way any array handed to a C function whole
@@ -1962,7 +1972,21 @@ class CArray
         # That copy-back is what leaves the generator advanced.
         @address_arrays << state unless @address_arrays.include?(state)
         (@address_parameters[state] ||= []) << self.class.random_state_parameter
-        RandomDraw.new(name, state, node.location)
+        RandomDraw.new(name, state, kind, node.location)
+      end
+
+      # Everything else reached on a generator.  There are three spellings
+      # and no fourth, so the message lists them rather than saying only that
+      # this one is not among them.
+      def refuse_a_generator_call (name, node)
+        raise Unsupported.new(
+          "`#{name}` is a generator, and `#{name}.#{node.name}` is not a way " \
+          "to draw from one. A kernel has `#{name}.random` for a double in " \
+          "[0.0, 1.0), `#{name}.randomn` for a standard normal, " \
+          "`#{name}.bits` for the raw word, and `random(rng: #{name})` or " \
+          "`randomn(rng: #{name})` for the first two written as " \
+          "`CArray#random!` writes them",
+          node.location)
       end
 
       # Which generator `random` was pointed at, or a refusal saying how to
@@ -1978,9 +2002,9 @@ class CArray
                pairs.first.key.is_a?(Prism::SymbolNode) &&
                pairs.first.key.unescaped == RANDOM_DRAW_KEYWORD
           raise Unsupported.new(
-            "`random` in a kernel draws one number from a generator and " \
-            "takes `rng:` and nothing else -- `random(rng: r)`, where `r` " \
-            "is a `CArray::Rng` the block closed over",
+            "`#{node.name}` in a kernel draws one number from a generator " \
+            "and takes `rng:` and nothing else -- `#{node.name}(rng: r)`, " \
+            "where `r` is a `CArray::Rng` the block closed over",
             node.location)
         end
         name = captured_name(pairs.first.value)
@@ -1989,7 +2013,7 @@ class CArray
           raise Unsupported.new(
             "`rng:` takes a `CArray::Rng` the block closed over, and " \
             "#{reached} is not one. A Ruby `Random` cannot be reached from a " \
-            "kernel at all; `CArray.jit_rng` makes one that can",
+            "kernel at all; `CArray::Rng.new` makes one that can",
             pairs.first.value.location)
         end
         name
@@ -2000,7 +2024,6 @@ class CArray
       def c_function_call (node)
         return nil unless C_FUNCTION_CALL_NAMES.include?(node.name)
         name = captured_name(node.receiver)
-        refuse_a_generator_call(name, node) if name && @randoms.key?(name)
         return nil unless name && @c_functions.key?(name)
         c_function = @c_functions.fetch(name)
         arguments = node.arguments ? node.arguments.arguments : []
