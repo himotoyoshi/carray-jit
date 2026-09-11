@@ -343,6 +343,44 @@ class CArray
     JIT.function(prototype, &block)
   end
 
+  # Returns a random number generator a kernel can draw from:
+  #
+  #   rand = CArray.jit_rng(seed: 4)
+  #   CArray.jit_for(n) { |i| out[i] = random(rng: rand) }
+  #
+  # `random(rng: rand)` gives one double in [0.0, 1.0).  Each generator has its own
+  # state, so two of them in one kernel are two independent sequences, and
+  # the state survives the call: a second kernel over the same generator
+  # carries on rather than starting again.
+  #
+  # What comes back is a CArray::Rng, and it is a generator on both sides
+  # of the compiler.  So a sequence can begin in an array and continue in a
+  # kernel:
+  #
+  #   rand = CArray.jit_rng(seed: 4)
+  #   a.random!(rng: rand)                         # fills a, advancing rand
+  #   CArray.jit_for(n) { |i| b[i] = random(rng: rand) }   # b takes the next draws
+  #
+  # and those are the same numbers a single `random!` over `a` and `b` would
+  # have laid down, because CArray's generator and the kernel's are one text
+  # rather than two implementations.  `CArray::Rng.new` makes the same
+  # object; this is the spelling that says what it is for.
+  #
+  # Which draw lands in which cell is the loop's order, which is the
+  # caller's -- the same rule every kernel here follows.  Where that matters
+  # -- common random numbers, antithetic variates -- what is wanted is a
+  # generator addressed by position, and this is not one.
+  #
+  # @param seed [Integer, nil] the seed; nil draws one, so two generators
+  #   made without a seed differ.  The seed is data the kernel is handed and
+  #   not part of it, so the same compiled kernel serves every seed.
+  # @param generator [Symbol] which generator, from
+  #   `CArray::Rng::GENERATORS`.
+  # @return [CArray::Rng]
+  def self.jit_rng (seed: nil, generator: :xoshiro256pp)
+    JIT.rng(seed: seed, generator: generator)
+  end
+
   # @!endgroup
 
   # The compiler behind `CArray.jit_*`: it reads a block, generates C for it,
@@ -375,6 +413,27 @@ class CArray
         @reassociate = ENV["CARRAY_JIT_REASSOCIATE"] != "0"
       end
 
+      # `CArray.jit_rng`.  The generator is CArray's -- this makes one and
+      # says why the making is here: a kernel can only draw from a generator
+      # whose C it can paste, and whether this CArray hands its C out is the
+      # thing to find out now rather than at the compile.
+      def rng (seed: nil, generator: :xoshiro256pp)
+        unless defined?(CArray::Rng) &&
+               CArray::Rng.const_defined?(:SOURCE)
+          raise Unsupported,
+                "this CArray does not hand out its generator's source " \
+                "(CArray::Rng::SOURCE), so a kernel cannot draw from " \
+                "one; CArray 3.0.2 or newer is what carries it"
+        end
+        unless CArray::Rng::SOURCE.key?(generator)
+          raise Unsupported,
+                "`#{generator.inspect}` is not a generator this CArray hands " \
+                "the source of; it has " \
+                "#{CArray::Rng::SOURCE.keys.map(&:inspect).join(', ')}"
+        end
+        CArray::Rng.new(generator, :seed => seed)
+      end
+
       # @private
       RESULT = :__contraction_result
 
@@ -385,7 +444,11 @@ class CArray
         # the block reaches for it the way it reaches for a captured value.
         # It is neither: it is an index, and it is answered here.
         names = capture_names(source, node) - (free_indices || [])
-        arrays, scalars, c_functions = split_captures(names, binding_of(block))
+        arrays, scalars, c_functions, randoms =
+          split_captures(names, binding_of(block))
+        refuse_a_generator(randoms, "a contraction", "the block is a summand " \
+          "and runs once per term, so a draw in it would be one per term " \
+          "rather than one per cell of the result")
         contract(source, arrays, free_indices, node: node, origin: origin,
                  scalars: scalars, c_functions: c_functions)
       end
@@ -429,7 +492,11 @@ class CArray
         # is not the same as naming an empty list of axes.
         free_indices = nil if free_indices.empty?
         names = capture_names(source, node) - (free_indices || [])
-        arrays, scalars, c_functions = split_captures(names, binding_of(block))
+        arrays, scalars, c_functions, randoms =
+          split_captures(names, binding_of(block))
+        refuse_a_generator(randoms, "a contraction", "the block is a summand " \
+          "and runs once per term, so a draw in it would be one per term " \
+          "rather than one per cell of the result")
         # A compiled function in the summand is not something the structure
         # carries; a captured number is, as the scale.
         return nil unless c_functions.empty?
@@ -912,8 +979,11 @@ class CArray
 
         windowed = windows.zip(arrays).to_h
         free, assigned = free_and_assigned_names(source, node)
-        captured, scalars, c_functions =
+        captured, scalars, c_functions, randoms =
           split_captures(free - windows, binding_of(block))
+        refuse_a_generator(randoms, "a stencil", "its border is a second loop " \
+          "over the frame, so the draws would not run in one pass over the " \
+          "cells")
         unless assigned.empty? || (assigned & captured.keys).empty?
           raise Unsupported,
                 "a stencil's value is its block's, and the cells it is over " \
@@ -1073,20 +1143,23 @@ class CArray
       # The result has to be sized and typed before there is a kernel to ask,
       # so the block is analyzed once without being compiled -- the same thing
       # a returned contraction does, for the same reason.
-      def allocate_map_result (source, node, arrays, scalars, shape, c_functions)
-        type = probe_map(source, node, arrays, scalars, c_functions)
+      def allocate_map_result (source, node, arrays, scalars, shape, c_functions,
+                               randoms = {})
+        type = probe_map(source, node, arrays, scalars, c_functions, randoms)
         CArray.send(type, *(shape.empty? ? [1] : shape))
       end
 
       # @private
-      def probe_map (source, node, arrays, scalars, c_functions)
+      def probe_map (source, node, arrays, scalars, c_functions, randoms = {})
         key = [:map, source, arrays.transform_values(&:data_type_name),
                scalars.transform_values { |value| TypeAssignment.scalar_type(value) },
-               c_functions.transform_values(&:signature)]
+               c_functions.transform_values(&:signature),
+               randoms.transform_values(&:generator)]
         cached = probe_cache[key]
         return cached if cached
         analyzer = Analyzer.new(source, node: node, array_names: arrays.keys,
-                                c_functions: c_functions, rank: 1, map: :probe)
+                                c_functions: c_functions, rank: 1, map: :probe,
+                                randoms: random_state_names(randoms))
         TypeAssignment.new(analyzer.body, arrays.transform_values(&:data_type_name),
                            scalars, c_functions)
         value = analyzer.body.statements.last
@@ -1097,7 +1170,8 @@ class CArray
       def run_over_whole_arrays (block, map: false)
         node, source, origin = read_block(block)
         free, assigned = free_and_assigned_names(source, node)
-        arrays, scalars, c_functions = split_captures(free, binding_of(block))
+        arrays, scalars, c_functions, randoms =
+          split_captures(free, binding_of(block))
         # `out = a + b` writes the array named `out` where the block was
         # written.  A name the block assigns is not free in it, so it is
         # looked up here rather than by split_captures -- and a name that is
@@ -1108,9 +1182,19 @@ class CArray
         end
 
         aligned, shape = broadcast(arrays)
+        # A generator's state joins after the broadcast, never before it.
+        # It is passed whole rather than walked, so the expression's shape
+        # has nothing to say about it -- and it has a shape of its own that
+        # would not line up anyway: four cells, against however many the
+        # expression covers.  Lining it up first is what `jit_each` did to a
+        # one-cell state before 314d6cb, and a four-cell one does not even
+        # stretch.
+        states = random_states(randoms)
+        arrays = arrays.merge(states)
+        aligned = aligned.merge(states)
         if map
           result = allocate_map_result(source, node, arrays, scalars, shape,
-                                       c_functions)
+                                       c_functions, randoms)
           arrays = arrays.merge(MAP_RESULT => result)
           aligned = aligned.merge(MAP_RESULT => result)
         end
@@ -1124,6 +1208,7 @@ class CArray
                          storage_types: arrays.transform_values(&:data_type_name),
                          scalar_values: scalars,
                          c_functions: c_functions,
+                         randoms: randoms,
                          masked: masked,
                          rank: sweeping ? 1 : shape.size,
                          map: map,
@@ -1208,7 +1293,12 @@ class CArray
       def run (extents, block, reassociate = nil)
         node, source, origin = read_block(block)
         names = capture_names(source, node)
-        arrays, scalars, c_functions = split_captures(names, binding_of(block))
+        arrays, scalars, c_functions, randoms =
+          split_captures(names, binding_of(block))
+        # A generator's state is an operand like any other array, under a
+        # name this compiler made up.  `jit_for` lines nothing up, so it can
+        # simply join the rest.
+        arrays = arrays.merge(random_states(randoms))
 
         # A plain CArray carries no mask; one exists only once a cell has
         # actually been marked.  So masks are touched at all only when some
@@ -1233,6 +1323,7 @@ class CArray
                          storage_types: arrays.transform_values(&:data_type_name),
                          scalar_values: scalars,
                          c_functions: c_functions,
+                         randoms: randoms,
                          masked: arrays.each_value.any? { |array| array.has_mask? },
                          steps: steps,
                          cell_names: cell_names(arrays),
@@ -1264,7 +1355,7 @@ class CArray
                    scalar_values:, c_functions: {}, masked: false, rank: nil,
                    steps: nil, contract: false, result: nil, map: false,
                    reassociate: false, cell_names: [], windows: [], border: nil,
-                   free_indices: nil)
+                   free_indices: nil, randoms: {})
         # A kernel that mentions UNDEF is a masked one whatever its arrays
         # carry, and deciding that here means no caller has to remember it.
         masked ||= mentions_undef(source, node)
@@ -1276,6 +1367,12 @@ class CArray
                # kernel, and it is compiled once.  One written here adds its
                # symbol, which stands for its body -- see `CFunction#kernel_key`.
                c_functions.transform_values(&:kernel_key),
+               # Which generator each name is, and nothing about its state:
+               # the C pasted for a draw is decided by the kind, and the seed
+               # is data the kernel is handed at the call.  So two runs that
+               # differ only in seed are one kernel, and the same kernel
+               # serves a generator reset between calls.
+               randoms.transform_values(&:generator),
                masked, rank, steps, contract, result, map,
                # A contraction whose free indices were named is not the kernel
                # the same source is without them, nor with them in another
@@ -1301,7 +1398,8 @@ class CArray
         registry[key] = build(source, node, array_names, storage_types,
                               scalar_values, c_functions, masked, rank, steps,
                               contract, result, origin, map, reassociate,
-                              cell_names, windows, border, free_indices)
+                              cell_names, windows, border, free_indices,
+                              randoms)
       end
 
       # A kernel that mentions UNDEF is a masked kernel whatever its arrays
@@ -1429,16 +1527,19 @@ class CArray
       def build (source, node, array_names, storage_types, scalar_values, c_functions,
                  masked, rank = nil, steps = nil, contract = false, result = nil,
                  origin = nil, map = false, reassociate = false,
-                 cell_names = [], windows = [], border = nil, free_indices = nil)
+                 cell_names = [], windows = [], border = nil, free_indices = nil,
+                 randoms = {})
         analyzer = Analyzer.new(source, node: node, array_names: array_names,
                                 c_functions: c_functions,
                                 rank: rank, steps: steps, contract: contract,
                                 result: result, map: map, free_indices: free_indices,
-                                cell_names: cell_names, windows: windows)
+                                cell_names: cell_names, windows: windows,
+                                randoms: random_state_names(randoms))
         assignment = TypeAssignment.new(analyzer.body, storage_types,
                                         scalar_values, c_functions)
         generator = CGenerator.new(analyzer, storage_types, assignment.scalar_types,
                                    c_functions: c_functions,
+                                   randoms: randoms,
                                    masked: masked, reassociate: reassociate,
                                    steps: steps, border: border,
                                    origin: origin, block_source: source)
@@ -1476,15 +1577,41 @@ class CArray
         arrays = {}
         scalars = {}
         c_functions = {}
+        randoms = {}
         names.each do |name|
           value = capture_value(name, binding)
           case value
           when CArray then arrays[name] = value
           when CFunction  then c_functions[name] = value
+          when CArray::Rng then randoms[name] = value
           else             scalars[name] = value
           end
         end
-        [arrays, scalars, c_functions]
+        [arrays, scalars, c_functions, randoms]
+      end
+
+      # The name a generator's state array is an operand under.
+      #
+      # Made up here rather than taken from the caller, because the state is
+      # not something the block named: it wrote `r.call`, and the array
+      # behind that is machinery.  The name is derived from the one the block
+      # did write, so it is the same in the next process as in this one --
+      # which is what lets a compiled kernel be found in the cache rather
+      # than built again.
+      def random_state_name (name)
+        :"__random_state_#{name}"
+      end
+
+      # Which state array each generator draws from, as operands.
+      def random_states (randoms)
+        randoms.to_h { |name, generator|
+          [random_state_name(name), generator.state]
+        }
+      end
+
+      # Which made-up name each generator's state is under, for the analyzer.
+      def random_state_names (randoms)
+        randoms.to_h { |name, _| [name, random_state_name(name)] }
       end
 
       # A constant is looked up where the block was written, so it means what
@@ -1515,21 +1642,54 @@ class CArray
       DRAW_NAMES = [:rand, :srand].freeze
 
       def refuse_a_draw (name)
+        # `random` with no `rng:` is not a name that was left undefined, it is
+        # a draw with its generator missing.  It reaches here rather than
+        # `random_call` because a bare name with no arguments is parsed as a
+        # name read, and only the parentheses tell the two apart.
+        if name.to_sym == :random
+          raise Unsupported,
+                "`random` in a kernel draws from a generator and has to say " \
+                "which: `random(rng: r)`, where `r` is a `CArray::Rng` -- " \
+                "`CArray.jit_rng(seed: 4)` makes one"
+        end
         return unless DRAW_NAMES.include?(name.to_sym)
         raise Unsupported, draw_message("`#{name}`")
       end
 
-      # A generator has one state and hands out its numbers in the order it
-      # was asked in, and a kernel does not fix that order: a stencil's border
-      # is a second loop over the frame, a reduction may split its
-      # accumulator, and the loop runs with the GVL released, which is not
-      # where Ruby's Random -- the one `CArray#random!` draws through -- may
-      # be reached at all. An array filled before the call has none of those
-      # questions in it.
+      # A generator reaches `jit_for`, `jit_each` and `jit_map`, and stops
+      # there.  The two that are left are not refused because a draw is
+      # meaningless in them but because it would not mean what it looks like,
+      # so the reason is given rather than the fact.
+      def refuse_a_generator (randoms, what, because)
+        return if randoms.empty?
+        name = randoms.keys.first
+        raise Unsupported,
+              "`#{name}` is a generator, and #{what} does not draw from one: " \
+              "#{because}. Fill an array with `CArray#random!` and read a " \
+              "cell of it, or draw in a `jit_for` / `jit_each` / `jit_map` " \
+              "block, where `random(rng: #{name})` works"
+      end
+
+      # `rand` is Ruby's, and Ruby's generator is reached through the VM: the
+      # loop runs with the GVL released, which is not where it may be reached
+      # at all.  That is why this one is refused, and it is the only reason --
+      # a kernel *can* draw, from a generator whose C it can paste, which is
+      # what `CArray.jit_rng` hands out.
+      #
+      # Both ways out are named because they are different answers.  A
+      # generator draws in the order it is asked, and a kernel does not fix
+      # that order: a stencil's border is a second loop over the frame, and a
+      # reduction may split its accumulator.  Where which draw lands in which
+      # cell has to be settled -- common random numbers, antithetic variates
+      # -- an array filled before the call is the answer, and a draw in the
+      # loop is not.  Where it does not, drawing in the kernel saves the
+      # array.
       def draw_message (what)
-        "#{what} draws from a generator, and a kernel does not fix the order " \
-        "it would draw in; fill an array with `CArray#random!` and read a " \
-        "cell of it, as the kernel reads any other array"
+        "#{what} draws from a generator this compiler cannot reach: it is " \
+        "Ruby's, and the loop runs without the GVL. Draw from " \
+        "`CArray.jit_rng`, which a kernel can; or, where which draw lands " \
+        "in which cell matters, fill an array with `CArray#random!` and read " \
+        "a cell of it as the kernel reads any other array"
       end
 
       # An extent is a Range, an Integer standing for `0...n`, or an

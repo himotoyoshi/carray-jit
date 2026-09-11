@@ -265,6 +265,7 @@ class CArray
       BORDER_RULES = [:zero, :clamp, :wrap].freeze
 
       def initialize (analyzer, storage_types, scalar_types, c_functions: {},
+                      randoms: {},
                       masked: false, reassociate: false,
                       steps: nil, origin: nil, block_source: nil, border: nil,
                       scalar_parameters: [])
@@ -327,6 +328,12 @@ class CArray
         # Only the ones the block actually called, in a fixed order, because
         # the caller packs the addresses into `functions` by this order.
         @c_functions = analyzer.c_function_names.sort.to_h { |name| [name, c_functions.fetch(name)] }
+        # The generators the block drew from, by the name it drew through.
+        # Unlike a C function, one takes no slot in any buffer: its C is
+        # pasted and its state is an address array, so what is kept here is
+        # only which generator each name is -- the kind, to paste, and the
+        # symbol to call.
+        @randoms = analyzer.random_names.to_h { |name| [name, randoms.fetch(name)] }
         # A function written here is pasted into this kernel and called by its
         # symbol; a borrowed one arrives as an address.  Only the second kind
         # takes a slot in `functions`, so it is that hash the caller packs by.
@@ -948,7 +955,31 @@ class CArray
 
           C
         end
+        text << random_source
         text << pasted_definitions
+      end
+
+      # The generators the block drew from, as CArray wrote them.
+      #
+      # This is the COMPLEX_HELPERS path and not the pasted-body one: what
+      # CArray hands over is a run of `static inline` functions, not one
+      # definition to be given a `static` and a name.  It goes in verbatim --
+      # reading it here to check it would be this gem deciding what CArray's
+      # generator is, which is the drift the shared text exists to prevent.
+      #
+      # Only when a draw was written, and once however many generators drew:
+      # two CArray::Rng of the same kind are the same C over different
+      # state.
+      def random_source
+        kinds = @analyzer.random_names.map { |name|
+          @randoms.fetch(name).generator
+        }.uniq.sort
+        kinds.map { |kind|
+          "/* #{kind}, from CArray::Rng::SOURCE -- the same text CArray\n" \
+          "   compiled, so a kernel continues the sequence `random!` left\n" \
+          "   off at rather than agreeing with it by construction. */\n" +
+          CArray::Rng::SOURCE.fetch(kind) + "\n"
+        }.join
       end
 
       # The bodies of the functions written with `jit_function`, put in this
@@ -2123,6 +2154,14 @@ class CArray
                           }
           arguments << ERROR_FLAG if @error_parameter
           ["#{@own_symbol}(#{arguments.join(', ')})", LEAF_PRECEDENCE]
+        when RandomDraw
+          # The state is the address of the captured array, which the
+          # declarations above bound to a name; the draw advances it in
+          # place, which is what leaves the generator where the kernel left
+          # it.
+          symbol = CArray::Rng::DRAW_FUNCTION.fetch(
+                     @randoms.fetch(node.generator).generator)
+          ["#{symbol}(#{c_name(node.state)})", LEAF_PRECEDENCE]
         when CFunctionCall
           c_function = @c_functions.fetch(node.name)
           arguments = node.arguments.zip(c_function.parameters)

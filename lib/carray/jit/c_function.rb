@@ -1118,6 +1118,21 @@ class CArray
                 "has nowhere to keep one. Take it as a parameter, or compile " \
                 "the body here with `CArray.jit_function`"
         end
+        if value.is_a?(CArray::Rng)
+          # A generator has state, and a compiled function has nowhere to
+          # keep one -- the same reason a borrowed address is refused above.
+          # A kernel is handed its operands at every call and can be given
+          # the state among them; a function's arguments are the ones its
+          # declaration named, and adding one behind the caller's back would
+          # change the C signature it was promised.  So the state is named,
+          # and the body draws from it the way the generator's own C does.
+          raise Unsupported,
+                "this function reaches `#{name}`, which is a generator; a " \
+                "compiled function has nowhere to keep its state. Take the " \
+                "state as a parameter -- declare `int64_t state[4]` and pass " \
+                "`#{name}.state` -- or draw in the kernel that calls this, " \
+                "where `random(rng: #{name})` works"
+        end
         unless captured_name_defined?(name, binding_of(block))
           raise Unsupported,
                 "`#{name}` is not defined where the block was written"

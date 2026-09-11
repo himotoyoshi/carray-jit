@@ -143,11 +143,18 @@ class CArray
           # A generator captured by name is worth its own answer: it is not a
           # value the kernel could carry, and what to do instead is the same
           # thing `rand` inside the block is told.
-          if value.is_a?(Random) || value.equal?(Random) || value.equal?(Kernel)
+          #
+          # `::Random` rather than `Random`, though this file is inside
+          # `class CArray` and nothing there shadows it.  A generator of
+          # CArray's own is `CArray::Rng` precisely so that it does not, and
+          # writing the `::` keeps the question this asks legible from the
+          # line rather than from that fact.
+          if value.is_a?(::Random) || value.equal?(::Random) ||
+             value.equal?(Kernel)
             raise Unsupported,
                   "a generator draws in an order a kernel does not fix; fill " \
-                  "an array with `CArray#random!` and read a cell of it, as " \
-                  "the kernel reads any other array"
+                  "an array with `CArray#random!` and read a cell of it, or " \
+                  "draw from `CArray.jit_rng`, which a kernel can reach"
           end
           raise Unsupported,
                 "captured scalars must be Float, Integer or Complex, got " \
@@ -397,6 +404,11 @@ class CArray
               node.location)
           end
           node.type = node.result_type
+        when RandomDraw
+          # `double`, because that is what the generator's C returns.  There
+          # is nothing to infer and no argument to convert: a draw reads the
+          # state and nothing the block wrote.
+          node.type = :double
         when CFunctionCall
           # Nothing is inferred here: the prototype said what the function
           # returns and what it takes, and the arguments are converted to

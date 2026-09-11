@@ -172,7 +172,7 @@ class CArray
       COMPARISON_OPERATORS = [:<, :<=, :>, :>=, :==, :!=].freeze
 
       attr_reader :parameter_names, :pointer_names, :address_arrays,
-                  :address_parameters
+                  :address_parameters, :random_names
       # An offset that is an integer here rather than when the kernel runs.
       # A literal is one; so is arithmetic over literals, which is the same
       # number written a way that says where it came from -- `w[-RADIUS-1]`
@@ -280,7 +280,7 @@ class CArray
                       steps: nil, contract: false, result: nil, function: false,
                       pointers: {}, map: false, cell_names: [],
                       recursion: nil, windows: [], returns: true,
-                      free_indices: nil)
+                      free_indices: nil, randoms: {})
         @source = source
         @node = node
         @array_names = array_names
@@ -297,6 +297,11 @@ class CArray
         # none, because a window has nowhere to write one.
         @windows = windows
         @c_functions = c_functions
+        # The generators the block closed over, by the name it reached each
+        # one by, and the made-up name of the state array that carries it.
+        # A draw is neither a captured function nor an array read, so it is
+        # kept apart from both.
+        @randoms = randoms
         @function = function
         # A function declared `void` ends in a statement like any other; one
         # that returns ends in the expression it returns.  Which it is comes
@@ -360,6 +365,7 @@ class CArray
         @pointer_names = []
         @address_arrays = []
         @address_parameters = {}
+        @random_names = []
         @read_offsets = Hash.new { |hash, key| hash[key] = [] }
         @written_arrays = []
         analyze
@@ -1073,7 +1079,8 @@ class CArray
           # pointed -- which is the whole reason C has statements that are
           # calls.  Everything else keeps the refusal below: a computation
           # standing where a statement stands is a line that does nothing.
-          if (call = recursive_call(node) || c_function_call(node))
+          if (call = recursive_call(node) || c_function_call(node) ||
+                     random_call(node))
             @calls_for_effect = true
             return CallStatement.new(call, node.location)
           end
@@ -1672,6 +1679,9 @@ class CArray
         if (recursive = recursive_call(node))
           return recursive
         end
+        if (draw = random_call(node))
+          return draw
+        end
         if (c_function = c_function_call(node))
           return c_function
         end
@@ -1769,6 +1779,8 @@ class CArray
             "as in `raise \"x is 0\" if x == 0`",
             node.location)
         end
+        receiver = captured_name(node.receiver)
+        refuse_a_generator_call(receiver, node) if receiver && @randoms.key?(receiver)
         raise Unsupported.new("unsupported method `#{node.name}`", node.location)
       end
 
@@ -1904,11 +1916,91 @@ class CArray
         RecursiveCall.new(name, built, parameters, result_type, node.location)
       end
 
+      # `int64_t s[4]`, the parameter the generator's own C takes.  Held as a
+      # parsed declaration rather than described here, so that what the state
+      # array is checked against is the C the draw will actually be compiled
+      # into -- the same check `poly.call(x, coef)` gets, from the same code.
+      # Parsed on first use: the declaration parser is in c_function.rb,
+      # which is required after this file.
+      def self.random_state_parameter
+        @random_state_parameter ||=
+          CDeclaration.parse("double draw(int64_t state[4])").last.first
+      end
+
+      # Every way of reaching a generator except the one spelling.  `r.rand`
+      # is the likeliest, because that is how it is drawn from in Ruby, and
+      # `r.call` is next, because `jit_rng` handed back an object.  Both are
+      # answered with the spelling rather than with "unsupported method".
+      def refuse_a_generator_call (name, node)
+        raise Unsupported.new(
+          "`#{name}` is a generator, and a kernel draws from one by naming " \
+          "it: `random(rng: #{name})`, as `CArray#random!` names it -- not " \
+          "`#{name}.#{node.name}`",
+          node.location)
+      end
+
+      # `random(rng: r)` -- one draw from a captured CArray::Rng.
+      #
+      # Spelled as the array language spells it.  `a.random!(rng: r)` fills an
+      # array from a generator, and this is the same sentence about one cell,
+      # so that a reader moving between the two is reading one word rather
+      # than matching two up.
+      #
+      # It is the only keyword argument in the subset, and the only bare name
+      # in it that Ruby does not have.  Both are paid for the same thing: the
+      # generator is named where `random!` names it.
+      RANDOM_DRAW_NAME = :random
+      RANDOM_DRAW_KEYWORD = "rng"
+
+      def random_call (node)
+        return nil unless node.receiver.nil? && node.name == RANDOM_DRAW_NAME
+        name = random_generator_name(node)
+        state = @randoms.fetch(name)
+        @random_names << name unless @random_names.include?(name)
+        # The state travels the way any array handed to a C function whole
+        # does: by address, in the `data` buffer, copied back after the call.
+        # That copy-back is what leaves the generator advanced.
+        @address_arrays << state unless @address_arrays.include?(state)
+        (@address_parameters[state] ||= []) << self.class.random_state_parameter
+        RandomDraw.new(name, state, node.location)
+      end
+
+      # Which generator `random` was pointed at, or a refusal saying how to
+      # point it at one.  Nothing else is accepted in the parentheses: a
+      # range, a bound, a data type are all things `CArray#random!` takes and
+      # none of them has an answer for one cell.
+      def random_generator_name (node)
+        arguments = node.arguments ? node.arguments.arguments : []
+        keywords = arguments.last if arguments.last.is_a?(Prism::KeywordHashNode)
+        pairs = keywords ? keywords.elements : []
+        unless arguments.size == 1 && keywords && pairs.size == 1 &&
+               pairs.first.is_a?(Prism::AssocNode) &&
+               pairs.first.key.is_a?(Prism::SymbolNode) &&
+               pairs.first.key.unescaped == RANDOM_DRAW_KEYWORD
+          raise Unsupported.new(
+            "`random` in a kernel draws one number from a generator and " \
+            "takes `rng:` and nothing else -- `random(rng: r)`, where `r` " \
+            "is a `CArray::Rng` the block closed over",
+            node.location)
+        end
+        name = captured_name(pairs.first.value)
+        unless name && @randoms.key?(name)
+          reached = name ? "`#{name}`" : "what was written there"
+          raise Unsupported.new(
+            "`rng:` takes a `CArray::Rng` the block closed over, and " \
+            "#{reached} is not one. A Ruby `Random` cannot be reached from a " \
+            "kernel at all; `CArray.jit_rng` makes one that can",
+            pairs.first.value.location)
+        end
+        name
+      end
+
       # Returns the node for a call on a captured C function, or nil when this
       # is not one.
       def c_function_call (node)
         return nil unless C_FUNCTION_CALL_NAMES.include?(node.name)
         name = captured_name(node.receiver)
+        refuse_a_generator_call(name, node) if name && @randoms.key?(name)
         return nil unless name && @c_functions.key?(name)
         c_function = @c_functions.fetch(name)
         arguments = node.arguments ? node.arguments.arguments : []
