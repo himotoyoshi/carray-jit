@@ -1130,21 +1130,21 @@ class CArray
           end
         end
         @reals.each_with_index do |name, index|
-          lines << "  const double #{c_name(name)} = reals[#{index}];\n"
+          lines << "  const double #{bare_name(name)} = reals[#{index}];\n"
         end
         @complexes.each_with_index do |name, index|
           slot = @reals.size + 2 * index
-          lines << "  const double _Complex #{c_name(name)} = " \
+          lines << "  const double _Complex #{bare_name(name)} = " \
                    "CMPLX(reals[#{slot}], reals[#{slot + 1}]);\n"
         end
         @integers.each_with_index do |name, index|
-          lines << "  const int64_t #{c_name(name)} = integers[#{index}];\n"
+          lines << "  const int64_t #{bare_name(name)} = integers[#{index}];\n"
         end
         # The cast is the whole of how a uint64 capture travels: the caller
         # packed the value's bits into the slot, and reading them as what they
         # are is what puts the value back.
         @unsigned_integers.each_with_index do |name, index|
-          lines << "  const uint64_t #{c_name(name)} = " \
+          lines << "  const uint64_t #{bare_name(name)} = " \
                    "(uint64_t) integers[#{@integers.size + index}];\n"
         end
         @extent_slots.each_with_index do |(array, axis), slot|
@@ -1152,14 +1152,14 @@ class CArray
                    "integers[#{@integers.size + @unsigned_integers.size + slot}];\n"
         end
         @address_functions.each_key.with_index do |name, index|
-          lines << "  const #{c_function_type_name(name)} #{c_name(name)} = " \
+          lines << "  const #{c_function_type_name(name)} #{bare_name(name)} = " \
                    "(#{c_function_type_name(name)}) functions[#{index}];\n"
         end
         @address_arrays.each_with_index do |array, index|
           # Typed by the array rather than by the parameter it will be passed
           # to: the caller has already checked that the two agree, and the
           # array is the one that owns the memory.
-          lines << "  #{storage_c_type(array)} *const #{c_name(array)} = " \
+          lines << "  #{storage_c_type(array)} *const #{bare_name(array)} = " \
                    "(#{storage_c_type(array)} *) data[#{index}];\n"
         end
         lines.empty? ? "" : lines.join + "\n"
@@ -1853,6 +1853,56 @@ class CArray
         name.to_s.gsub("::", "__")
       end
 
+      # The identifier each name is written as where it is written on its own,
+      # as a variable of the kernel's body.
+      #
+      # `c_name` is not enough there.  The kernel's own parameters are `data`,
+      # `error`, `strides`, `bounds` -- ordinary words a block may perfectly
+      # well have used for a capture -- and C keeps a list of its own;
+      # `RESERVED_NAMES` is already both, and was already consulted for an
+      # index.  A capture was not consulted about, and a block closing over
+      # something called `data` compiled to C that redeclared the kernel's own
+      # parameter.  A leading underscore is C's to reserve as well, which is
+      # what the made-up names here start with.
+      #
+      # An index is refused for this rather than moved, because its name is
+      # written in the block and read back in messages.  A capture's is not:
+      # what it is called in the C is nobody's business, so it is moved out of
+      # the way instead of the caller being asked to rename a variable in code
+      # that has nothing to do with the kernel.
+      #
+      # Worked out for the whole kernel at once, because where a moved name
+      # lands is not a question about that name alone: a block closing over
+      # both `data` and `carray_jit_name_data` would otherwise have the first
+      # move onto the second.  So every name that stays is claimed first, and
+      # a move that would collide keeps going.
+      #
+      # Only a name that had to move moves, so the C a reader sees is what it
+      # was.  A decorated name (`p_a`, `a_s0`, `m_a`) could not collide with a
+      # parameter or a keyword and is left alone.
+      def bare_names
+        @bare_names ||= begin
+          names = (@reals + @integers + @complexes + @unsigned_integers +
+                   @address_arrays + @address_functions.keys).uniq
+          taken = names.map { |name| c_name(name) }
+          names.each_with_object({}) do |name, found|
+            text = c_name(name)
+            if RESERVED_NAMES.include?(name.to_sym) || text.start_with?("_")
+              # Not the bare `carray_jit_` prefix: `carray_jit_error` is the
+              # error flag, and a capture called `error` would land on it.
+              text = "carray_jit_name_#{text}"
+              text = "#{text}_" while taken.include?(text)
+              taken << text
+            end
+            found[name] = text
+          end
+        end
+      end
+
+      def bare_name (name)
+        bare_names.fetch(name) { c_name(name) }
+      end
+
       def pointer_name (array)
         "p_#{c_name(array)}"
       end
@@ -2096,7 +2146,7 @@ class CArray
         when ZeroLike
           [ZEROES.fetch(node.type), LEAF_PRECEDENCE]
         when LocalRead        then [node.binding_name.to_s, LEAF_PRECEDENCE]
-        when CaptureRead      then [c_name(node.name), LEAF_PRECEDENCE]
+        when CaptureRead      then [bare_name(node.name), LEAF_PRECEDENCE]
         # A read is widened to the type the kernel computes in, because that
         # is the type the Ruby loop computes in: reading a float32 cell in
         # Ruby gives a Float, and reading an int32 cell gives an Integer that
@@ -2139,7 +2189,7 @@ class CArray
         when Power        then emit_power(node)
         when MathCall then emit_math_call(node)
         when ArrayAddress
-          [c_name(node.array), LEAF_PRECEDENCE]
+          [bare_name(node.array), LEAF_PRECEDENCE]
         when PointerRead
           # A pointer parameter is reached the way C reaches it: contiguous,
           # from the address it was handed.  No base, no stride, no bounds --
@@ -2169,7 +2219,7 @@ class CArray
           symbol = CArray::Rng::DRAW_FUNCTIONS
                      .fetch(@randoms.fetch(node.generator).generator)
                      .fetch(node.kind)
-          ["#{symbol}(#{c_name(node.state)})", LEAF_PRECEDENCE]
+          ["#{symbol}(#{bare_name(node.state)})", LEAF_PRECEDENCE]
         when CFunctionCall
           c_function = @c_functions.fetch(node.name)
           arguments = node.arguments.zip(c_function.parameters)
@@ -2182,7 +2232,7 @@ class CArray
                           }
           # A pasted body is reached by its symbol; an address by the local
           # the declarations bound it to.
-          called = c_function.pasted? ? c_function.name : c_name(node.name)
+          called = c_function.pasted? ? c_function.name : bare_name(node.name)
           # And one that can report a failure is handed the slot this kernel
           # is watching -- null under a masked cell, where the value written
           # is out of contract and a division by zero there was not asked
