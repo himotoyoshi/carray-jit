@@ -52,14 +52,37 @@ INSTALLED_EXTENSION = File.join("lib/carray/jit", EXTENSION_NAME)
 EXTENSION_SOURCES = FileList[File.join(EXTENSION_DIRECTORY, "*.{c,h}")] +
                     [File.join(EXTENSION_DIRECTORY, "extconf.rb")]
 
-file BUILT_EXTENSION => EXTENSION_SOURCES do
+# Which CArray the extension was configured against.  The object is compiled
+# against that CArray's carray.h, so switching CARRAY_TREE, or dropping it, has
+# to rebuild -- the sources alone would say nothing had changed, and make does
+# not notice a different include path either.
+CARRAY_STAMP = File.join(EXTENSION_DIRECTORY, "carray.stamp")
+
+def carray_stamp_label
+  CARRAY_TREE ? File.expand_path(CARRAY_TREE) : "installed gem"
+end
+
+carray_stamp = file CARRAY_STAMP do |task|
+  File.write(task.name, carray_stamp_label)
+end
+def carray_stamp.needed?
+  !File.exist?(name) || File.read(name) != carray_stamp_label
+end
+
+file BUILT_EXTENSION => EXTENSION_SOURCES + [CARRAY_STAMP] do
+  # Read before the chdir: CARRAY_TREE is relative to here.
+  flags = carray_tree_flags
   Dir.chdir(EXTENSION_DIRECTORY) do
-    ruby "extconf.rb"
+    ruby "#{flags} extconf.rb"
+    sh "make clean"
     sh "make"
   end
 end
 
 file INSTALLED_EXTENSION => BUILT_EXTENSION do
+  # Replace rather than overwrite: macOS kills a process that loads a signed
+  # Mach-O whose file was rewritten in place.
+  rm_f INSTALLED_EXTENSION
   cp BUILT_EXTENSION, INSTALLED_EXTENSION
 end
 
@@ -89,41 +112,42 @@ task :benchmark => :compile do
   puts
   ruby "#{carray_tree_flags} -Ilib benchmark/views.rb"
   puts
-  ruby "-Ilib benchmark/thomas.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/thomas.rb"
   puts
-  ruby "-Ilib benchmark/element_wise.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/element_wise.rb"
   puts
-  ruby "-Ilib benchmark/narrow_types.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/narrow_types.rb"
   puts
-  ruby "-Ilib benchmark/footprint.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/footprint.rb"
   puts
-  ruby "-Ilib benchmark/reduction.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/reduction.rb"
   puts
-  ruby "-Ilib benchmark/contraction.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/contraction.rb"
   puts
-  ruby "-Ilib benchmark/break_even.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/break_even.rb"
   puts
-  ruby "-Ilib benchmark/call_overhead.rb"
+  ruby "#{carray_tree_flags} -Ilib benchmark/call_overhead.rb"
 end
 
 desc "Run every example"
 task :examples => :compile do
   Dir[File.expand_path("examples/*/*.rb", __dir__)].sort.each do |example|
     puts "== #{example.split("/")[-2..].join("/")}"
-    ruby "-Ilib #{example}"
+    ruby "#{carray_tree_flags} -Ilib #{example}"
     puts
   end
 end
 
 desc "Show the kernel cache"
 task :cache do
-  ruby "-Ilib bin/carray-jit status"
+  ruby "#{carray_tree_flags} -Ilib bin/carray-jit status"
 end
 
 desc "Remove build products"
 task :clean do
   rm_f Dir[File.join(EXTENSION_DIRECTORY, "**/*.{o,#{RbConfig::CONFIG['DLEXT']}}")]
   rm_f Dir[File.join(EXTENSION_DIRECTORY, "Makefile")]
+  rm_f CARRAY_STAMP
   rm_rf Dir[File.join(EXTENSION_DIRECTORY, "**/*.dSYM")]
   rm_f INSTALLED_EXTENSION
 end

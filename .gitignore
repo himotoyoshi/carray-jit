@@ -4,6 +4,7 @@
 *.dSYM/
 ext/**/Makefile
 ext/**/mkmf.log
+ext/**/carray.stamp
 lib/carray/jit/access.*
 .yard-html/
 .yardoc/
