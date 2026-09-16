@@ -79,7 +79,7 @@ class TestViews < Minitest::Test
   def test_gathered_view_is_transferred_and_written_back
     source = CArray.double(8).seq!
     selected = source[source > 3.0]
-    assert_equal(CArray::JIT::Access::TIER_ATTACH,
+    assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(selected)[:tier])
     selected[0] = 1.0
     doubling(selected, 1...4)
@@ -128,7 +128,7 @@ class TestViews < Minitest::Test
   def test_two_dimensional_region_is_read_in_the_view_order
     source = CArray.double(4, 5).seq!
     rolled = source.roll(1, 2)
-    assert_equal(CArray::JIT::Access::TIER_ATTACH,
+    assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(rolled)[:tier])
 
     result = CArray.double(4, 5)
@@ -239,7 +239,7 @@ class TestViews < Minitest::Test
   def test_the_region_covers_both_indices_on_one_axis
     base = CArray.double(6, 4).seq!
     view = base.roll(1, 1)
-    assert_equal(CArray::JIT::Access::TIER_ATTACH,
+    assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(view)[:tier])
     gram = CArray.double(4, 4)
     CArray.jit_for(4, 4) { |a, b|
@@ -260,7 +260,7 @@ class TestViews < Minitest::Test
     whole = CArray.double(16).seq!
     view = whole[whole >= 0.0].reshape(4, 4)
     assert(view.class.to_s.include?("Refer"), "the view is a refer over a select")
-    assert_equal(CArray::JIT::Access::TIER_ATTACH,
+    assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(view)[:tier])
 
     CArray.jit_for(4, 4) { |i, j| view[i, j] = view[i, j] * 10.0 }

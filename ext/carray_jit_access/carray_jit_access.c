@@ -36,7 +36,7 @@
 
 #define TIER_ENTITY 1
 #define TIER_STRIDE 2
-#define TIER_ATTACH 3
+#define TIER_XFER   3
 
 /* Slot layout: slot i is array i, slot count + i is that array's mask.
    A mask is a CArray of the same shape as its parent and, for a view, the
@@ -181,7 +181,7 @@ tier_for (CArray *ca)
 {
   if ( ca_is_entity(ca) ) return TIER_ENTITY;
   if ( ca_is_stride_family(ca) && folds_to_an_entity(ca) ) return TIER_STRIDE;
-  return TIER_ATTACH;
+  return TIER_XFER;
 }
 
 static VALUE
@@ -456,5 +456,5 @@ Init_access (void)
 
   rb_define_const(mAccess, "TIER_ENTITY", INT2NUM(TIER_ENTITY));
   rb_define_const(mAccess, "TIER_STRIDE", INT2NUM(TIER_STRIDE));
-  rb_define_const(mAccess, "TIER_ATTACH", INT2NUM(TIER_ATTACH));
+  rb_define_const(mAccess, "TIER_XFER", INT2NUM(TIER_XFER));
 }

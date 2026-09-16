@@ -352,7 +352,7 @@ class CArray
         packed.empty? ? "\0" * 8 : packed
       end
 
-      # The region tier transfers a box rather than the whole view.  The box
+      # The xfer tier transfers a box rather than the whole view.  The box
       # is the loop range grown by how far the kernel reaches from the cell it
       # is on -- per array, because two arrays in one kernel need not be read
       # at the same offsets, and per axis, because they need not be read at

@@ -820,7 +820,7 @@ class CArray
       # but only where the tiers here would have to materialise it.  So the
       # tier each operand would be opened at is the rest of the decision:
       #
-      #   TIER_ATTACH  neither can walk it, and the sweep holds 32KB where
+      #   TIER_XFER    neither can walk it, and the sweep holds 32KB where
       #                the tiers hold the whole box: the sweep runs
       #   TIER_STRIDE  a column, a transpose, every other cell -- the tiers
       #                address it in place, and the sweep re-gathers it for
@@ -833,7 +833,7 @@ class CArray
       # scratch either way -- there was nothing the re-gather was buying.
       def walkable_in_place? (arrays)
         tiers = arrays.map { |array| Access.classify(array)[:tier] }
-        return true if tiers.include?(Access::TIER_ATTACH)
+        return true if tiers.include?(Access::TIER_XFER)
         tiers.none? { |tier| tier == Access::TIER_STRIDE }
       end
 
