@@ -61,7 +61,7 @@ legendre[0..5].to_a
 #  => [1.0, 0.5, -0.125, -0.4375, -0.2890625, 0.08984375]
 ```
 
-`CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are CArray's own names: without this gem they raise and point at `CArray.fuse`, which computes an array expression without a compiler. This gem is the compiler. An expression over whole arrays wants `CArray.fuse` and not these, and gets compiled anyway where this gem is installed.
+The `jit_` methods are this gem's, and exist once `require "carray/jit"` has run. An expression over whole arrays wants `CArray.fuse`, which is CArray's own and needs no compiler -- and gets compiled anyway where this gem is loaded.
 
 ## Documentation
 

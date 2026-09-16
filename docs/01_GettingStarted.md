@@ -16,7 +16,7 @@ CArray.jit_for(1...(rows-1), 1...(columns-1)) { |i, j|
 
 ## Where the methods come from
 
-`CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are named by CArray, which defines them to raise: they say that they compile their block, that the compiler is this gem, and that it is not installed. Installing it replaces them with the ones that compile.
+`CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are this gem's: `require "carray/jit"` defines them, and before that CArray has no method by those names. `CArray.fuse` is the other way round -- CArray's own, working with nothing installed, and compiled once this gem is loaded.
 
 The name carries the rest. `jit_` says the block is read rather than run, and so has rules about what may be in it; a method called `per_cell` would not, and the subset would be something you found out about later. It also marks which methods need the compiler and which do not: an expression over whole arrays is `CArray.fuse`'s, and that one needs nothing installed.
 

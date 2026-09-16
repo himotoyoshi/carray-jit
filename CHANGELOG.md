@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: `CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are this
+  gem's alone. From CArray 3.0.2 they are not defined until
+  `require "carray/jit"` has run, so a program that calls one without it gets
+  `NoMethodError` rather than CArray's `NotImplementedError`. With the gem
+  required nothing changes, against any CArray this gem accepts.
+
 - New: a kernel can draw random numbers, from a `CArray::Rng`. `rand =
   CArray::Rng.new(seed: 4)` and then `rand.random` in a `jit_for`, `jit_each`
   or `jit_map` block draws one double in `[0.0, 1.0)` per cell, at about

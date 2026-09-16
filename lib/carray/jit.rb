@@ -42,12 +42,10 @@ class CArray
   # to make a per-cell computation fast, so quietly doing the slow thing would
   # answer a question that was not asked.
   #
-  # The name is CArray's own: carray/lazy.rb defines jit_for to raise
-  # NotImplementedError, saying that the block is compiled and that the
-  # compiler is this gem.  Requiring carray/jit replaces it with this one.
-  # So the method is named where the subset is documented, and a program that
-  # calls it either compiles or is told why it cannot -- an expression over
-  # whole arrays that needs no compiler is CArray.fuse's.
+  # The name is this gem's: CArray defines no jit_for of its own, so the
+  # method exists once carray/jit is required, and is documented where the
+  # subset is.  An expression over whole arrays that needs no compiler is
+  # CArray.fuse's.
   #
   # `reassociate:` says whether a reduction's accumulator may be split into
   # partial sums.  It defaults to CArray::JIT.reassociate, which is true:
@@ -106,8 +104,8 @@ class CArray
   # matter, while an element-wise block has neither.  And it is jit_map's
   # sibling in the other direction: the name says whether a value comes back.
   #
-  # Like jit_for, the name is CArray's own and raises there until this gem
-  # replaces it.  Written without a compiler, the same computation is
+  # Like jit_for, the name is this gem's, and exists once carray/jit is
+  # required.  Written without a compiler, the same computation is
   # CArray.fuse's -- the expression itself, one pass per operation, with the
   # intermediates this one does without.
   #
