@@ -556,6 +556,144 @@ class TestIntrinsics < Minitest::Test
     RUBY
   end
 
+  # ---------- the other entry points ----------
+
+  # A window has no index to pick a row of captured workspace by, so these
+  # are the spellings the intrinsics were wanted in: the median filter and
+  # the ensemble median lose their sort loop entirely.
+
+  def test_a_spread_is_max_minus_min_over_a_window
+    field = CArray.double(7, 7).seq!
+    field.map! { |value| (value * 13) % 29 }
+    out = CArray.jit_stencil(field, border: :clamp) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      max(w) - min(w)
+    }
+    7.times { |row| 7.times { |column|
+      window = (-1..1).flat_map { |dr| (-1..1).map { |dc|
+        field[[[row + dr, 0].max, 6].min, [[column + dc, 0].max, 6].min]
+      } }
+      assert_equal(window.max - window.min, out[row, column],
+                   "cell #{row},#{column}")
+    } }
+  end
+
+  # The proposal writes this one with `border: :mask`, which is not a masked
+  # kernel: the frame is marked before the loop runs and the loop never
+  # reaches it, so what the kernel carries is what the operands carry.
+  def test_the_spread_may_be_written_with_a_frame_border
+    field = CArray.double(7, 7).seq!
+    field.map! { |value| (value * 13) % 29 }
+    out = CArray.jit_stencil(field, border: :mask) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      max(w) - min(w)
+    }
+    assert_equal(UNDEF, out[0, 0], "the frame is marked")
+    (1..5).each { |row| (1..5).each { |column|
+      window = (-1..1).flat_map { |dr| (-1..1).map { |dc|
+        field[row + dr, column + dc]
+      } }
+      assert_equal(window.max - window.min, out[row, column],
+                   "cell #{row},#{column}")
+    } }
+  end
+
+  def test_sum_in_a_jit_each_block
+    a = CArray.double(6).seq!(1.0)
+    b = CArray.double(6).seq!(2.0)
+    out = CArray.double(6)
+    CArray.jit_each {
+      w = CArray.double(3)
+      w[0] = a
+      w[1] = b
+      w[2] = a * b
+      out = sum(w)
+    }
+    reference = (0...6).map { |k| a[k] + b[k] + a[k] * b[k] }
+    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+  end
+
+  def test_sort_in_a_jit_map_block
+    m1 = CArray.double(8).seq!(3.0, 7.0).map! { |v| v % 29 }
+    m2 = CArray.double(8).seq!(11.0, 5.0).map! { |v| v % 29 }
+    m3 = CArray.double(8).seq!(2.0, 13.0).map! { |v| v % 29 }
+    out = CArray.jit_map {
+      w = CArray.double(3)
+      w[0] = m1; w[1] = m2; w[2] = m3
+      sort(w)
+      w[1]
+    }
+    reference = (0...8).map { |k| [m1[k], m2[k], m3[k]].sort[1] }
+    assert_arrays_bits_equal(CArray.double(8) { reference }, out)
+  end
+
+  def test_min_and_max_in_a_jit_each_block
+    a = CArray.double(6).seq!(1.0)
+    b = CArray.double(6).seq!(9.0, -2.0)
+    low = CArray.double(6)
+    high = CArray.double(6)
+    CArray.jit_each {
+      w = CArray.double(2)
+      w[0] = a
+      w[1] = b
+      low = min(w)
+      high = max(w)
+    }
+    6.times do |k|
+      assert_equal([a[k], b[k]].min, low[k], "cell #{k}")
+      assert_equal([a[k], b[k]].max, high[k], "cell #{k}")
+    end
+  end
+
+  # An intrinsic over a masked kernel is refused for the array it is over,
+  # which is the same refusal a local array gets on its own.
+  def test_an_intrinsic_over_a_masked_kernel_is_refused
+    a = CArray.double(6).seq!(1.0)
+    a[2] = UNDEF
+    out = CArray.double(6)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a; out = sum(w) }
+    end
+    assert_match(/`w` is a local array/, error.message)
+    assert_match(/carries a mask/, error.message)
+  end
+
+  def test_the_median_filter_loses_its_sort_loop
+    image = CArray.double(7, 7).seq!
+    image.map! { |value| (value * 13) % 29 }
+    with_sort = CArray.jit_stencil(image, border: :clamp) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      sort(w)
+      w[4]
+    }
+    written_out = CArray.jit_stencil(image, border: :clamp) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      (1...9).each { |k|
+        key = w[k]
+        j = k - 1
+        while j >= 0 && w[j] > key
+          w[j + 1] = w[j]
+          j -= 1
+        end
+        w[j + 1] = key
+      }
+      w[4]
+    }
+    assert_equal(written_out.to_a, with_sort.to_a)
+  end
+
   # ---------- the names are the compiler's, not the block's ----------
 
   def test_a_local_may_be_called_sum_beside_a_call_to_sum

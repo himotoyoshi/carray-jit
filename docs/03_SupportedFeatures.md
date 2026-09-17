@@ -119,7 +119,11 @@ f.call(w)            #=> handing one to a C function is a later release
 
 A constructor stands on the right of an assignment and nowhere else: there is no name for the C array to be declared under otherwise.
 
-`CArray.jit_for` takes them. `jit_each`, `jit_map`, `jit_stencil` and `jit_function` take them in a later release, and a contraction takes none -- its body is one expression, so there is no run of statements for a workspace to be used by. A kernel that carries masks takes none either: a local array is cells and nothing beside them, so there is nowhere for a mask to go.
+`CArray.jit_for`, `jit_each`, `jit_map` and `jit_stencil` take them. The last three are where they are wanted most: a block with no index has no way to pick a row of captured workspace, so before this there was no place to put a window while it was being sorted.
+
+A `jit_function` body takes one in a later release. A contraction takes none -- its body is one expression, so there is no run of statements for a workspace to be used by. And a kernel that carries masks takes none either: a local array is cells and nothing beside them, so there is nowhere for a mask to go. A kernel carries masks when an operand has one, or when the block asks about `UNDEF`; `border: :mask` does **not** make one, the frame being marked before the loop runs and never reached by it, so a stencil with that border takes a local array like any other.
+
+In the whole-array spellings a name the block assigns may be an array where the block was written -- that is what `out = a + b` rests on. A name the block makes an array *under* is refused there: the one line would mean a declaration to this compiler and a write to that array's cell to a reader, and the two are different things. Rename one of them.
 
 **They are on the stack, so they are held to a size.** One array is held to 4 KiB and one kernel's arrays together to 16 KiB. Both numbers are provisional -- what a Ruby thread's stack actually is has not been measured -- and what the total does not count is a pasted `jit_function`'s own arrays, recursion, and whatever a future thread pool gives its threads. For anything larger, pass a captured array of workspace: it is on the heap and has no such limit.
 
@@ -166,7 +170,7 @@ A network has no branch in it at all. At nine cells, the helper compiles to 50 `
 
 All four are emitted as `static inline` helpers in the preamble, one per element type and, for a network, per length; the body carries the call. So `max(w) - min(w)` is one line with two calls in it, `c_source` stays readable, and the compiler has the length as a literal to propagate.
 
-They are `CArray.jit_for`'s for now, as local arrays are. `qsort` is not used anywhere -- its comparison goes through a function pointer, which ends inlining and makes the NaN rule a property of whoever wrote the callback.
+They are written wherever a local array is: `CArray.jit_for`, `jit_each`, `jit_map` and `jit_stencil`. A `jit_function` body takes them with local arrays, in a later release. `qsort` is not used anywhere -- its comparison goes through a function pointer, which ends inlining and makes the NaN rule a property of whoever wrote the callback.
 
 ### Postfix math
 

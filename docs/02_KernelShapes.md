@@ -375,23 +375,30 @@ CArray.jit_for(rows) { |i|                       # a tridiagonal solve per row
 
 An inner loop counts by the stride it was written with -- `(width-2).step(0, -1)` above is the pass back down, and it is the spelling an extent takes a direction in. The cell it reaches is bounds-checked before the kernel runs, as `i`'s is: its loop states its extent the same way an extent does. Two outer iterations landing on the same cell is not an ambiguity either -- the extent states the order, so the array holds what the same Ruby loop would have left in it.
 
-Which cells are the cell's own is decided by the axes the **outer** indices pick it by. So a read carrying an inner index has to walk those axes with the same outer index -- at whatever offset, `work[i-1, k]` being the row before this one and a recurrence like any other displaced read. Inside the row the body may do as it likes: sort it, walk it backwards, land on a position it works out. This is a median filter, which has no expression as an extra axis at all -- the window has to be somewhere while it is being sorted:
+Which cells are the cell's own is decided by the axes the **outer** indices pick it by. So a read carrying an inner index has to walk those axes with the same outer index -- at whatever offset, `work[i-1, k]` being the row before this one and a recurrence like any other displaced read. Inside the row the body may do as it likes: sort it, walk it backwards, land on a position it works out. A median filter is the shape that wants it, having no expression as an extra axis at all -- the window has to be somewhere while it is being sorted.
+
+A row of a captured array is one place to put it, and the body makes one itself where a name will do (see [Local arrays](03_SupportedFeatures.md#local-arrays)), which is shorter and is the only way in a spelling with no index to pick a row by:
 
 ```ruby
-CArray.jit_for(half...(n-half)) { |i|
-  (0...width).each { |k| window[i, k] = signal[i - half + k] }
-  (1...width).each { |k|                             # insertion sort, in place
-    key = window[i, k]
-    placed = k - 1
-    while placed >= 0 && window[i, placed] > key
-      window[i, placed+1] = window[i, placed]
-      placed = placed - 1
-    end
-    window[i, placed+1] = key
-  }
-  median[i] = window[i, half]
+median = CArray.jit_stencil(image, border: :clamp) { |a|
+  w = CArray.double(9)                    # nine doubles on this cell's stack
+  w[0] = a[-1,-1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+  w[3] = a[ 0,-1]; w[4] = a[ 0, 0]; w[5] = a[ 0, 1]
+  w[6] = a[ 1,-1]; w[7] = a[ 1, 0]; w[8] = a[ 1, 1]
+  sort(w)
+  w[4]
 }
 ```
+
+`sort(w)` is one of the functions the compiler brings with it (see [Intrinsics](03_SupportedFeatures.md#intrinsics)); at nine cells it is a comparator network with no branch in it. Written against a row of captured workspace instead, the same filter needs `work[rows, cols, 9]` -- 288 MB over a 2000x2000 image to hold 72 bytes at a time -- and `jit_stencil` cannot use one at all, its block having no index.
+
+**What the clearing costs.** `CArray.double(9)` starts its cells at zero every time the line runs, which for a body that writes all nine before reading any is work nobody asked for. Measured over the filter above on 2000x2000: **41.3 ns a cell, against `CArray.empty(:float64, [9])`'s 42.2** -- no difference, because the compiler sees the nine stores that follow and drops the clearing as dead. So the zeroed spelling is the one to write here, and it is the one that reads correctly.
+
+Where the clearing is *not* dead it is worth what it costs. A 256-cell histogram built per cell, of which the body writes one: **441.9 ns a cell against 403.8** for the same body with the clearing left out -- 38 ns, about 9% of it, and this time the compiler cannot remove it. That is also the measurement to read the other way round: a 256-cell workspace per cell costs ten times a nine-cell one (441.9 against 41.4 for the median above), and the array's size is the larger part of that bill, not the clearing.
+
+`CArray.empty(:type, [n])` is the spelling that skips it, for a body that writes every cell before reading any: reading one first is out of contract, the way reading under a mask is.
+
+The same row of a captured array is still the right answer for a workspace that outlives the cell, or one past the 4 KiB a local array is held to.
 
 What stays refused is the read that leaves the cell: `values[i] = ...` read at `values[j]` for an inner `j` reaches cells another outer iteration owns, and no evaluation order settles that. The message names the axis and what writes it.
 

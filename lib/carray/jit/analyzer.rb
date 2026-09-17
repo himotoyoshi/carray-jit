@@ -348,6 +348,20 @@ class CArray
         allocate.send(:scan_free_names, source, node)
       end
 
+      # The names the block makes an array of its own under.
+      #
+      # Read off the source rather than off a built analyzer, because the
+      # caller needs them before it has anything to build one with: in the
+      # whole-array spelling a name the block assigns may be an array outside,
+      # and whether to look this one up outside is exactly what this answers.
+      # The compatibility spellings count too, so that `CArray.zeros(4)` is
+      # refused by the reader that knows why rather than by a broadcast.
+      def self.local_array_names (source, node: nil)
+        analyzer = allocate
+        block = node || analyzer.send(:parse_block, source)
+        analyzer.send(:scan_local_array_names, block.body)
+      end
+
       # `rank` is given only for a block that takes no parameters and writes
       # `out[] = a[] + b[]`.  There the rank is a property of the arrays
       # rather than of the block, so it arrives from the caller and the loop
@@ -621,6 +635,19 @@ class CArray
         node.is_a?(Prism::CallNode) && node.receiver.nil? && node.name == :raise
       end
 
+      def scan_local_array_names (node)
+        return [] unless node
+        names = []
+        if node.is_a?(Prism::LocalVariableWriteNode) &&
+           self.class.local_array_constructor?(node.value)
+          names << node.name
+        end
+        node.compact_child_nodes.each { |child|
+          names.concat(scan_local_array_names(child))
+        }
+        names.uniq
+      end
+
       def names_constants (node)
         return [] unless node
         return [] if raise_call?(node)
@@ -696,6 +723,16 @@ class CArray
         built = statements[0..-2].map { |node| build_statement(node) }
         if map_assignment
           built << build_statement(last)
+          # `w = CArray.double(4)` as the last line: the block's value in Ruby
+          # is the array, and a cell of the result has nowhere to put one.
+          if built.last.is_a?(LocalArrayDeclaration)
+            raise Unsupported.new(
+              "this block ends by making `#{built.last.name}`, so its value " \
+              "is an array and there is no cell for one to go in; end with " \
+              "the number you want -- a cell of it, or `sum(#{built.last.name})` " \
+              "and its kin",
+              last.location)
+          end
           @map_value = build_name_read(last.name, last.location)
         else
           built << (returns_value ? build(last) : build_statement(last))
@@ -1839,17 +1876,11 @@ class CArray
       LOCAL_ARRAY_ELSEWHERE = {
         :contract => ["a contraction's body", nil],
         :function => ["the body of a compiled function", "a later release"],
-        :stencil  => ["a `jit_stencil` block", "a later release"],
-        :map      => ["a `jit_map` block", "a later release"],
-        :each     => ["a `jit_each` block", "a later release"],
       }.freeze
 
       def refuse_a_local_array_in_this_spelling (node)
         mode = if @contract          then :contract
                elsif @function       then :function
-               elsif @windows.any?   then :stencil
-               elsif @map            then :map
-               elsif @whole_array    then :each
                end
         return unless mode
         where, when_ = LOCAL_ARRAY_ELSEWHERE.fetch(mode)

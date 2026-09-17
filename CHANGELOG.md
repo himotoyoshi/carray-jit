@@ -39,6 +39,20 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a local array, and the four intrinsics over one, may be written in a
+  `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil` block as well as
+  in `CArray.jit_for`. These are the spellings that wanted one: a block with
+  no index cannot pick a row of a captured array, so a `jit_stencil` median
+  filter had nowhere to put its window -- it is now nine doubles on the cell's
+  stack and `sort(w)`. `border: :mask` takes one, the frame being marked
+  before the loop runs rather than carried through it. A name the block makes
+  an array under is refused where the block also closes over an array of that
+  name, since in these spellings an assignment writes that array's cell;
+  rename one of the two. A `jit_map` block may not end by making an array, its
+  value having to fit in a cell. Still excluded: a `jit_function` body, a
+  contraction, more than one axis, passing one to a C function, and a kernel
+  that carries masks.
+
 - New: `sum(w)`, `min(w)`, `max(w)` and `sort(w)` inside a `CArray.jit_for`
   block, over a local array of one axis. They are bare calls, the compiler's
   own names, rather than methods on the array -- `w.sum` is refused, and

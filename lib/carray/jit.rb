@@ -1116,7 +1116,17 @@ class CArray
         # written.  A name the block assigns is not free in it, so it is
         # looked up here rather than by split_captures -- and a name that is
         # not an array outside stays what it looks like, a local.
-        arrays = arrays.merge(assigned_arrays(assigned, binding_of(block)))
+        #
+        # Except a name the block makes an array of its own under: there the
+        # assignment is a declaration and not a write to anybody's cell, so it
+        # is taken out before the lookup.  Left in, and with an array of that
+        # name outside, the broadcast either fails on a shape nobody wrote or
+        # -- where the shapes happen to agree -- quietly makes the local array
+        # an operand and part of the cache key.  So it is refused here, which
+        # is before the broadcast.
+        made = Analyzer.local_array_names(source, node: node)
+        refuse_a_shadowed_array(made, binding_of(block))
+        arrays = arrays.merge(assigned_arrays(assigned - made, binding_of(block)))
         if arrays.empty?
           raise Unsupported, "the block reaches no array"
         end
@@ -1505,6 +1515,25 @@ class CArray
       # Of the names the block assigns, the ones that are arrays where it was
       # written.  Anything else -- a name that holds a number, or no name at
       # all -- is a local of the block's own.
+      # A name that is both an array this block makes and an array where the
+      # block was written.  In the whole-array spelling an assignment writes
+      # the outer array's cell, so the one line says two different things
+      # depending on which reading you take -- and neither of them is what the
+      # other reader will assume.  Refused rather than chosen between.
+      def refuse_a_shadowed_array (made, binding)
+        shadowed = made.find { |name|
+          binding.local_variable_defined?(name) &&
+            binding.local_variable_get(name).is_a?(CArray)
+        }
+        return unless shadowed
+        raise Unsupported,
+              "`#{shadowed}` is made in this block with `CArray.double` or " \
+              "its kin, and the block also closes over an array named " \
+              "`#{shadowed}`; in this spelling an assignment writes that " \
+              "array's cell, so the line means one thing to a reader and " \
+              "another to this compiler. Rename one of the two"
+      end
+
       def assigned_arrays (names, binding)
         names.each_with_object({}) do |name, found|
           next unless binding.local_variable_defined?(name)

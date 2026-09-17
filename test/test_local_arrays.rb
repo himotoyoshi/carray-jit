@@ -867,26 +867,9 @@ class TestLocalArrays < Minitest::Test
 
   # ---------- the entry points that do not take one yet ----------
 
-  def test_the_other_entry_points_say_which_release_takes_a_local_array
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
-
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
-    end
-    assert_match(/local array/, error.message)
-
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_map { w = CArray.double(2); w[0] = a; w[0] }
-    end
-    assert_match(/local array/, error.message)
-
-    image = CArray.double(4, 4).seq!
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_stencil(image) { |win| w = CArray.double(2); w[0] = win[0, 0]; w[0] }
-    end
-    assert_match(/local array/, error.message)
-
+  # `jit_each`, `jit_map` and `jit_stencil` take one; those are tested below.
+  # These two do not, each for its own reason.
+  def test_a_function_body_says_which_release_takes_a_local_array
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double f(double x)") { |x|
         w = CArray.double(2)
@@ -894,8 +877,11 @@ class TestLocalArrays < Minitest::Test
         w[0]
       }
     end
-    assert_match(/local array/, error.message)
+    assert_match(/the body of a compiled function takes in a later release/,
+                 error.message)
+  end
 
+  def test_a_contraction_says_why_it_takes_none
     x = CArray.double(4, 4).seq!
     y = CArray.double(4, 4).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
@@ -904,10 +890,453 @@ class TestLocalArrays < Minitest::Test
         x[i, k] * y[k, j]
       }
     end
-    assert_match(/local array/, error.message)
+    assert_match(/a contraction's body is one expression/, error.message)
   end
 
   # ---------- the cache ----------
+
+  # ---------- the other entry points over cells ----------
+
+  # `jit_each`, `jit_map` and `jit_stencil` give a block no index, which is
+  # what a row of captured workspace needed one for.  So these are the
+  # spellings a local array was wanted in most: a window has no index to pick
+  # a row by at all.
+
+  def test_a_local_array_in_a_jit_each_block
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    CArray.jit_each {
+      w = CArray.double(3)
+      w[0] = a
+      w[1] = a * 2.0
+      w[2] = a * 3.0
+      out = w[0] + w[1] + w[2]
+    }
+    reference = (0...6).map { |k| a[k] + a[k] * 2.0 + a[k] * 3.0 }
+    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+  end
+
+  def test_a_local_array_in_a_jit_map_block
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.jit_map {
+      w = CArray.double(3)
+      w[0] = a
+      w[1] = a * 2.0
+      w[2] = a * 3.0
+      w[0] + w[1] + w[2]
+    }
+    reference = (0...6).map { |k| a[k] + a[k] * 2.0 + a[k] * 3.0 }
+    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+  end
+
+  def test_a_local_array_in_a_jit_stencil_block
+    image = CArray.double(6, 6).seq!
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      w = CArray.double(3)
+      w[0] = a[-1, 0]
+      w[1] = a[0, 0]
+      w[2] = a[1, 0]
+      w[0] + w[1] + w[2]
+    }
+    reference = CArray.double(6, 6)
+    6.times { |row| 6.times { |column|
+      above = image[[row - 1, 0].max, column]
+      below = image[[row + 1, 5].min, column]
+      reference[row, column] = above + image[row, column] + below
+    } }
+    assert_equal(reference.to_a, out.to_a)
+  end
+
+  # Example 1 of the proposal: the 3x3 median filter, which is why the window
+  # spelling wanted one.  Written both ways -- the insertion sort spelled out,
+  # and `sort(w)` -- and both held to the same Ruby loop.
+  def median_reference (image)
+    rows, columns = image.dim
+    reference = CArray.double(rows, columns)
+    rows.times { |row| columns.times { |column|
+      window = (-1..1).flat_map { |dr| (-1..1).map { |dc|
+        image[[[row + dr, 0].max, rows - 1].min,
+              [[column + dc, 0].max, columns - 1].min]
+      } }
+      reference[row, column] = window.sort[4]
+    } }
+    reference
+  end
+
+  def test_the_median_filter_with_the_insertion_sort_written_out
+    image = CArray.double(7, 7).seq!
+    image.map! { |value| (value * 13) % 29 }
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      (1...9).each { |k|
+        key = w[k]
+        j = k - 1
+        while j >= 0 && w[j] > key
+          w[j + 1] = w[j]
+          j -= 1
+        end
+        w[j + 1] = key
+      }
+      w[4]
+    }
+    assert_equal(median_reference(image).to_a, out.to_a)
+  end
+
+  def test_the_median_filter_with_sort
+    image = CArray.double(7, 7).seq!
+    image.map! { |value| (value * 13) % 29 }
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      sort(w)
+      w[4]
+    }
+    assert_equal(median_reference(image).to_a, out.to_a)
+  end
+
+  # Example 3: the median of five ensemble members, per cell.  `jit_map` has
+  # no index either, and the five members are five operands.
+  def ensemble_reference (members)
+    count = members.first.elements
+    CArray.double(count) { (0...count).map { |k| members.map { |m| m[k] }.sort[2] } }
+  end
+
+  def test_the_ensemble_median_with_the_insertion_sort_written_out
+    m1 = CArray.double(8).seq!(3.0, 7.0).map! { |v| v % 29 }
+    m2 = CArray.double(8).seq!(11.0, 5.0).map! { |v| v % 29 }
+    m3 = CArray.double(8).seq!(2.0, 13.0).map! { |v| v % 29 }
+    m4 = CArray.double(8).seq!(23.0, 3.0).map! { |v| v % 29 }
+    m5 = CArray.double(8).seq!(17.0, 19.0).map! { |v| v % 29 }
+    out = CArray.jit_map {
+      w = CArray.double(5)
+      w[0] = m1; w[1] = m2; w[2] = m3; w[3] = m4; w[4] = m5
+      (1...5).each { |k|
+        key = w[k]
+        j = k - 1
+        while j >= 0 && w[j] > key
+          w[j + 1] = w[j]
+          j -= 1
+        end
+        w[j + 1] = key
+      }
+      w[2]
+    }
+    assert_arrays_bits_equal(ensemble_reference([m1, m2, m3, m4, m5]), out)
+  end
+
+  def test_the_ensemble_median_with_sort
+    m1 = CArray.double(8).seq!(3.0, 7.0).map! { |v| v % 29 }
+    m2 = CArray.double(8).seq!(11.0, 5.0).map! { |v| v % 29 }
+    m3 = CArray.double(8).seq!(2.0, 13.0).map! { |v| v % 29 }
+    m4 = CArray.double(8).seq!(23.0, 3.0).map! { |v| v % 29 }
+    m5 = CArray.double(8).seq!(17.0, 19.0).map! { |v| v % 29 }
+    out = CArray.jit_map {
+      w = CArray.double(5)
+      w[0] = m1; w[1] = m2; w[2] = m3; w[3] = m4; w[4] = m5
+      sort(w)
+      w[2]
+    }
+    assert_arrays_bits_equal(ensemble_reference([m1, m2, m3, m4, m5]), out)
+  end
+
+  # ---------- the two paths the bounds check has to survive ----------
+
+  # `Kernel#verify` is not on either of them: a swept pass never calls it, and
+  # a stencil with a border calls it with `reach: false`.  A local array's
+  # bounds were deliberately put somewhere else -- settled as the block is
+  # read, or checked at the access -- so both paths keep them.  These say so.
+
+  def test_the_swept_path_is_the_one_under_test
+    a = CArray.double(64).seq!(1.0)
+    out = CArray.double(64)
+    assert(CArray::JIT::Sweep.available?,
+           "this CArray has no ca_call_cslab, so there is no swept path here")
+    assert(CArray::JIT.send(:sweepable_pass?, { :a => a, :out => out },
+                            [64], false),
+           "these operands should take the swept path")
+    kernel = CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
+    assert_equal(1, kernel.rank, "a swept pass is compiled flat")
+  end
+
+  def test_a_read_off_the_end_on_the_swept_path_raises
+    a = CArray.int64(64).seq!(70)
+    out = CArray.double(64)
+    assert(CArray::JIT.send(:sweepable_pass?, { :a => a, :out => out },
+                            [64], false))
+    assert_raises(IndexError) do
+      CArray.jit_each {
+        w = CArray.double(4)
+        out = w[a]
+      }
+    end
+  end
+
+  def test_a_write_off_the_end_on_the_swept_path_writes_nothing
+    positions = CArray.int64(64).seq!(70)
+    seen = CArray.double(64)
+    assert(CArray::JIT.send(:sweepable_pass?,
+                            { :positions => positions, :seen => seen },
+                            [64], false))
+    assert_raises(IndexError) do
+      CArray.jit_each {
+        w = CArray.double(4)
+        w[0] = 11.0
+        w[positions] = 99.0
+        seen = w[0]
+      }
+    end
+  end
+
+  def test_a_read_off_the_end_on_a_bordered_path_raises
+    image = CArray.double(8, 8).seq!
+    assert_raises(IndexError) do
+      CArray.jit_stencil(image, border: :clamp) { |a|
+        w = CArray.double(4)
+        j = 9
+        w[j]
+      }
+    end
+  end
+
+  def test_a_write_off_the_end_on_a_bordered_path_writes_nothing
+    image = CArray.double(8, 8).seq!
+    assert_raises(IndexError) do
+      CArray.jit_stencil(image, border: :clamp) { |a|
+        w = CArray.double(4)
+        w[0] = 11.0
+        j = 9
+        w[j] = 99.0
+        w[0]
+      }
+    end
+  end
+
+  # (a) is settled as the block is read, so it does not depend on which
+  # driver would have run.
+  def test_the_reach_is_refused_in_a_stencil_too
+    image = CArray.double(8, 8).seq!
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_stencil(image, border: :clamp) { |a|
+        t = CArray.double(4)
+        (0...4).each { |k| t[k + 1] = a[0, 0] }
+        t[0]
+      }
+    end
+    assert_match(/`t\[k \+ 1\]` reaches cell 4/, error.message)
+  end
+
+  def test_the_reach_is_refused_in_a_jit_each_block_too
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_each {
+        t = CArray.double(4)
+        (0...4).each { |k| t[k + 1] = a }
+        out = t[0]
+      }
+    end
+    assert_match(/reaches cell 4/, error.message)
+  end
+
+  # ---------- cleared at every cell ----------
+
+  def test_the_zeroed_family_starts_from_zero_at_every_cell
+    a = CArray.int64(6).seq!(1)
+    out = CArray.int64(6)
+    CArray.jit_each {
+      counts = CArray.int64(3)
+      counts[0] += a
+      out = counts[0]
+    }
+    assert_equal(a.to_a, out.to_a,
+                 "each cell has to start from a cleared array")
+  end
+
+  def test_the_zeroed_family_starts_from_zero_at_every_cell_of_a_stencil
+    image = CArray.int64(5, 5)
+    image.seq!(1)
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      counts = CArray.int64(3)
+      counts[0] += a[0, 0]
+      counts[0]
+    }
+    assert_equal(image.to_a, out.to_a)
+  end
+
+  # ---------- the name the block makes, against a name outside ----------
+
+  def test_an_outer_array_of_the_same_name_is_refused_before_the_broadcast
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    w = CArray.double(9)          # a different shape: the broadcast would fail
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_each { w = CArray.double(9); out = a * 1.0 }
+    end
+    assert_match(/`w` is made in this block/, error.message)
+    assert_match(/closes over an array named `w`/, error.message)
+    assert_match(/Rename one/, error.message)
+    refute_equal(9, w.elements + 0 - 9, "the outer array is untouched")
+  end
+
+  def test_an_outer_array_of_the_same_name_is_refused_when_the_shapes_agree
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    w = CArray.double(6)          # the same shape: it would slip in unnoticed
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_each { w = CArray.double(6); out = a * 1.0 }
+    end
+    assert_match(/`w` is made in this block/, error.message)
+    assert_equal([0.0] * 6, w.to_a, "the outer array is untouched")
+  end
+
+  # `jit_map` reaches the probe before it reaches the kernel, so the check has
+  # to be in front of that too.
+  def test_an_outer_array_of_the_same_name_is_refused_in_a_map
+    a = CArray.double(6).seq!(1.0)
+    w = CArray.double(9)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { w = CArray.double(9); a * 1.0 }
+    end
+    assert_match(/`w` is made in this block/, error.message)
+  end
+
+  def test_the_probe_reads_a_body_that_makes_an_array
+    # The probe types the block before there is a result array to collect
+    # into, so it has to be able to read the constructor at all.
+    a = CArray.float32(6).seq!(1.0)
+    out = CArray.jit_map {
+      w = CArray.float32(2)
+      w[0] = a
+      w[1] = a * 2.0
+      w[0] + w[1]
+    }
+    assert_equal("float32", out.data_type_name,
+                 "the probe should have typed this from the local array")
+  end
+
+  def test_a_name_the_block_makes_is_not_an_operand
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    kernel = CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
+    refute_includes(kernel.arrays, :w,
+                    "a local array is not one of the kernel's operands")
+  end
+
+  # ---------- masks ----------
+
+  def test_a_masked_operand_and_a_local_array_do_not_meet_in_a_jit_each_block
+    a = CArray.double(6).seq!(1.0)
+    a[2] = UNDEF
+    out = CArray.double(6)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
+    end
+    assert_match(/`w` is a local array/, error.message)
+    assert_match(/carries a mask/, error.message)
+    assert_match(/strip_mask/, error.message)
+  end
+
+  def test_a_block_that_asks_about_undef_and_a_local_array_do_not_meet_in_a_map
+    a = CArray.double(6).seq!(1.0)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { w = CArray.double(2); w[0] = (a == UNDEF ? 0.0 : a); w[0] }
+    end
+    assert_match(/`w` is a local array/, error.message)
+    assert_match(/asks about\s+UNDEF/, error.message)
+    refute_match(/strip_mask/, error.message)
+  end
+
+  def test_a_masked_operand_and_a_local_array_do_not_meet_in_a_stencil
+    image = CArray.double(6, 6).seq!
+    image[2, 2] = UNDEF
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_stencil(image, border: :clamp) { |a|
+        w = CArray.double(2)
+        w[0] = a[0, 0]
+        w[0]
+      }
+    end
+    assert_match(/`w` is a local array/, error.message)
+    assert_match(/carries a mask/, error.message)
+  end
+
+  # `border: :mask` is not a masked kernel: the frame is marked before the
+  # loop runs and the loop never reaches it, so what the kernel carries is
+  # what the operands carry.  A local array is therefore fine under it.
+  def test_a_frame_border_is_not_a_masked_kernel
+    field = CArray.double(6, 6).seq!
+    out = CArray.jit_stencil(field, border: :mask) { |a|
+      w = CArray.double(9)
+      w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
+      w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
+      w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
+      max(w) - min(w)
+    }
+    assert(out.has_mask?, "`border: :mask` marks the frame")
+    assert_equal(UNDEF, out[0, 0], "the frame is marked, not computed")
+    # The interior is the spread of the nine cells around it.
+    (1..4).each { |row| (1..4).each { |column|
+      window = (-1..1).flat_map { |dr| (-1..1).map { |dc| field[row + dr, column + dc] } }
+      assert_equal(window.max - window.min, out[row, column], "cell #{row},#{column}")
+    } }
+  end
+
+  def test_every_border_takes_a_local_array
+    field = CArray.double(6, 6).seq!
+    [:mask, :skip, :zero, :clamp, :wrap].each do |border|
+      out = CArray.jit_stencil(field, border: border) { |a|
+        w = CArray.double(2)
+        w[0] = a[0, 0]
+        w[1] = a[0, 0] * 2.0
+        w[0] + w[1]
+      }
+      assert_equal(field[3, 3] * 3.0, out[3, 3], "border: #{border.inspect}")
+    end
+  end
+
+  # ---------- what a map block may end with ----------
+
+  def test_a_map_block_may_not_end_by_making_an_array
+    a = CArray.double(6).seq!(1.0)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { s = a * 1.0; v = CArray.double(2) }
+    end
+    assert_match(/ends by making `v`/, error.message)
+    assert_match(/no cell for one to go in/, error.message)
+  end
+
+  def test_a_map_block_may_not_end_with_the_array_read_bare
+    a = CArray.double(6).seq!(1.0)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { v = CArray.double(2); v[0] = a; v }
+    end
+    assert_match(/`v` is a local array; index it/, error.message)
+  end
+
+  # ---------- still refused, as in the first release ----------
+
+  def test_two_axes_are_still_refused_in_the_new_entry_points
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_each { m = CArray.double(3, 4); out = m[0] }
+    end
+    assert_match(/one axis in this release/, error.message)
+  end
+
+  def test_a_c_function_is_still_refused_in_the_new_entry_points
+    f = CArray.jit_function("double s2(const double x[2])") { |x| x[0] + x[1] }
+    a = CArray.double(6).seq!(1.0)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { w = CArray.double(2); w[0] = a; w[1] = a; f.call(w) }
+    end
+    assert_match(/handing one to a C function is a later release/, error.message)
+  end
 
   def test_two_shapes_of_one_block_are_two_kernels
     first = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
