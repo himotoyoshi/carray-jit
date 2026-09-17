@@ -39,6 +39,21 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `sum(w)`, `min(w)`, `max(w)` and `sort(w)` inside a `CArray.jit_for`
+  block, over a local array of one axis. They are bare calls, the compiler's
+  own names, rather than methods on the array -- `w.sum` is refused, and
+  `sum = 0.0` beside `sum(w)` is still a local. `sum` accumulates in the
+  element's computation type in index order; `min` and `max` skip a NaN
+  wherever it stands and answer `Infinity` / `-Infinity` for an array of
+  nothing but NaN, which is what `CArray#min` and `#max` answer. `sort`
+  is a statement and orders the cells ascending with every NaN after every
+  number, as `CArray#sort` does; the relative order of `-0.0` and `0.0` is
+  not promised. Up to 16 cells it emits a comparator network with no branch
+  in it, above that an insertion sort. Excluded for now: a captured array
+  (a whole-array reduction is `CArray#sum`), more than one axis, two
+  arguments, boolean for all four, Complex for `min` / `max` / `sort`, and
+  the other entry points.
+
 - New: a `CArray` made inside a `CArray.jit_for` block is a C array on the
   block's stack -- `w = CArray.double(9)`, `CArray.new(:int64, [256])` or
   `CArray.empty(:float64, [9])`, read and written at a subscript. One axis,

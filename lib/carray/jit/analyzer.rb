@@ -1203,6 +1203,9 @@ class CArray
             "kernel never is; write the assignment out",
             node.location)
         when Prism::CallNode
+          if (intrinsic = build_intrinsic_statement(node))
+            return intrinsic
+          end
           if node.receiver.nil? && node.name == :printf
             return build_print(node)
           end
@@ -1534,6 +1537,107 @@ class CArray
 
       def statements_of (node)
         node ? node.body : []
+      end
+
+      # ---- the functions the compiler brings with it ----
+
+      # Written as bare calls, the way `random(rng: r)` is: names of this
+      # compiler's own rather than methods on an array, so that what each one
+      # means is settled here instead of promising CArray's method semantics
+      # -- `axis:`, masks skipped, an identity for an empty array, a CScalar
+      # or a number back, one type promoted to another.
+      #
+      # A bare name with no arguments is a capture (`sum = 0.0` beside
+      # `sum(w)` is a local and reads as one), and a name with a receiver is a
+      # call to whatever holds it (`sum.call(x)`), so neither collides.
+      INTRINSIC_VALUES = [:sum, :min, :max].freeze
+      INTRINSIC_STATEMENTS = [:sort].freeze
+      INTRINSIC_NAMES = (INTRINSIC_VALUES + INTRINSIC_STATEMENTS).freeze
+
+      # `sum(w)` / `min(w)` / `max(w)` in an expression, or nil where this
+      # call is not one of them.
+      def build_intrinsic_call (node)
+        return nil unless intrinsic_spelling?(node)
+        if INTRINSIC_STATEMENTS.include?(node.name)
+          raise Unsupported.new(
+            "`#{node.name}` rearranges the array and has no value to put " \
+            "anywhere; write it on a line of its own, then read the cells " \
+            "you want",
+            node.location)
+        end
+        return nil unless INTRINSIC_VALUES.include?(node.name)
+        name, storage, shape = intrinsic_array(node)
+        IntrinsicCall.new(node.name, name, storage, shape, node.location)
+      end
+
+      # `sort(w)` standing as a statement.
+      def build_intrinsic_statement (node)
+        return nil unless intrinsic_spelling?(node)
+        if INTRINSIC_VALUES.include?(node.name)
+          raise Unsupported.new(
+            "`#{node.name}` works out a value, and standing on a line of its " \
+            "own it puts that value nowhere; assign it, as in " \
+            "`total = #{node.name}(...)`",
+            node.location)
+        end
+        return nil unless INTRINSIC_STATEMENTS.include?(node.name)
+        name, storage, shape = intrinsic_array(node)
+        # Deliberately not `@calls_for_effect`: rearranging an array the body
+        # made leaves nothing outside the kernel, so a kernel whose only work
+        # is a `sort` has still put its work nowhere and is told so.
+        IntrinsicStatement.new(node.name, name, storage, shape, node.location)
+      end
+
+      def intrinsic_spelling? (node)
+        node.is_a?(Prism::CallNode) && node.receiver.nil? && node.block.nil? &&
+          INTRINSIC_NAMES.include?(node.name) && !node.arguments.nil?
+      end
+
+      # The one argument, which is a local array of one axis.
+      def intrinsic_array (node)
+        arguments = node.arguments ? node.arguments.arguments : []
+        unless arguments.size == 1
+          raise Unsupported.new(
+            "`#{node.name}` takes one local array, and #{arguments.size} " \
+            "#{arguments.size == 1 ? 'argument was' : 'arguments were'} " \
+            "given" +
+            (node.name == :min || node.name == :max ?
+               ". For the #{node.name} of two numbers write " \
+               "`x #{node.name == :min ? '<' : '>'} y ? x : y`, and to hold " \
+               "a value between two bounds write `x.clamp(lo, hi)`" : ""),
+            node.location)
+        end
+        argument = arguments.first
+        name = local_array_name(argument)
+        refuse_an_intrinsic_argument(node, argument) unless name
+        storage, shape = local_array_in_sight(name)
+        unless shape.size == 1
+          raise Unsupported.new(
+            "`#{name}` has #{shape.size} axes, and `#{node.name}` takes an " \
+            "array of one axis in this release",
+            node.location)
+        end
+        [name, storage, shape]
+      end
+
+      # What was passed instead, said in the terms it was written in.
+      def refuse_an_intrinsic_argument (node, argument)
+        passed = captured_name(argument)
+        if passed && @array_names.include?(passed)
+          raise Unsupported.new(
+            "`#{node.name}` takes a local array -- one this block made with " \
+            "`CArray.double(n)` or its kin -- and `#{passed}` is an array " \
+            "the block closed over. Walking all of it at every cell is a " \
+            "pass over the whole array per cell, which is not what the line " \
+            "looks like it costs; `#{passed}.#{node.name}` outside the " \
+            "kernel says what it costs, and a loop written out says it too",
+            node.location)
+        end
+        raise Unsupported.new(
+          "`#{node.name}` takes a local array -- one this block made with " \
+          "`CArray.double(n)` or its kin -- named on its own, and " \
+          "`#{argument.slice}` is not one",
+          node.location)
       end
 
       # ---- the arrays a body makes for itself ----
@@ -2298,6 +2402,9 @@ class CArray
       def build_call (node)
         if node.receiver.nil? && node.arguments.nil? && node.block.nil?
           return build_name_read(node.name, node.location)
+        end
+        if (intrinsic = build_intrinsic_call(node))
+          return intrinsic
         end
         refuse_a_constructor_in_an_expression(node)
         # A method on a local array.  The operators are left alone so that

@@ -125,6 +125,49 @@ A constructor stands on the right of an assignment and nowhere else: there is no
 
 What a local array buys over that captured array is the memory. A 3x3 median filter over a 2000x2000 image needs nine doubles at a time; a row of workspace per cell is `work[2000, 2000, 9]`, which is 288 MB to hold 72 bytes in use. And `jit_stencil` cannot use one at all, its block having no index to pick a row by -- which is the release this is heading for.
 
+### Intrinsics
+
+Four functions the compiler brings with it, over a local array:
+
+```ruby
+s = sum(w)          # the value
+a = min(w)
+b = max(w)
+sort(w)             # a statement: it rearranges `w` and has no value
+```
+
+They are written as bare calls, the way `random(rng: r)` is, and not as methods on the array. `w.sum` is refused, and that is the point: writing `w.sum` would promise CArray's `sum` -- an `axis:` keyword, masked cells skipped, an identity for an empty array, a CScalar or a number back, one type promoted to another -- and every one of those would then have to be honoured or explained. A bare name is this compiler's own, so what it means is settled here.
+
+The name does not collide with anything the block writes. `sum = 0.0` beside `sum(w)` is a local and reads as one, because a bare name with no arguments is a capture; `sum.call(x)` is a call to whatever `sum` holds, because a name with a receiver is. Only the receiverless call with arguments is the intrinsic.
+
+**What they take.** One local array, of one axis, named on its own. A captured array is refused, and the message says why: walking all of it at every cell is a pass over the whole array per cell, which is not what the line looks like it costs. Reducing a whole array is `CArray#sum` outside the kernel. A scalar, an expression and two arguments are all refused -- for the minimum of two numbers write `x < y ? x : y`, and to hold a value between bounds write `x.clamp(lo, hi)`.
+
+**`sum`** accumulates in the element's computation type, in index order from the first cell: an int32 array sums in `int64_t`, a float32 array in `float`. It is the same loop written out, in the same order, so the last bit is the same one -- no partial sums, unlike a reduction over a captured array, because a local array is small enough that splitting buys nothing and would change the answer. An integer sum wraps where the width wraps. A boolean array is refused: CArray reads the sum of one as a count, and counting is a meaning this would be borrowing rather than deciding. Count into an integer array and sum that.
+
+**`min` and `max`** answer what CArray's own `min` and `max` answer. A NaN never displaces the accumulator, so it is skipped wherever it stands -- first, middle or last:
+
+```ruby
+CArray.double(3) { [Float::NAN, 1.0, 2.0] }.min   #=> 1.0
+```
+
+and an array of nothing but NaN comes back holding the limit the accumulator started from -- `Infinity` for `min`, `-Infinity` for `max`, which is again CArray's answer. `fmin` and `fmax` are not used anywhere: they answer the *other* number when one is a NaN, which drops a cell rather than skipping it. A Complex array is refused, Ruby not ordering Complex numbers either, and so is a boolean one.
+
+**`sort`** puts the cells in ascending order where they stand. It is a statement and never a value; writing `x = sort(w)` is refused, and so is `sort(w)` in the middle of an expression. Every NaN ends up after every number, which is where CArray's own sort puts them. The relative order of `-0.0` and `0.0` is not promised -- the comparison is `<`, which reads them as equal -- and that is the one place this compiler compares floats by value rather than bit for bit; CArray's sort takes the same licence.
+
+Which algorithm is emitted is decided by the length, which the block wrote:
+
+| Cells | What is emitted |
+|---|---|
+| 1 | nothing: one cell is in order |
+| 2 to 16 | a **comparator network** -- a fixed sequence of compare-exchanges, the smallest number known for that length (25 at nine cells, 60 at sixteen) |
+| 17 and up | an **insertion sort**, which is a loop |
+
+A network has no branch in it at all. At nine cells, the helper compiles to 50 `fcsel` instructions and zero branches on arm64, which is why it costs the same whatever the data is: measured over 100,000 rows of nine shuffled doubles it sorts a row in 42 ns against the insertion sort's 70, and at sixteen cells 55 ns against 159. The insertion sort is adaptive and wins on data that is already in order -- 7 ns at nine cells -- which is the case a sort is not usually reached for.
+
+All four are emitted as `static inline` helpers in the preamble, one per element type and, for a network, per length; the body carries the call. So `max(w) - min(w)` is one line with two calls in it, `c_source` stays readable, and the compiler has the length as a literal to propagate.
+
+They are `CArray.jit_for`'s for now, as local arrays are. `qsort` is not used anywhere -- its comparison goes through a function pointer, which ends inlining and makes the NaN rule a property of whoever wrote the callback.
+
 ### Postfix math
 
 `CArray::CoreExtensions` is a refinement that puts `sqrt`, `tanh` and the rest on `Float` and `Integer`, so that one formula reads the same whether it is applied to a scalar or to a whole array:
@@ -778,6 +821,7 @@ Anything outside it raises `CArray::JIT::Unsupported`, naming the construct and 
 - `a[i - c]` and `a[i + c]`, with `c` a non-negative integer literal or an integer built from literals and captured integers, one subscript per axis of the array; a constant subscript pins an axis, and a computed one gathers or scatters
 - `x.nan?` and `x.finite?`, C's `isnan` and `isfinite`, answering true or false as Ruby's do. `nan?` is a Float's: an Integer and a Complex have no method by that name and raise `NoMethodError` in Ruby, so both are refused. `finite?` answers for all three, a Complex's being both parts finite as Ruby asks it. `infinite?` is **not** here -- it answers nil, 1 or -1 rather than true or false, and a kernel has no nil; ask `x.abs == Float::INFINITY`, or `x == Float::INFINITY` where the sign is the question. `negative?`, `positive?` and `zero?` are not here either, for the reason `signbit` is not: the comparison is the thing, and it is already in the subset
 - `x.clamp(low, high)`, which answers the value or whichever bound it ran past. All three have to be the same *class* -- Ruby hands back the receiver in one branch and a bound in the other, so `5.clamp(0.0, 3.0)` is the Float 3.0 where `1.clamp(0.0, 3.0)` is the Integer 1, and no type assigned before the loop runs is both. Two widths of one class are not that case: a float32 cell is a Ruby Float as a double is, so `f[i].clamp(0.0, 1.0)` keeps the cell's width. The two things Ruby raises `ArgumentError` for are raised here too -- bounds the wrong way round, and a NaN that cannot be ordered -- with Ruby's class; the message names the reason rather than the value, the error slot carrying a code and not a number. A cell with no value in it does not raise, which is the rule the division helpers already keep. The range form, `x.clamp(0.0..1.0)`, is not in the subset
+- `sum(w)`, `min(w)`, `max(w)` and `sort(w)` over a local array of one axis -- bare calls, the compiler's own names rather than methods on the array. The first three are expressions and `sort` is a statement (see [Intrinsics](#intrinsics))
 - `%`, which floors as Ruby's does rather than truncating as C's does
 - `x += e` and the rest of the operator assignments, on a local, on a cell (`work[i, k] += e`) and on a CScalar; each is the assignment it stands for, so a fold written with `+=` is still split into partial sums. `||=` and `&&=` are refused, being about nil and false rather than about arithmetic
 - `& | ^ ~ << >>` on integers, and `& | ^` on booleans; a shift is C's shift, which is what CArray's own `<<` compiles to
@@ -789,7 +833,7 @@ Anything outside it raises `CArray::JIT::Unsupported`, naming the construct and 
 
 **Rejected**
 
-Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symbols, Ruby arrays, method definitions, `eval`, method calls outside the table above, writing a cell displaced from the one the loop is on -- `out[i + 1]`, which walks *and* lands where another iteration walks, so the order decides which survives -- `break` in the kernel block, `break x` and `next x`, `rand` and every other draw from a generator Ruby owns (draw from a `CArray::Rng` instead, or fill an array with `CArray#random!` and read a cell of it -- see [Known limitations](#known-limitations)), `if` without `else` in *expression* position, arithmetic on a boolean cell, comparing one with a number, and captured scalars that are not Float, Integer or Complex. On a Complex: ordering comparisons, `%`, the rounding methods and the bit operators -- which is what Ruby's Complex refuses too.
+Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symbols, Ruby arrays, method definitions, `eval`, method calls outside the table above, a method on an array -- `w.sum`, `w.max`, `w.sort!` -- which is written as a function instead (`sum(w)`, and see [Intrinsics](#intrinsics)), writing a cell displaced from the one the loop is on -- `out[i + 1]`, which walks *and* lands where another iteration walks, so the order decides which survives -- `break` in the kernel block, `break x` and `next x`, `rand` and every other draw from a generator Ruby owns (draw from a `CArray::Rng` instead, or fill an array with `CArray#random!` and read a cell of it -- see [Known limitations](#known-limitations)), `if` without `else` in *expression* position, arithmetic on a boolean cell, comparing one with a number, and captured scalars that are not Float, Integer or Complex. On a Complex: ordering comparisons, `%`, the rounding methods and the bit operators -- which is what Ruby's Complex refuses too.
 
 ## Known limitations
 

@@ -735,6 +735,45 @@ class CArray
       end
     end
 
+    # `sum(w)`, `min(w)`, `max(w)`: a value worked out over a local array.
+    #
+    # `name` is the array's, not the function's, so that a read of the array's
+    # binding is the same question here as it is for LocalArrayRead -- the C
+    # name a helper is handed comes from the same place.  `intrinsic` is which
+    # function was written.
+    class IntrinsicCall < Node
+      attr_accessor :binding
+      attr_reader :intrinsic, :name, :storage, :shape
+      def initialize (intrinsic, name, storage, shape, location = nil)
+        super(location)
+        @intrinsic = intrinsic
+        @name = name
+        @storage = storage
+        @shape = shape
+      end
+      def local
+        [@name, @binding]
+      end
+    end
+
+    # `sort(w)`: rearranges a local array where it stands.  A statement and
+    # never a value -- what it did is in the array, which is the same bargain
+    # a call to a `void` function makes.
+    class IntrinsicStatement < Node
+      attr_accessor :binding
+      attr_reader :intrinsic, :name, :storage, :shape
+      def initialize (intrinsic, name, storage, shape, location = nil)
+        super(location)
+        @intrinsic = intrinsic
+        @name = name
+        @storage = storage
+        @shape = shape
+      end
+      def local
+        [@name, @binding]
+      end
+    end
+
     class KernelBody < Node
       attr_reader :statements
       # The locals the kernel's block, or a function's, declares, as

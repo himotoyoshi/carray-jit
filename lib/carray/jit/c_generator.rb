@@ -390,6 +390,9 @@ class CArray
             register_raise(code, message)
           end
         end
+        # The intrinsic helpers the body asked for, as [name, storage, cells]
+        # -- a list used as a set, the way @clamp_types is.
+        @intrinsic_needs = []
         @position_temporaries = {}.compare_by_identity
         @origin = origin
         @block_source = block_source
@@ -838,6 +841,7 @@ class CArray
 
           C
         end
+        text << intrinsic_helpers
         @clamp_types.each do |type|
           suffix, c_type, has_nan = CLAMP_C_TYPES.fetch(type)
           refusal = lambda { |test, code|
@@ -1276,6 +1280,7 @@ class CArray
       def emit_statement (statement, indent)
         case statement
         when Assignment    then emit_assignment(statement, indent)
+        when IntrinsicStatement then emit_intrinsic_statement(statement, indent)
         when LocalArrayDeclaration then emit_local_array_clearing(statement, indent)
         when LocalArrayWrite then guarded(statement, indent) { |inner|
                                   emit_local_array_write(statement, inner) }
@@ -1852,6 +1857,48 @@ class CArray
         subscripts || @analyzer.index_names.map { |name| [name, 0] }
       end
 
+      # `sum(w)` / `min(w)` / `max(w)`: a call to a helper in the preamble.
+      #
+      # A call rather than a loop unrolled at the statement, because these
+      # stand in expressions -- `max(w) - min(w)` is one line with two of them
+      # -- and an expression has nowhere to put a loop.  What it costs is
+      # nothing: the helper is `static inline` and the length is a literal, so
+      # the compiler has the same code in front of it either way.
+      def intrinsic_reference (node)
+        need(node.intrinsic, node.storage, nil)
+        "#{intrinsic_helper_name(node.intrinsic, node.storage)}" \
+        "(#{local_c_name(node.name, node.binding)}, #{node.shape.first})"
+      end
+
+      def emit_intrinsic_statement (statement, indent)
+        cells = statement.shape.first
+        name = local_c_name(statement.name, statement.binding)
+        # One cell is in order already, and a network of no comparators is
+        # nothing to call.
+        return "" if cells == 1
+        if SortingNetworks.covers?(cells)
+          need(:sort, statement.storage, cells)
+          "#{indent}#{intrinsic_helper_name(:sort, statement.storage)}" \
+          "_#{cells}(#{name});\n"
+        else
+          need(:sort, statement.storage, nil)
+          "#{indent}#{intrinsic_helper_name(:sort, statement.storage)}" \
+          "(#{name}, #{cells});\n"
+        end
+      end
+
+      def intrinsic_helper_name (intrinsic, storage)
+        "carray_jit_#{intrinsic}_#{storage}"
+      end
+
+      # What the preamble has to write out.  A list used as a set, the way
+      # `@clamp_types` and `@gamma_types` are, so that two sorts of one type
+      # and length are one helper.
+      def need (intrinsic, storage, cells)
+        entry = [intrinsic, storage, cells]
+        @intrinsic_needs << entry unless @intrinsic_needs.include?(entry)
+      end
+
       # `w = CArray.double(9)` where the statement stands.  The declaration is
       # at the head of the block; what is left here is what Ruby does at this
       # line, which for the zeroed spellings is a fresh array of zeros.
@@ -2002,6 +2049,171 @@ class CArray
       # the call site.
       def storage_c_type (storage)
         STORAGE_C_TYPES.fetch(storage)
+      end
+
+      # ---- the intrinsics, written into the preamble ----
+
+      # The accumulator each one starts from, and the C for it.  `min` and
+      # `max` start at the limit of the type rather than at the first cell,
+      # which is what makes a NaN disappear wherever it stands: `NaN < acc` is
+      # false, so a NaN never displaces the accumulator, and an array of
+      # nothing but NaN comes back holding the limit.  That is CArray's own
+      # answer, measured -- `CArray.double(3) { [NAN]*3 }.min` is Infinity and
+      # `.max` is -Infinity -- and matching it is the rule this compiler keeps.
+      INTRINSIC_LIMITS = {
+        :int64  => ["INT64_MAX", "INT64_MIN"],
+        :uint64 => ["UINT64_MAX", "0"],
+        :float  => ["INFINITY", "-INFINITY"],
+        :double => ["INFINITY", "-INFINITY"],
+      }.freeze
+
+      def computation_c_type_of (storage)
+        COMPUTATION_C_TYPES.fetch(TypeAssignment.storage_type(storage))
+      end
+
+      def floating_storage? (storage)
+        type = TypeAssignment.storage_type(storage)
+        [:float, :double].include?(type)
+      end
+
+      def intrinsic_helpers
+        return "" if @intrinsic_needs.empty?
+        text = +""
+        %i[sum min max].each do |intrinsic|
+          @intrinsic_needs.select { |kind, _, _| kind == intrinsic }
+                          .map { |_, storage, _| storage }.uniq.each do |storage|
+            text << intrinsic_fold_helper(intrinsic, storage)
+          end
+        end
+        sorted = @intrinsic_needs.select { |kind, _, _| kind == :sort }
+        sorted.map { |_, storage, _| storage }.uniq.each do |storage|
+          text << intrinsic_order_helper(storage)
+        end
+        sorted.each do |_, storage, cells|
+          text << (cells ? intrinsic_network_helper(storage, cells)
+                         : intrinsic_insertion_helper(storage))
+        end
+        text
+      end
+
+      def intrinsic_fold_helper (intrinsic, storage)
+        cell = storage_c_type(storage)
+        result = computation_c_type_of(storage)
+        type = TypeAssignment.storage_type(storage)
+        if intrinsic == :sum
+          return <<~C
+            /* `sum(w)`, added in index order from the first cell: what the
+               same loop written out in Ruby adds, in the same order, so the
+               last bit is the same one.  No partial sums -- a local array is
+               small enough that splitting buys nothing and would change the
+               answer. */
+            static inline #{result}
+            carray_jit_sum_#{storage} (const #{cell} *w, int64_t n)
+            {
+              #{result} total = 0;
+              for ( int64_t k = 0; k < n; k++ ) total += w[k];
+              return total;
+            }
+
+          C
+        end
+        limit = INTRINSIC_LIMITS.fetch(type)[intrinsic == :min ? 0 : 1]
+        comparison = intrinsic == :min ? "<" : ">"
+        <<~C
+          /* `#{intrinsic}(w)`, which is what CArray's own #{intrinsic} answers:
+             a NaN never displaces the accumulator, so it is skipped wherever
+             it stands, and an array of nothing but NaN comes back holding
+             the limit this starts from. */
+          static inline #{result}
+          carray_jit_#{intrinsic}_#{storage} (const #{cell} *w, int64_t n)
+          {
+            #{result} best = #{limit};
+            for ( int64_t k = 0; k < n; k++ ) best = (w[k] #{comparison} best) ? w[k] : best;
+            return best;
+          }
+
+        C
+      end
+
+      # The order the two sorts put the cells in, in one place so that the
+      # network and the loop cannot disagree about it.
+      #
+      # A NaN comes after every number and ties with another NaN, which makes
+      # this a total preorder -- and a comparator network sorts under any of
+      # those, so the finite cells come out ascending with the NaNs behind
+      # them.  That is where CArray's own sort puts them.
+      #
+      # `fmin` and `fmax` are not used anywhere here: they answer the *other*
+      # number when one is a NaN, which drops a cell rather than moving it.
+      def intrinsic_order_helper (storage)
+        cell = storage_c_type(storage)
+        nan_term = floating_storage?(storage) ? " || (a != a && b == b)" : ""
+        <<~C
+          /* Whether `a` belongs after `b` once the cells are in order.#{
+            floating_storage?(storage) ?
+              "\n     A NaN belongs after every number, and two NaNs tie." : ""} */
+          static inline int
+          carray_jit_after_#{storage} (#{cell} a, #{cell} b)
+          {
+            return (b < a)#{nan_term};
+          }
+
+          /* One compare-exchange: the smaller of the two ends up in `low`.
+             Written as two selects rather than a branch, so the sequence a
+             network lays out has nothing in it to predict. */
+          static inline void
+          carray_jit_cx_#{storage} (#{cell} *low, #{cell} *high)
+          {
+            #{cell} a = *low, b = *high;
+            int swap = carray_jit_after_#{storage}(a, b);
+            *low = swap ? b : a;
+            *high = swap ? a : b;
+          }
+
+        C
+      end
+
+      def intrinsic_network_helper (storage, cells)
+        network = SortingNetworks.for(cells)
+        pairs = network.map { |low, high|
+          "  carray_jit_cx_#{storage}(&w[#{low}], &w[#{high}]);"
+        }.join("\n")
+        <<~C
+          /* `sort(w)` for #{cells} cells: a comparator network, which is the
+             same #{network.size} compare-exchanges every time in the same
+             order -- no branch, nothing to predict, and the smallest number
+             of comparisons known for this length. */
+          static inline void
+          carray_jit_sort_#{storage}_#{cells} (#{storage_c_type(storage)} *w)
+          {
+          #{pairs}
+          }
+
+        C
+      end
+
+      def intrinsic_insertion_helper (storage)
+        cell = storage_c_type(storage)
+        <<~C
+          /* `sort(w)` past the length the networks cover: an insertion sort,
+             which is a loop.  The tables would keep growing and what a
+             network buys shrinks -- long before this there are more
+             comparators than the machine has registers. */
+          static inline void
+          carray_jit_sort_#{storage} (#{cell} *w, int64_t n)
+          {
+            for ( int64_t k = 1; k < n; k++ ) {
+              #{cell} value = w[k];
+              int64_t j = k - 1;
+              while ( j >= 0 && carray_jit_after_#{storage}(w[j], value) ) {
+                w[j + 1] = w[j];
+                j--;
+              }
+              w[j + 1] = value;
+            }
+          }
+
+        C
       end
 
       # The storage type of an operand, by the name the block reached it by.
@@ -2432,6 +2644,8 @@ class CArray
         # A boolean cell is a byte holding 0 or 1, so it is already the value
         # it stands for.  Keeping it that way on the way out is this kernel's
         # business, and cast_to_storage does it.
+        when IntrinsicCall
+          [intrinsic_reference(node), LEAF_PRECEDENCE]
         when LocalArrayRead
           cell = local_array_reference(node)
           widening = widening_cast(node.storage, node.type)

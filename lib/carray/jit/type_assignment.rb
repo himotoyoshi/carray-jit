@@ -306,6 +306,16 @@ class CArray
           node.binding = bind_array(node)
           @assigned_in_while.delete(node.name)
           declare_array(node)
+        when IntrinsicCall
+          node.binding = array_binding(node)
+          node.type = self.class.storage_type(node.storage)
+          verify_intrinsic_element_type(node)
+        when IntrinsicStatement
+          node.binding = array_binding(node)
+          # What it did is in the array, so there is no value and no type --
+          # the same slot a call to a `void` function leaves empty.
+          node.type = :void
+          verify_intrinsic_element_type(node)
         when LocalArrayRead
           node.binding = array_binding(node)
           walk_local_array_subscripts(node)
@@ -651,6 +661,40 @@ class CArray
         end
       end
 
+      # Which element types each intrinsic has an answer for.
+      #
+      # `min` / `max` / `sort` put the cells in an order, and neither a
+      # Complex nor a boolean has one -- Ruby refuses `1i < 2i` and
+      # `true < false` as well.  `sum` adds, which a boolean does not do
+      # either: CArray reads the sum of a boolean array as a count, and
+      # counting is a meaning this compiler would be borrowing rather than
+      # deciding.  Write the count into an integer array and sum that.
+      def verify_intrinsic_element_type (node)
+        type = self.class.storage_type(node.storage)
+        if boolean?(type)
+          if node.intrinsic == :sum
+            raise Unsupported.new(
+              "`sum` adds numbers, and `#{node.name}` is a boolean array; " \
+              "CArray reads the sum of one as a count, which is a meaning " \
+              "this would be borrowing rather than deciding. Count into an " \
+              "integer array and sum that",
+              node.location)
+          end
+          raise Unsupported.new(
+            "`#{node.name}` holds `true` and `false`, which do not order " \
+            "each other -- in Ruby either -- so `#{node.intrinsic}` has " \
+            "nothing to compare",
+            node.location)
+        end
+        return unless complex?(type)
+        return if node.intrinsic == :sum
+        raise Unsupported.new(
+          "`#{node.intrinsic}` orders the cells, and `#{node.name}` holds " \
+          "Complex numbers: Ruby does not order Complex numbers either. " \
+          "Take `.abs` or `.real` into a real array first",
+          node.location)
+      end
+
       # A local array's subscripts are walked the way an operand's are: a
       # position that is an expression has to be an integer.  An axis the
       # analyzer settled carries a literal offset rather than a node, and
@@ -942,6 +986,10 @@ class CArray
                           node.expression, node.location)
         when LocalArrayDeclaration
           # Nothing to check: no value is computed.
+        when IntrinsicCall, IntrinsicStatement
+          # The element type was checked as the types were assigned, and the
+          # argument is an array rather than an expression: there is nothing
+          # under here to walk.
         when LocalArrayRead
           node.subscripts.each { |_index, offset|
             verify(offset) if offset.is_a?(Node)
