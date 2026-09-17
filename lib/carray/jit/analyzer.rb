@@ -348,6 +348,31 @@ class CArray
         allocate.send(:scan_free_names, source, node)
       end
 
+      # The names the block hands to a C function whole, and reads in no
+      # other way.
+      #
+      # Wanted before the analyzer runs, because what the caller does with
+      # the answer -- leaving those arrays out of the broadcast -- has to
+      # happen before it: the broadcast is what a shape that does not line up
+      # dies in, and an array handed over whole has no shape to line up.
+      #
+      # The parameters decide, not the spelling.  A bare array name in an
+      # argument position looks like an address pass and need not be one: in
+      # the whole-array spelling a bare name is a cell, so `twice.call(a)`
+      # against `double twice(double x)` walks `a` cell by cell.  Asking the
+      # declaration is not a second reading of the signature -- the CFunction
+      # parsed it once, and this asks the same object the same question the
+      # analyzer asks.
+      #
+      # A name used as a cell anywhere, subscripted or bare, is not here
+      # however else it is also used: an array that is both walked and handed
+      # over is walked, and lines up as it always did.
+      def self.address_array_names (source, node: nil, c_functions: {})
+        analyzer = allocate
+        block = node || analyzer.send(:parse_block, source)
+        analyzer.send(:scan_address_array_names, block.body, c_functions)
+      end
+
       # The names the block makes an array of its own under.
       #
       # Read off the source rather than off a built analyzer, because the
@@ -633,6 +658,63 @@ class CArray
       # actually refused for.
       def raise_call? (node)
         node.is_a?(Prism::CallNode) && node.receiver.nil? && node.name == :raise
+      end
+
+      def scan_address_array_names (node, c_functions)
+        # Two passes rather than one, because the arguments of a call sit
+        # under an ArgumentsNode: pruning them out of a single walk would
+        # mean matching a grandchild, and the set is the clearer statement.
+        addressed = {}.compare_by_identity
+        handed = []
+        collect_address_arguments(node, c_functions, handed, addressed)
+        return [] if handed.empty?
+        as_cells = []
+        collect_cell_names(node, addressed, as_cells)
+        (handed.uniq - as_cells - scan_local_array_names(node))
+      end
+
+      # The names standing bare where a declaration wants a pointer at
+      # numbers, and the argument nodes they stand in.
+      def collect_address_arguments (node, c_functions, handed, addressed)
+        return unless node
+        return if raise_call?(node)
+        if node.is_a?(Prism::CallNode) &&
+           C_FUNCTION_CALL_NAMES.include?(node.name) &&
+           (function = captured_name(node.receiver)) &&
+           c_functions.key?(function)
+          parameters = c_functions.fetch(function).parameters
+          arguments = node.arguments ? node.arguments.arguments : []
+          arguments.each_with_index do |argument, position|
+            next unless parameters[position]&.indexable?
+            given = captured_name(argument)
+            next unless given
+            handed << given
+            addressed[argument] = true
+          end
+        end
+        node.compact_child_nodes.each { |child|
+          collect_address_arguments(child, c_functions, handed, addressed)
+        }
+      end
+
+      # Every other way a name is reached: subscripted, or bare where a bare
+      # name is a cell.  One of these takes a name back out of the answer.
+      def collect_cell_names (node, addressed, as_cells)
+        return unless node
+        return if raise_call?(node)
+        return if addressed[node]
+        if node.is_a?(Prism::CallNode) && node.name == :[] &&
+           (subscripted = captured_name(node.receiver))
+          as_cells << subscripted
+        end
+        if (bare = captured_name(node)) &&
+           !(node.is_a?(Prism::CallNode) &&
+             C_FUNCTION_CALL_NAMES.include?(node.name))
+          as_cells << bare
+        end
+        node.compact_child_nodes.each { |child|
+          collect_cell_names(child, addressed, as_cells)
+        }
       end
 
       def scan_local_array_names (node)

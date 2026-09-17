@@ -1106,6 +1106,10 @@ class CArray
         probe_cache[key] = TypeAssignment.result_storage_type(value.type)
       end
 
+      # Handed where there is nothing to take out of the line-up, so that the
+      # common case allocates nothing.
+      EMPTY_ARRAYS = {}.freeze
+
       # @private
       def run_over_whole_arrays (block, map: false)
         node, source, origin = read_block(block)
@@ -1131,7 +1135,38 @@ class CArray
           raise Unsupported, "the block reaches no array"
         end
 
-        aligned, shape = broadcast(arrays)
+        # An array the block only hands to a C function whole is not walked,
+        # so the expression's shape has nothing to say about it -- and it has
+        # a shape of its own that need not line up with anything.  Left in,
+        # one of a different length dies in the broadcast below, naming an
+        # axis rather than the call it was written for.
+        #
+        # So it joins after the broadcast, which is what a generator's state
+        # already does and for the same reason.  The re-substitution further
+        # down stays: this is a static reading, and the analyzer's answer is
+        # the final one.
+        handed_over = address_array_names(source, node, c_functions)
+        # The common case is that there are none, and it pays nothing: no
+        # hash is built and the broadcast is handed the operands it always
+        # was.  Every call comes through here -- `jit_each` is re-entered per
+        # call -- so the work that is only needed sometimes is done only
+        # then.
+        addressed = handed_over.empty? ? EMPTY_ARRAYS
+                                       : arrays.slice(*handed_over)
+        walked = addressed.empty? ? arrays
+                                  : arrays.reject { |name, _| addressed.key?(name) }
+        if walked.empty?
+          handed = addressed.keys.first
+          raise Unsupported,
+                "the block reaches no array to walk: `#{handed}` is handed " \
+                "to a C function whole rather than read by cell, so it does " \
+                "not say how many cells there are to compute. " \
+                "`CArray.jit_for` with a count says that, and so does an " \
+                "operand the block reads a cell of"
+        end
+
+        aligned, shape = broadcast(walked)
+        addressed.each { |name, array| aligned[name] = array }
         # A generator's state joins after the broadcast, never before it.
         # It is passed whole rather than walked, so the expression's shape
         # has nothing to say about it -- and it has a shape of its own that
@@ -1148,9 +1183,14 @@ class CArray
           arrays = arrays.merge(MAP_RESULT => result)
           aligned = aligned.merge(MAP_RESULT => result)
         end
-        masked = arrays.each_value.any? { |array| array.has_mask? } ||
+        # Both questions are about the arrays the loop walks.  An array
+        # handed over whole is not one of them: its mask is not something the
+        # C can read -- `address_buffer` refuses a masked one outright -- and
+        # it is neither one of the sweep's operands nor a shape the sweep has
+        # to agree with.
+        masked = walked.each_value.any? { |array| array.has_mask? } ||
                  mentions_undef(source, node)
-        sweeping = sweepable_pass?(arrays, shape, masked)
+        sweeping = sweepable_pass?(walked, shape, masked)
         kernel = compile(source,
                          node: node,
                          origin: origin,
@@ -1392,6 +1432,31 @@ class CArray
         @capture_name_cache ||= {}
       end
 
+      # Which names the block only hands to a C function whole.  Cached for
+      # the reason the captured names are: `jit_each` is re-entered on every
+      # call, so anything read off the source here is read on every call, and
+      # walking the tree again cost the element-wise pass 1.7x before this
+      # was memoized.
+      #
+      # The answer depends on the declarations as well as the source -- a
+      # parameter that takes a pointer is what makes an argument an address
+      # pass -- so the signatures are part of the key, as they are for the
+      # map probe.  Nothing below the signature can change the answer: the
+      # scan asks `indexable?` and nothing else.
+      def address_array_names (source, node, c_functions)
+        key = [source, c_functions.transform_values(&:signature)]
+        cached = address_name_cache[key]
+        return cached if cached
+        address_name_cache[key] =
+          Analyzer.address_array_names(source, node: node,
+                                       c_functions: c_functions)
+      end
+
+      # @private
+      def address_name_cache
+        @address_name_cache ||= {}
+      end
+
       # Keyed by instruction sequence, which CRuby hands back as the same
       # object for every Proc made from one block literal.  That makes it a
       # free identity for the block, and keeps the file from being read and
@@ -1409,6 +1474,7 @@ class CArray
       def clear_registry
         @registry = {}
         @capture_name_cache = {}
+        @address_name_cache = {}
         @block_cache = {}
         @undef_cache = {}
       end

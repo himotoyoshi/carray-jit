@@ -39,6 +39,25 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: in a `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil`
+  block, an array handed to a C function whole -- and read in no other way --
+  is no longer lined up with the operands. One whose length differed from
+  theirs used to fail with `broadcast_to: cannot broadcast axis 0`, which
+  named an axis and said nothing about the call it was written for; a set of
+  weights four cells long may now stand beside a thousand cells of operand.
+  What decides which arrays those are is the declaration, not the spelling: a
+  parameter taking a number by value reads the cell, so that array is walked
+  and lines up as before, and an array both read by cell and handed over is
+  an operand too.
+
+- Change: a `CArray.jit_each` or `CArray.jit_map` block whose *only* array is
+  handed to a C function whole is now refused, naming the array and saying
+  that it does not settle how many cells there are to compute.
+  `CArray.jit_map { DOT4.call(w, w) }` used to answer an array as long as `w`
+  -- a length that came from an array nobody walks -- and the same block under
+  `jit_each` failed inside Fiddle with `unknown symbol "ca_call_cslab_0_r"`.
+  `CArray.jit_for` with a count takes these, as it always did.
+
 - New: a local array may have more than one axis --
   `CArray.double(3, 4)`, `CArray.new(:float64, [2, 3, 4])` -- in any of the
   five places one can be made. The shape is written out as it always was, so

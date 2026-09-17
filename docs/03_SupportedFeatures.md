@@ -668,6 +668,31 @@ The zeroed constructors clear at the line as they always do, so what a callee wr
 
 Passing the same local array to two parameters -- `DOT4.call(w, w)` -- is well-formed, the declarations carrying no `restrict`.
 
+#### An array handed over whole is not an operand
+
+In `jit_each`, `jit_map` and `jit_stencil` the block names no index, so a bare array name is the cell the loop is on and every operand has to line up with every other. An array handed to a C function is not one of those: it goes over whole, so its own length is nobody else's business.
+
+```ruby
+weights = CArray.double(4).seq        # four coefficients
+a       = CArray.double(1000).seq     # a thousand cells to compute
+
+CArray.jit_each { out = a + DOT4.call(weights, weights) }
+```
+
+The weights are four cells against a thousand, and that is fine: they are handed over, not walked. What decides it is the declaration rather than the spelling -- a parameter that takes a number by value reads the cell, so `twice.call(a)` against `double twice(double x)` walks `a` a cell at a time and lines up like any operand. An array used *both* ways -- read by cell and handed over -- is an operand, and lines up.
+
+A block whose only array is handed over has nothing to say how many cells there are to compute, and says so:
+
+```ruby
+CArray.jit_map { DOT4.call(weights, weights) }
+#=> the block reaches no array to walk: `weights` is handed to a C function
+#   whole rather than read by cell, so it does not say how many cells there
+#   are to compute. `CArray.jit_for` with a count says that, and so does an
+#   operand the block reads a cell of
+```
+
+`jit_for` says how many cells there are itself, so it never needed an operand for that.
+
 #### Lending the address
 
 `#call` is one call and answers for it. A library given `#pointer` calls whenever it likes, as often as it likes, and what wants an answer is the whole of that -- so the window is what the flag is put down for, and what it is read for:
