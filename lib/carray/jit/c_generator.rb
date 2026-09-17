@@ -391,8 +391,11 @@ class CArray
           end
         end
         # The intrinsic helpers the body asked for, as [name, storage, cells]
-        # -- a list used as a set, the way @clamp_types is.
+        # -- a list used as a set, the way @clamp_types is.  A pasted body's
+        # are merged into it by #preamble.
         @intrinsic_needs = []
+        # Whether some body pasted into this file clears an array of its own.
+        @pasted_clears_a_local_array = false
         @position_temporaries = {}.compare_by_identity
         @origin = origin
         @block_source = block_source
@@ -419,7 +422,7 @@ class CArray
       # emitted into this file too, and when a function body may make one of
       # its own this has to ask the pasted ones as well.
       def clears_a_local_array?
-        @analyzer.clears_a_local_array?
+        @analyzer.clears_a_local_array? || @pasted_clears_a_local_array
       end
 
       # A local array has no mask beside it -- it is cells and nothing else --
@@ -551,7 +554,9 @@ class CArray
       # flooring helpers -- report through the error flag, and a function that
       # touches the flag is not pasted at all.
       def helper_needs
-        { :integer_power => @uses_integer_power,
+        { :intrinsics => @intrinsic_needs.dup,
+          :clears_a_local_array => clears_a_local_array?,
+          :integer_power => @uses_integer_power,
           :unsigned_divide => @uses_unsigned_divide,
           :unsigned_modulo => @uses_unsigned_modulo,
           :unsigned_power => @uses_unsigned_power,
@@ -666,6 +671,14 @@ class CArray
           @uses_index_check ||= needs[:index_check]
           @uses_floor_divide ||= needs[:floor_divide]
           @uses_floor_modulo ||= needs[:floor_modulo]
+          # A union rather than an or: two bodies may want a `sort` of one
+          # type and length and a `sum` of another, and the preamble owes one
+          # helper for each.  The same shape `:clamp` and `:gamma` take.
+          @intrinsic_needs |= needs[:intrinsics] || []
+          # And whether anything anywhere in this file clears an array of its
+          # own, which is what `<string.h>` is included for.  A pasted body's
+          # `memset` is in this translation unit, so it is this file's header.
+          @pasted_clears_a_local_array ||= !!needs[:clears_a_local_array]
         end
         # `stddef.h` is here for the signature's sake rather than the body's:
         # a declaration may be written with `size_t` or `ptrdiff_t`, and that

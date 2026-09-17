@@ -1927,12 +1927,10 @@ class CArray
       # is what says how the block is being read.
       LOCAL_ARRAY_ELSEWHERE = {
         :contract => ["a contraction's body", nil],
-        :function => ["the body of a compiled function", "a later release"],
       }.freeze
 
       def refuse_a_local_array_in_this_spelling (node)
         mode = if @contract          then :contract
-               elsif @function       then :function
                end
         return unless mode
         where, when_ = LOCAL_ARRAY_ELSEWHERE.fetch(mode)

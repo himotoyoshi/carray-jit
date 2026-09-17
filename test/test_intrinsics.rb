@@ -694,6 +694,124 @@ class TestIntrinsics < Minitest::Test
     assert_equal(written_out.to_a, with_sort.to_a)
   end
 
+  # ---------- inside a compiled function's body ----------
+
+  MED3 = CArray.jit_function(
+    "double med3(double a, double b, double c)") { |a, b, c|
+    w = CArray.double(3)
+    w[0] = a; w[1] = b; w[2] = c
+    sort(w)
+    w[1]
+  }
+
+  def test_sort_in_a_function_body_called_from_ruby
+    [[3.0, 1.0, 2.0], [1.0, 1.0, 1.0], [5.0, 4.0, 9.0]].each do |a, b, c|
+      assert_equal([a, b, c].sort[1], MED3.call(a, b, c), "#{[a, b, c].inspect}")
+    end
+  end
+
+  def test_sort_in_a_function_body_called_from_a_kernel
+    third = CArray.double(6).seq!(1.0, 3.0)
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i| out[i] = MED3.call(3.0, 1.0, third[i]) }
+    reference = (0...6).map { |i| [3.0, 1.0, third[i]].sort[1] }
+    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+  end
+
+  def test_sum_in_a_function_body
+    totals = CArray.jit_function("double tot(double s)") { |s|
+      w = CArray.double(4)
+      (0...4).each { |k| w[k] = s + k }
+      sum(w)
+    }
+    assert_equal(10.0, totals.call(1.0), "1 + 2 + 3 + 4")
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i| out[i] = totals.call(i * 1.0) }
+    assert_equal([6.0, 10.0, 14.0], out.to_a)
+  end
+
+  def test_min_and_max_in_a_function_body
+    spread = CArray.jit_function("double spread(double a, double b, double c)") { |a, b, c|
+      w = CArray.double(3)
+      w[0] = a; w[1] = b; w[2] = c
+      max(w) - min(w)
+    }
+    assert_equal(8.0, spread.call(1.0, 9.0, 4.0))
+    out = CArray.double(2)
+    CArray.jit_for(2) { |i| out[i] = spread.call(1.0, 9.0, i * 1.0) }
+    assert_equal([9.0, 8.0], out.to_a)
+  end
+
+  # ---------- the helpers a pasted body brings with it ----------
+
+  def helper_count (source, pattern)
+    source.scan(pattern).size
+  end
+
+  def test_a_pasted_body_brings_its_helper_into_the_kernels_preamble
+    out = CArray.double(2)
+    CArray::JIT.clear_registry
+    before = CArray::JIT.registry.keys
+    CArray.jit_for(2) { |i| out[i] = MED3.call(3.0, 1.0, i * 1.0) }
+    kernel = CArray::JIT.registry.fetch((CArray::JIT.registry.keys - before).first)
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_sort_float64_3 \(/),
+                 "the body's sort helper belongs in the file it is pasted into")
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_cx_float64 \(/))
+    assert_match(/#include <string\.h>/, kernel.c_source,
+                 "the body clears its array, so the header is this file's too")
+  end
+
+  def test_a_body_and_its_kernel_sorting_two_lengths_take_two_helpers
+    out = CArray.double(2)
+    CArray::JIT.clear_registry
+    before = CArray::JIT.registry.keys
+    CArray.jit_for(2) { |i|
+      v = CArray.double(5)
+      (0...5).each { |m| v[m] = (5 - m) * 1.0 }
+      sort(v)
+      out[i] = v[0] + MED3.call(3.0, 1.0, i * 1.0)
+    }
+    kernel = CArray::JIT.registry.fetch((CArray::JIT.registry.keys - before).first)
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_sort_float64_3 \(/),
+                 "the body's length")
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_sort_float64_5 \(/),
+                 "the kernel's length")
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_cx_float64 \(/),
+                 "and one compare-exchange between them")
+    reference = (0...2).map { |i| 1.0 + [3.0, 1.0, i * 1.0].sort[1] }
+    assert_equal(reference, out.to_a, "and both sorts give their answer")
+  end
+
+  def test_two_pasted_bodies_sorting_alike_take_one_helper
+    other = CArray.jit_function(
+      "double med3b(double a, double b, double c)") { |a, b, c|
+      w = CArray.double(3)
+      w[0] = a * 2.0; w[1] = b; w[2] = c
+      sort(w)
+      w[1]
+    }
+    out = CArray.double(2)
+    CArray::JIT.clear_registry
+    before = CArray::JIT.registry.keys
+    CArray.jit_for(2) { |i|
+      out[i] = MED3.call(3.0, 1.0, i * 1.0) + other.call(3.0, 1.0, i * 1.0)
+    }
+    kernel = CArray::JIT.registry.fetch((CArray::JIT.registry.keys - before).first)
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_sort_float64_3 \(/),
+                 "one helper serves both bodies")
+    assert_equal(1, helper_count(kernel.c_source, /^carray_jit_cx_float64 \(/))
+    reference = (0...2).map { |i|
+      [3.0, 1.0, i * 1.0].sort[1] + [6.0, 1.0, i * 1.0].sort[1]
+    }
+    assert_equal(reference, out.to_a)
+  end
+
+  def test_a_standalone_body_carries_its_own_helper
+    assert_equal(1, helper_count(MED3.c_source, /^carray_jit_sort_float64_3 \(/),
+                 "the object CFunction#call runs needs it too")
+    assert_match(/#include <string\.h>/, MED3.c_source)
+  end
+
   # ---------- the names are the compiler's, not the block's ----------
 
   def test_a_local_may_be_called_sum_beside_a_call_to_sum

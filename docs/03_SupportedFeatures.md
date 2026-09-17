@@ -562,6 +562,35 @@ The spelling is `.call`, the one every C function takes here, borrowed or writte
 
 A pointer parameter may be handed on -- `total.call(n - 1, v)` passes the address the function was given, as C does -- so a recursion can walk an array. What it cannot do is stop itself running out of stack: a compiled function that recurses too deep is a SIGSEGV, not a `SystemStackError`. That is C's bargain, taken along with `void *params`.
 
+#### A workspace of the body's own
+
+A function body may make an array of its own, and use the intrinsics over it, exactly as a kernel may (see [Local arrays](#local-arrays) and [Intrinsics](#intrinsics)). This is the one place where there is no alternative: a body closes over nothing, so an extra parameter is the only other way to give it scratch space -- and a signature settled somewhere else, a callback's, has no room for one.
+
+Neville's interpolation is the shape that wants it. It walks a workspace of the sample count, overwriting it as it narrows:
+
+```ruby
+NEVILLE = CArray.jit_function(
+  "double neville(double x, const double xs[4], const double ys[4])"
+) { |x, xs, ys|
+  t = CArray.double(4)
+  4.times { |k| t[k] = ys[k] }
+  (1...4).each { |m|
+    (0...3).each { |k|
+      if k < 4 - m
+        t[k] = ((x - xs[k+m]) * t[k] + (xs[k] - x) * t[k+1]) / (xs[k] - xs[k+m])
+      end
+    }
+  }
+  t[0]
+}
+```
+
+`ys` is `const` and cannot be walked over, which is what the workspace is for. The array is declared at the head of the function, and a recursive body gets one per call, as C gives an automatic.
+
+A body hands an array of its own to another compiled function under the same rules a kernel does -- the element type exactly, and at least as many cells as a sized declarator asks for, both matched as the block is read -- and reads back what a non-`const` parameter was written with. A pointer the body was *given* is passed along as C passes one, unchanged from before.
+
+The helpers an intrinsic needs travel with the body. A function compiled on its own carries them in its own file; one pasted into a kernel puts them in the kernel's preamble, where one helper serves every body and the kernel itself that wants the same element type and length.
+
 #### Dividing by zero
 
 `6 % 0` raises in Ruby, and the kernel raises it too: it is handed a place to report through, and reports. A compiled function has no such place -- it has the signature its declaration gave it and nothing else, which is the point of it. So the object carries one of its own: a single exported `int32_t` that a division with no divisor and a `raise` in the body both write into, declared only when the body can actually reach it.
@@ -889,10 +918,10 @@ Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symb
 - **An inner loop's stride is a literal.** It is what says which way the loop runs, and the C is written one way or the other before anything is known, so `k.step(0, s)` with `s` a captured integer is refused. `downto`, `upto` and `reverse_each` are refused by name, with `step` named as the spelling to use -- one way of counting down is enough to keep, and it is the one an extent already takes.
 - **A kernel draws from a `CArray::Rng` and from nothing else.** `rand` is Ruby's, and Ruby's generator is reached through the VM: a kernel runs with the GVL released, which is not where it may be reached at all. What a kernel *can* draw from is a generator whose C it can paste, which is what `CArray::Rng` is: `rand = CArray::Rng.new(seed: 4)` and then `rand.random` in the block, once per cell, giving a double in `[0.0, 1.0)`. `rand.randomn` is a standard normal, which costs two draws and keeps no spare -- the classical pairing would have to hold the second in the generator's state, and a spare held between an array and a kernel is a second thing to keep in step. `random(rng: rand)` and `randomn(rng: rand)` are those two spelled as `CArray#random!(rng:)` spells them -- the only keyword arguments the subset has -- and `rand.bits` is the raw word a draw came from, as a `uint64`. All of them read one generator, so mixing them walks one sequence. It is a generator on both sides of the compiler: `a.random!(rng: rand)` fills an array from it and leaves it where a kernel then carries on, because CArray compiles the generator and hands out the same text for the kernel to paste rather than the two agreeing by construction. Two generators in one kernel are two sequences. What is not offered is a draw fixed to a *position*: which draw lands in which cell is the loop's order, and this compiler does not fix that order -- a stencil's border is a second loop over the frame, and a reduction may split its accumulator. Where that matters -- common random numbers, antithetic variates, stratification -- fill an array with `CArray#random!` before the call and read a cell of it, which was drawn in one order and stays in it. A compiled function is a third case: `jit_function` takes everything through its parameters and has nowhere to keep a state, so a body that needs draws takes the state as an `int64_t state[4]` parameter and is passed `rand.state`.
 - **An operand that is not an entity is transferred before the loop.** A kernel walks memory, so an array that is not one -- a view that does not fold to an entity, a `CAObject` computing its cells in Ruby -- has the box the kernel touches transferred into a packed buffer first, and written back afterwards if the kernel wrote it. The box, not the array: an extent covering two cells transfers two. What that costs is a copy; what it changes is when the cells are read. An array whose cells are computed on read is read once per cell per call, so two reads of one cell in a kernel give the same number where the same Ruby loop would give two -- and a one-cell source is one number for the whole loop. Drawing random numbers that way therefore works, and means what filling an array before the call means.
-- **A borrowed function that keeps the pointer outlives the array.** A local array lives on the stack of the block that made it, so a `jit_extern` function that stores the pointer somewhere and reads it after the call is reading a frame that has gone. That is C's own bargain, taken along with `void *params`; a captured array is the way to hand over something that has to outlast the call. And where the declaration carries no length -- `const double *x`, `double x[]` -- there is nothing for this compiler to check the array against, so how many cells the callee reads is between you and its documentation, exactly as it is for a captured array.
+- **Handing a pointer to a C function is C's bargain.** A declaration that carries no length -- `const double *x`, `double x[]` -- gives this compiler nothing to check an array against, and a function that keeps the pointer past the call keeps it past whatever the array was. That is the same arrangement calling the same function from C would be, for a local array and a captured one alike; what differs is only which memory is involved.
 - **A local array's subscript counts from the start.** CArray's `w[-1]` is the last cell; a kernel has no such reading, so a literal negative subscript is refused by name and one the kernel works out raises `IndexError`. This is the difference the captured arrays already have. Write `w[n - 1]`.
 - **`CArray.empty` leaves its cells as the stack left them.** Reading one before writing it is out of contract, the way reading under a mask is: the value is whatever was there. What it saves is the clearing, which for a 256-cell array inside a per-cell loop is 2 KiB a cell.
-- **A local array is held to 4 KiB, and one kernel's to 16 KiB together.** Both are provisional, and neither counts a pasted function's own arrays, recursion, or a future thread pool's stacks. See [Local arrays](#local-arrays).
+- **The stack limits are per function, and a chain of them is not counted.** One local array is held to 4 KiB and the arrays of one kernel body or one function body to 16 KiB together. A pasted function called from a kernel is a second frame, and a chain of three such functions can therefore stand 48 KiB deep while each of them is inside its own limit -- counting along the chain was considered and dropped, since the depth is not knowable where recursion is in the subset at all. What that costs is the bargain a deep recursion already takes: too deep is a SIGSEGV rather than a `SystemStackError`, and a body carrying arrays reaches it sooner. Both numbers are provisional, and neither counts a future thread pool's stacks.
 - **Storing a real number into an integer array is C's conversion.** A value past the type's range, or a NaN, is undefined behaviour rather than a number -- and the same is true of a captured integer array, so a kernel brings no new hazard here. Round and clamp before storing where the value may leave the range.
 - **A block's source must be recoverable.** Blocks defined in `eval` or in a console have no file to read back; pass `source:` there, or set `RubyVM.keep_script_lines = true` before defining them. This also ties the gem to CRuby, which CArray requires anyway.
 - **Nothing existing is replaced.** `jit_for` is a new method, not a faster `each_index`: the two differ in what they reject, and a caller should be able to choose.

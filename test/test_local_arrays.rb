@@ -853,20 +853,6 @@ class TestLocalArrays < Minitest::Test
 
   # ---------- the entry points that do not take one yet ----------
 
-  # `jit_each`, `jit_map` and `jit_stencil` take one; those are tested below.
-  # These two do not, each for its own reason.
-  def test_a_function_body_says_which_release_takes_a_local_array
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_function("double f(double x)") { |x|
-        w = CArray.double(2)
-        w[0] = x
-        w[0]
-      }
-    end
-    assert_match(/the body of a compiled function takes in a later release/,
-                 error.message)
-  end
-
   def test_a_contraction_says_why_it_takes_none
     x = CArray.double(4, 4).seq!
     y = CArray.double(4, 4).seq!
@@ -1522,6 +1508,327 @@ class TestLocalArrays < Minitest::Test
       }
     end
     assert_match(/one axis in this release/, error.message)
+  end
+
+  # ---------- inside a compiled function's body ----------
+
+  # A function body is the one place with no captures at all, so a workspace
+  # it needs has nowhere else to come from: an extra parameter is the only
+  # other answer, and a signature settled outside -- a callback's -- has no
+  # room for one.
+  #
+  # The body is built once and reaches two places: the standalone object
+  # `CFunction#call` runs, and the definition a kernel pastes into its own
+  # file.  Every test here checks both.
+
+  # Example 5 of the proposal: Neville's interpolation, which walks a
+  # workspace of its own length and overwrites it as it goes.
+  NEVILLE = CArray.jit_function(
+    "double neville(double x, const double xs[4], const double ys[4])"
+  ) { |x, xs, ys|
+    t = CArray.double(4)
+    4.times { |k| t[k] = ys[k] }
+    (1...4).each { |m|
+      (0...3).each { |k|
+        if k < 4 - m
+          t[k] = ((x - xs[k + m]) * t[k] + (xs[k] - x) * t[k + 1]) /
+                 (xs[k] - xs[k + m])
+        end
+      }
+    }
+    t[0]
+  }
+
+  def neville_reference (x, xs, ys)
+    t = ys.dup
+    (1...4).each { |m|
+      (0...3).each { |k|
+        if k < 4 - m
+          t[k] = ((x - xs[k + m]) * t[k] + (xs[k] - x) * t[k + 1]) /
+                 (xs[k] - xs[k + m])
+        end
+      }
+    }
+    t[0]
+  end
+
+  def test_neville_interpolates_as_the_same_loop_in_ruby
+    xs = CArray.double(4)
+    ys = CArray.double(4)
+    [0.0, 1.0, 2.0, 3.0].each_with_index { |v, k| xs[k] = v }
+    [1.0, 2.5, 0.5, 4.0].each_with_index { |v, k| ys[k] = v }
+    plain_xs = (0...4).map { |k| xs[k] }
+    plain_ys = (0...4).map { |k| ys[k] }
+    [0.5, 1.5, 2.25].each do |x|
+      assert_bits_equal(neville_reference(x, plain_xs, plain_ys),
+                        NEVILLE.call(x, xs, ys), "at x = #{x}")
+    end
+  end
+
+  def test_neville_interpolates_the_same_way_from_a_kernel
+    xs = CArray.double(4)
+    ys = CArray.double(4)
+    [0.0, 1.0, 2.0, 3.0].each_with_index { |v, k| xs[k] = v }
+    [1.0, 2.5, 0.5, 4.0].each_with_index { |v, k| ys[k] = v }
+    query = CArray.double(5).seq!(0.25, 0.5)
+    out = CArray.double(5)
+    CArray.jit_for(5) { |i| out[i] = NEVILLE.call(query[i], xs, ys) }
+    plain_xs = (0...4).map { |k| xs[k] }
+    plain_ys = (0...4).map { |k| ys[k] }
+    reference = CArray.double(5) {
+      (0...5).map { |i| neville_reference(query[i], plain_xs, plain_ys) }
+    }
+    assert_arrays_bits_equal(reference, out)
+  end
+
+  def test_the_body_declares_its_array_at_its_own_head
+    assert_match(/^\{\n  double t\[4\];\n/, NEVILLE.definition,
+                 "the pasted definition carries the declaration")
+    assert_match(/double t\[4\];/, NEVILLE.c_source,
+                 "and so does the standalone object")
+  end
+
+  # ---------- a body handing an array to another function ----------
+
+  def test_a_body_hands_a_local_array_to_another_function
+    total = CArray.jit_function("double total3(const double x[3])") { |x|
+      x[0] + x[1] + x[2]
+    }
+    outer = CArray.jit_function("double outer(double s)") { |s|
+      w = CArray.double(3)
+      w[0] = s; w[1] = s * 2.0; w[2] = s * 3.0
+      total.call(w)
+    }
+    assert_equal(12.0, outer.call(2.0), "2 + 4 + 6")
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i| out[i] = outer.call(i * 1.0) }
+    assert_equal([0.0, 6.0, 12.0], out.to_a, "and the same from a kernel")
+  end
+
+  def test_a_callee_writes_into_a_body_s_local_array
+    fill = CArray.jit_function("void fill2(double x[2])") { |x|
+      x[0] = 4.0
+      x[1] = 6.0
+    }
+    outer = CArray.jit_function("double outer2(double s)") { |s|
+      w = CArray.double(2)
+      fill.call(w)
+      s + w[0] + w[1]
+    }
+    assert_equal(11.0, outer.call(1.0), "1 + 4 + 6")
+    out = CArray.double(2)
+    CArray.jit_for(2) { |i| out[i] = outer.call(i * 1.0) }
+    assert_equal([10.0, 11.0], out.to_a)
+  end
+
+  def test_a_body_may_hand_on_its_own_pointer_parameter
+    # Unchanged behaviour: a pointer the body was given is already an address
+    # and is passed along as C passes one.
+    total = CArray.jit_function("double total3b(const double x[3])") { |x|
+      x[0] + x[1] + x[2]
+    }
+    relay = CArray.jit_function("double relay(const double x[3])") { |x|
+      total.call(x)
+    }
+    given = CArray.double(3)
+    given[0] = 1.0; given[1] = 2.0; given[2] = 4.0
+    assert_equal(7.0, relay.call(given))
+  end
+
+  def test_a_declaration_a_body_cannot_satisfy_is_refused_as_it_is_read
+    wants4 = CArray.jit_function("double wants4(const double x[4])") { |x| x[0] }
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double tooshort(double s)") { |s|
+        w = CArray.double(2)
+        w[0] = s
+        wants4.call(w)
+      }
+    end
+    assert_match(/reads 4 cells/, error.message)
+    assert_match(/has 2/, error.message)
+  end
+
+  def test_an_element_type_a_body_cannot_satisfy_is_refused
+    wants4 = CArray.jit_function("double wants4b(const double x[4])") { |x| x[0] }
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double wrongtype(double s)") { |s|
+        w = CArray.float32(4)
+        (0...4).each { |k| w[k] = s }
+        wants4.call(w)
+      }
+    end
+    assert_match(/float64 array/, error.message)
+    assert_match(/`w` is float32/, error.message)
+  end
+
+  # ---------- recursion ----------
+
+  # Each activation declares its own array, as C does for an automatic.
+  def test_a_recursive_body_gets_one_array_per_call
+    down = CArray.jit_function("double down(double n)") { |n|
+      w = CArray.double(2)
+      w[0] = n
+      w[1] = n <= 0.0 ? 0.0 : down.call(n - 1.0)
+      w[0] + w[1]
+    }
+    assert_equal(6.0, down.call(3.0), "3 + 2 + 1 + 0, each level keeping its n")
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i| out[i] = down.call(i * 1.0) }
+    assert_equal([0.0, 1.0, 3.0, 6.0], out.to_a)
+  end
+
+  # ---------- the bounds checks, in a body ----------
+
+  def test_a_read_off_the_end_in_a_body_raises
+    reader = CArray.jit_function("double reader(double j)") { |j|
+      w = CArray.double(4)
+      k = j.to_i
+      w[k]
+    }
+    assert_raises(IndexError) { reader.call(9.0) }
+  end
+
+  def test_a_write_off_the_end_in_a_body_writes_nothing
+    writer = CArray.jit_function("double writer(double j)") { |j|
+      w = CArray.double(4)
+      w[0] = 11.0
+      k = j.to_i
+      w[k] = 99.0
+      w[0]
+    }
+    # An inside position writes where it says, and cell zero keeps its value.
+    assert_equal(11.0, writer.call(1.0))
+    # Cell zero is the position a refused write would have landed on, and it
+    # is not written: the call raises instead.
+    assert_raises(IndexError) { writer.call(9.0) }
+  end
+
+  def test_the_reach_is_refused_in_a_body_as_the_block_is_read
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double reach(double s)") { |s|
+        t = CArray.double(4)
+        (0...4).each { |k| t[k + 1] = s }
+        t[0]
+      }
+    end
+    assert_match(/reaches cell 4/, error.message)
+  end
+
+  def test_a_while_in_a_body_that_reads_off_the_end_stops
+    output = run_isolated(<<~RUBY)
+      f = CArray.jit_function("double spin(double start)") { |start|
+        w = CArray.double(4)
+        (0...4).each { |k| w[k] = 1.0 }
+        j = start.to_i
+        s = 1.0
+        while s != 0.0
+          s = w[j]
+          j += 1
+        end
+        s
+      }
+      begin
+        f.call(0.0)
+        puts "no error"
+      rescue IndexError
+        puts "IndexError"
+      end
+    RUBY
+    assert_equal("IndexError\n", output)
+  end
+
+  # ---------- the limit is per function ----------
+
+  # Five arrays of 4 KiB each is 20 KiB, past the 16 KiB a single function is
+  # held to.  Written out rather than built by eval: a block made in eval has
+  # no source to read back.
+  def test_one_body_is_held_to_the_total
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double big(double s)") { |s|
+        a = CArray.double(512)
+        b = CArray.double(512)
+        c = CArray.double(512)
+        d = CArray.double(512)
+        e = CArray.double(512)
+        a[0] = s; b[0] = s; c[0] = s; d[0] = s; e[0] = s
+        a[0] + b[0] + c[0] + d[0] + e[0]
+      }
+    end
+    assert_match(/#{CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT}/,
+                 error.message)
+    assert_match(/come to \d+ bytes of stack/, error.message)
+  end
+
+  # The chain is not counted: each function answers for its own frame, which
+  # is the same bargain a deep recursion already takes.
+  def test_a_chain_of_functions_each_within_the_limit_is_taken
+    inner = CArray.jit_function("double inner(double s)") { |s|
+      u = CArray.double(512)
+      v = CArray.double(512)
+      u[0] = s; v[0] = s
+      u[0] + v[0]
+    }
+    middle = CArray.jit_function("double middle(double s)") { |s|
+      u = CArray.double(512)
+      v = CArray.double(512)
+      u[0] = inner.call(s); v[0] = 1.0
+      u[0] + v[0]
+    }
+    outer = CArray.jit_function("double outer3(double s)") { |s|
+      u = CArray.double(512)
+      v = CArray.double(512)
+      u[0] = middle.call(s); v[0] = 1.0
+      u[0] + v[0]
+    }
+    assert_equal(8.0, outer.call(3.0), "3 + 3, then + 1, then + 1")
+    per_function = 512 * 8 * 2
+    assert_operator(per_function, :<=,
+                    CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT,
+                    "each function is inside the limit")
+    assert_operator(per_function * 3, :>,
+                    CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT,
+                    "and the three frames together are past it, which is " \
+                    "not counted: each function answers for its own")
+  end
+
+  # ---------- names, across the paste ----------
+
+  def test_a_body_and_the_kernel_pasting_it_may_use_one_name
+    doubler = CArray.jit_function("double doubler(double x)") { |x|
+      w = CArray.double(2)
+      w[0] = x * 2.0
+      w[0]
+    }
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      w = CArray.double(3)
+      w[0] = i * 1.0
+      out[i] = doubler.call(w[0]) + w[0]
+    }
+    assert_equal([0.0, 3.0, 6.0], out.to_a,
+                 "each `w` is its own function's automatic")
+  end
+
+  def test_a_body_may_name_its_array_after_a_kernel_parameter
+    named = CArray.jit_function("double named(double x)") { |x|
+      error = CArray.double(2)
+      error[0] = x * 3.0
+      error[0]
+    }
+    out = CArray.double(2)
+    CArray.jit_for(2) { |i| out[i] = named.call(i * 1.0) }
+    assert_equal([0.0, 3.0], out.to_a)
+  end
+
+  # ---------- a contraction still takes none ----------
+
+  def test_a_contraction_still_takes_no_local_array
+    x = CArray.double(4, 4).seq!
+    y = CArray.double(4, 4).seq!
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_contract { |i, k, j| w = CArray.double(2); x[i, k] * y[k, j] }
+    end
+    assert_match(/a contraction's body is one expression/, error.message)
   end
 
   # ---------- a name the window already had ----------

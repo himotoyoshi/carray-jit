@@ -39,6 +39,21 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a `CArray.jit_function` body may make a local array and use
+  `sum`/`min`/`max`/`sort` over one, which completes the four entry points.
+  A body closes over nothing, so this is the only place scratch space could
+  come from other than an extra parameter -- and a signature settled
+  elsewhere, a callback's, has no room for one. The array is declared at the
+  head of the function, a recursive body gets one per call, and a body hands
+  one to another compiled function under the same rules a kernel does. The
+  helpers an intrinsic needs travel with the body: carried in its own file
+  when it is compiled alone, and merged into the kernel's preamble when it is
+  pasted, one helper per element type and length however many bodies want it.
+  The stack limits stay per function -- 4 KiB an array, 16 KiB a body -- and a
+  chain of pasted functions is not counted, so a deep chain stands as many
+  frames as it has; that is the bargain a deep recursion already takes. Still
+  excluded: more than one axis, and a contraction.
+
 - New: a local array may be handed to a C function -- one from
   `CArray.jit_function` or `CArray.jit_extern` -- wherever the declaration
   takes a pointer, from any of the four entry points that make one. What the
