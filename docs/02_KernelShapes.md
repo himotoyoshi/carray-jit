@@ -394,9 +394,20 @@ median = CArray.jit_stencil(image, border: :clamp) { |a|
 
 **What the clearing costs.** `CArray.double(9)` starts its cells at zero every time the line runs, which for a body that writes all nine before reading any is work nobody asked for. Measured over the filter above on 2000x2000: **41.3 ns a cell, against `CArray.empty(:float64, [9])`'s 42.2** -- no difference, because the compiler sees the nine stores that follow and drops the clearing as dead. So the zeroed spelling is the one to write here, and it is the one that reads correctly.
 
-Where the clearing is *not* dead it is worth what it costs. A 256-cell histogram built per cell, of which the body writes one: **441.9 ns a cell against 403.8** for the same body with the clearing left out -- 38 ns, about 9% of it, and this time the compiler cannot remove it. That is also the measurement to read the other way round: a 256-cell workspace per cell costs ten times a nine-cell one (441.9 against 41.4 for the median above), and the array's size is the larger part of that bill, not the clearing.
+Where the clearing is *not* dead it costs about what clearing that many bytes costs, and nothing else. Over 1000x1000, with a histogram built per cell and a body that reads back a cell it did not write:
 
-`CArray.empty(:type, [n])` is the spelling that skips it, for a body that writes every cell before reading any: reading one first is out of contract, the way reading under a mask is.
+| cells | of them read back | zeroed | `empty` | the clearing |
+|---|---|---|---|---|
+| 9 | 9 | 9.3 | 9.6 | none |
+| 64 | 64 | 82.8 | 81.5 | none |
+| 256 | 256 | 441.6 | 412.3 | 29.3 |
+| 256 | 9 | 26.9 | 2.7 | 24.2 |
+
+(ns a cell.) Reading the last two rows together is the point: **what costs is how many cells the body reads back, not how many the array has.** A 256-cell array whose body reads nine of them is 2.7 ns a cell; the same array read all the way through is 412. Holding the cells is nearly free -- it is a stack pointer moving -- and the scan is the bill.
+
+The clearing is the separate, smaller column: about 24 ns a cell for 2 KiB of int64, roughly the same whichever body sits on top of it, and lost in the noise at 9 and 64 cells.
+
+`CArray.empty(:type, [n])` is the spelling that skips it, for a body that writes every cell before reading any: reading one first is out of contract, the way reading under a mask is. Where the body writes all nine and then reads them, as the median above does, the clearing is already free and the plain constructor is the one to write.
 
 The same row of a captured array is still the right answer for a workspace that outlives the cell, or one past the 4 KiB a local array is held to.
 

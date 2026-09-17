@@ -2000,6 +2000,21 @@ class CArray
       # What the two share is only the two ways a position is checked.
       def local_array_subscripts (name, shape, arguments, location)
         unless arguments.size == shape.size
+          # A block may give one of its own arrays the name of the window it
+          # was handed.  Ruby reads that as rebinding the parameter, and so
+          # does this -- but then the window's own spelling stops working, and
+          # the axis count alone is a poor account of why.
+          if @windows.include?(name)
+            raise Unsupported.new(
+              "`#{name}` is the window this block was given, and the block " \
+              "also makes an array of its own under that name -- which " \
+              "rebinds it, here as in Ruby, so from that line on `#{name}` " \
+              "is the array and the window has no name left. " \
+              "`#{name}[#{Array.new(rank, 0).join(', ')}]` is the window's " \
+              "spelling and wants #{rank} #{rank == 1 ? 'offset' : 'offsets'}; " \
+              "give the array a name of its own",
+              location)
+          end
           raise Unsupported.new(
             "`#{name}` has #{shape.size == 1 ? 'one axis' : "#{shape.size} axes"}, " \
             "so it takes #{shape.size == 1 ? 'one subscript' : "#{shape.size} subscripts"}, " \

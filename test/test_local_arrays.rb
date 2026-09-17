@@ -1299,6 +1299,51 @@ class TestLocalArrays < Minitest::Test
     end
   end
 
+  # ---------- a name the window already had ----------
+
+  # Giving one of the block's own arrays the window's name rebinds it, here as
+  # in Ruby, so the window has no name left afterwards.  What it computes is
+  # therefore right; what was wrong was the account of it, the axis count
+  # alone saying nothing about where the window went.
+  def test_an_array_may_take_the_windows_name_and_rebinds_it
+    image = CArray.double(4, 4).seq!
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      a = CArray.double(9)
+      a[0] = 7.0
+      a[0]
+    }
+    assert_equal([[7.0] * 4] * 4, out.to_a,
+                 "Ruby rebinds the parameter here, and so does this")
+  end
+
+  def test_the_window_may_be_read_before_its_name_is_taken
+    image = CArray.double(4, 4).seq!
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      v = a[0, 0]
+      a = CArray.double(9)
+      a[0] = v * 2.0
+      a[0]
+    }
+    reference = CArray.double(4, 4) { |r, c| image[r, c] * 2.0 }
+    assert_equal(reference.to_a, out.to_a)
+  end
+
+  def test_reaching_the_window_after_its_name_is_taken_says_where_it_went
+    image = CArray.double(4, 4).seq!
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_stencil(image, border: :clamp) { |a|
+        a = CArray.double(9)
+        a[0] = 1.0
+        a[-1, 0] + a[1, 0]
+      }
+    end
+    assert_match(/`a` is the window this block was given/, error.message)
+    assert_match(/rebinds it, here as in Ruby/, error.message)
+    assert_match(/`a\[0, 0\]` is the window's spelling and wants 2 offsets/,
+                 error.message)
+    assert_match(/give the array a name of its own/, error.message)
+  end
+
   # ---------- what a map block may end with ----------
 
   def test_a_map_block_may_not_end_by_making_an_array
