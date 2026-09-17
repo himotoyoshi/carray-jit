@@ -1050,7 +1050,7 @@ class CArray
       def dispatcher
         tests = @arrays.map { |array|
           "strides[#{@stride_offsets.fetch(array) + array_rank(array) - 1}] == " \
-          "(int64_t) sizeof(#{storage_c_type(array)})"
+          "(int64_t) sizeof(#{storage_c_type(array_storage(array))})"
         }
         # A kernel reaching no array cell has nothing to be contiguous about
         # -- it can only be one whose work is a call, the arrays it touches
@@ -1175,8 +1175,9 @@ class CArray
           # Typed by the array rather than by the parameter it will be passed
           # to: the caller has already checked that the two agree, and the
           # array is the one that owns the memory.
-          lines << "  #{storage_c_type(array)} *const #{bare_name(array)} = " \
-                   "(#{storage_c_type(array)} *) data[#{index}];\n"
+          storage = storage_c_type(array_storage(array))
+          lines << "  #{storage} *const #{bare_name(array)} = " \
+                   "(#{storage} *) data[#{index}];\n"
         end
         lines.empty? ? "" : lines.join + "\n"
       end
@@ -1452,17 +1453,22 @@ class CArray
       # report -- but writing outside it cannot: the report would arrive after
       # the damage.  So a scatter works its positions out first, and writes
       # only if every one of them is inside.
+      #
+      # Each position carries the text of the extent it is tested against
+      # rather than an array and an axis to look one up from.  An operand's
+      # extent is a variable the kernel was handed, and there are extents that
+      # are not one of those; what the test needs is the text either way.
       def guarded (write, indent)
         positions = scattered_positions(write)
         return yield(indent) if positions.empty?
 
         lines = "#{indent}{\n"
-        positions.each do |temporary, node, array, axis|
+        positions.each do |temporary, node, _extent|
           lines << "#{indent}  const int64_t #{temporary} = #{emit(node, :int64)};\n"
           @position_temporaries[node] = temporary
         end
-        test = positions.map { |temporary, _, array, axis|
-          "#{temporary} >= 0 && #{temporary} < #{extent_name(array, axis)}"
+        test = positions.map { |temporary, _node, extent|
+          "#{temporary} >= 0 && #{temporary} < #{extent}"
         }.join(" && ")
         lines << "#{indent}  if ( #{test} ) {\n"
         lines << yield("#{indent}    ")
@@ -1470,16 +1476,18 @@ class CArray
         lines << "#{indent}    if ( #{error_argument} ) *#{error_argument} = 2;\n"
         lines << "#{indent}  }\n"
         lines << "#{indent}}\n"
-        positions.each { |_, node, _, _| @position_temporaries.delete(node) }
+        positions.each { |_, node, _| @position_temporaries.delete(node) }
         lines
       end
 
+      # [temporary, position, extent text] for each axis of a write that is
+      # addressed at a position only the running kernel knows.
       def scattered_positions (write)
         subscripts = write_subscripts(write)
         subscripts.each_with_index.filter_map { |(index, offset), axis|
           next unless index.nil? && offset.is_a?(Node) &&
                       !Analyzer.fixed_subscript?(offset)
-          [next_temporary("position"), offset, write.array, axis]
+          [next_temporary("position"), offset, extent_name(write.array, axis)]
         }
       end
 
@@ -1835,10 +1843,11 @@ class CArray
           type = expression.type
           "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{temporary};\n" +
             emit_conditional_statement(expression, temporary, type, indent) +
-            "#{indent}#{target} = #{cast_to_storage(temporary, type, write.array)};\n"
+            "#{indent}#{target} = " \
+            "#{cast_to_storage(temporary, type, array_storage(write.array))};\n"
         else
           value = cast_to_storage(emit(expression, expression.type),
-                                  expression.type, write.array)
+                                  expression.type, array_storage(write.array))
           "#{indent}#{target} = #{value};\n"
         end
       end
@@ -1853,31 +1862,46 @@ class CArray
         "#{indent}}\n"
       end
 
-      def storage_c_type (array)
-        STORAGE_C_TYPES.fetch(@storage_types.fetch(array))
+      # What a cell is held in, and the casts between that and the type the
+      # kernel computes in.
+      #
+      # Each is asked about a storage type rather than about an array's name.
+      # An operand's storage type is looked up under its name, but not every
+      # array a body reaches is an operand -- so a helper that did the lookup
+      # itself could only answer for the ones that are, and the answer for
+      # anything else would be a KeyError out of the middle of code
+      # generation.  The name that has one is looked up by #array_storage at
+      # the call site.
+      def storage_c_type (storage)
+        STORAGE_C_TYPES.fetch(storage)
       end
 
-      def cast_to_storage (text, type, array)
+      # The storage type of an operand, by the name the block reached it by.
+      def array_storage (array)
+        @storage_types.fetch(array)
+      end
+
+      def cast_to_storage (text, type, storage)
         # Storing into a boolean array normalises: CArray's boolean is a byte
         # holding 0 or 1, and a kernel is not the place that invariant stops
         # being true.
-        return "(uint8_t)((#{text}) ? 1 : 0)" if boolean_storage?(array)
-        target = storage_c_type(array)
+        return "(uint8_t)((#{text}) ? 1 : 0)" if boolean_storage?(storage)
+        target = storage_c_type(storage)
         return text if COMPUTATION_C_TYPES.fetch(type) == target
         "(#{target})(#{text})"
       end
 
       # The cast that takes a stored cell to the type the kernel computes in,
       # or nil where the two already agree.
-      def widening_cast (array, type)
+      def widening_cast (storage, type)
         return nil if type == :boolean
         wanted = COMPUTATION_C_TYPES.fetch(type)
-        return nil if storage_c_type(array) == wanted
+        return nil if storage_c_type(storage) == wanted
         "(#{wanted})"
       end
 
-      def boolean_storage? (array)
-        @storage_types.fetch(array, nil) == "boolean"
+      def boolean_storage? (storage)
+        storage == "boolean"
       end
 
       # A Ruby name is not always a C one: `Foo::TABLE` names one thing in
@@ -2198,7 +2222,7 @@ class CArray
           return "#{mask_pointer_name(array)}[#{terms.join(' + ')}]"
         end
 
-        type = storage_c_type(array)
+        type = storage_c_type(array_storage(array))
         outer = (0...(count - 1)).map { |axis|
           index, offset = subscripts[axis]
           "(#{index_expression(array, axis, index, offset)}) * " \
@@ -2275,7 +2299,7 @@ class CArray
         # business, and cast_to_storage does it.
         when ElementRead
           cell = cell_reference(node.array, node.subscripts)
-          widening = widening_cast(node.array, node.type)
+          widening = widening_cast(array_storage(node.array), node.type)
           if widening
             ["#{widening}#{parenthesize(cell, LEAF_PRECEDENCE, UNARY_PRECEDENCE)}",
              UNARY_PRECEDENCE]
