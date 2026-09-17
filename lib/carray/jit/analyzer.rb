@@ -358,6 +358,10 @@ class CArray
         @free_names = []
         @index_names = []
         @local_names = []
+        # The locals each scope holds, innermost last: the kernel's block --
+        # or a function's -- and one for every inner loop's block around the
+        # statement being built.  `while` and `if` make none, as in Ruby.
+        @scopes = [[]]
         @assigned_names = []
         @scalar_names = []
         @c_function_names = []
@@ -1056,7 +1060,7 @@ class CArray
             return MaskWrite.new(node.name, node.location)
           end
           expression = build(node.value)
-          assign_local(node.name, expression, node.location)
+          assign_local(node.name, expression, node.location, node.depth)
         when Prism::LocalVariableOperatorWriteNode
           build_operator_assignment(node)
         when Prism::IndexOperatorWriteNode
@@ -1337,9 +1341,11 @@ class CArray
         @index_sources[internal] = index
         @inner_ranges[internal] = [from, to, step]
         @loop_depth += 1
+        @scopes.push([])
         statements = statements_of(node.block.body).map { |inner|
           build_statement(inner)
         }
+        @scopes.pop
         @loop_depth -= 1
         @inner_names.pop
         @inner_aliases.delete(index)
@@ -1406,7 +1412,12 @@ class CArray
       # cell -- the one the loop is on, the same cell every read in the block
       # is at.  A name that is not an array is a local, as it is anywhere
       # else.
-      def assign_local (name, expression, location)
+      #
+      # `depth` is Prism's: how many scopes out the variable is.  Counted from
+      # the statement, it says which of the scopes here holds the local -- and
+      # one past the kernel's block is a name of the method around it, which
+      # the kernel holds as its own, as it always has.
+      def assign_local (name, expression, location, depth = 0)
         if @whole_array && @array_names.include?(name)
           return whole_array_write(name, expression, location)
         end
@@ -1424,7 +1435,9 @@ class CArray
             location)
         end
         @local_names << name unless @local_names.include?(name)
-        Assignment.new(name, expression, location)
+        scope = [@scopes.size - 1 - depth, 0].max
+        @scopes[scope] << name unless @scopes[scope].include?(name)
+        Assignment.new(name, expression, location, scope)
       end
 
       # `x += e` is `x = x + e`, and is read as exactly that: the name is
@@ -1435,7 +1448,7 @@ class CArray
         operator = assignment_operator(node)
         read = build_name_read(node.name, node.location)
         expression = combined(operator, read, build(node.value), node.location)
-        assign_local(node.name, expression, node.location)
+        assign_local(node.name, expression, node.location, node.depth)
       end
 
       # `a[i] += e` is `a[i] = a[i] + e`, cell for cell -- including under a
@@ -1612,6 +1625,14 @@ class CArray
           return IndexVariable.new(@inner_aliases.fetch(name, name), nil, location)
         end
         if @local_names.include?(name)
+          # A local of an inner loop's block that has closed is not in sight:
+          # Ruby reads the same name after the block as a method call.
+          unless @scopes.any? { |scope| scope.include?(name) }
+            raise Unsupported.new(
+              "`#{name}` belongs to the loop block it was assigned in, and is " \
+              "not there after it; give it a value before the loop",
+              location)
+          end
           return LocalRead.new(name, location)
         end
         if @cell_names.include?(name)

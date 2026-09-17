@@ -450,7 +450,6 @@ class CArray
         @error_parameter = error_parameter
         @body_reports = false
         @contiguous = true
-        @declared_locals = {}
         @temporary_count = 0
         @carried_masks = []
         statements = @analyzer.body.statements
@@ -459,6 +458,7 @@ class CArray
         @returns_nothing = return_type.nil?
         held = @returns_nothing ? statements : statements[0..-2]
         lines = held.map { |statement| emit_statement(statement, "  ") }.join
+        lines = local_declarations(@analyzer.body, "  ") + lines
         value = @returns_nothing ? nil : emit(statements.last, return_type)
         parameters = parameter_names.zip(parameter_c_types)
                        .map { |parameter, type| type.declare(parameter) }
@@ -1079,7 +1079,6 @@ class CArray
 
       def build_body (contiguous)
         @contiguous = contiguous
-        @declared_locals = {}
         @temporary_count = 0
         @carried_masks = []
         # Whether this body has a way to report -- asked of the statements
@@ -1087,10 +1086,24 @@ class CArray
         # kernel carries every extent of its arrays so the border rule has
         # them, which says nothing about whether a cell can fail.
         @body_reports = false
+        indent = "  " + "  " * @rank
         statements = @analyzer.body.statements.map { |statement|
-          emit_statement(statement, "  " + "  " * @rank)
+          emit_statement(statement, indent)
         }.join
-        "{\n" + declarations + loop_open + statements + loop_close + "}\n"
+        "{\n" + declarations + loop_open +
+          local_declarations(@analyzer.body, indent) + statements +
+          loop_close + "}\n"
+      end
+
+      # The locals a scope holds, declared at the head of its block with no
+      # value: every assignment below is a plain one, wherever it stands --
+      # inside a `while` or an arm of an `if` included -- and nothing is read
+      # before it is written, which the typing has already made sure of.
+      def local_declarations (scope, indent)
+        scope.declarations.map { |name, type|
+          "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{name};\n" +
+            (@masked ? "#{indent}uint8_t #{local_mask_name(name)};\n" : "")
+        }.join
       end
 
       def array_rank (array)
@@ -1535,9 +1548,10 @@ class CArray
         opening = "#{indent}for (int64_t #{index} = #{emit(loop_node.from, :int64)}; " \
                   "#{index} #{step.positive? ? '<' : '>'} " \
                   "#{emit(loop_node.to, :int64)}; #{stride_step(index, step)}) {\n"
-        body = loop_node.statements.map { |statement|
-          emit_statement(statement, indent + "  ")
-        }.join
+        body = local_declarations(loop_node, indent + "  ") +
+               loop_node.statements.map { |statement|
+                 emit_statement(statement, indent + "  ")
+               }.join
         opening + inner_loop_guard(indent) + body + "#{indent}}\n"
       end
 
@@ -1563,9 +1577,10 @@ class CArray
         assignment = loop_node.statements.first
         return nil unless assignment.is_a?(Assignment)
         name = assignment.binding_name
-        # Declared before this loop, at this type, so the fold continues a
-        # value rather than starting one.
-        return nil unless @declared_locals[name] == assignment.type
+        # Live when this loop was entered, at this type, so the fold continues
+        # a value rather than starting one.
+        return nil unless loop_node.entering&.[](assignment.name) ==
+                          [assignment.type, name]
 
         expression = assignment.expression
         return nil unless expression.is_a?(BinaryOperation)
@@ -1721,24 +1736,20 @@ class CArray
       def emit_assignment (assignment, indent)
         name = assignment.binding_name
         type = assignment.type
-        declared = @declared_locals.key?(name)
-        @declared_locals[name] = type
 
         # A local carries a mask alongside its value, so that reading it later
         # is the same as reading what it was computed from.
         mask = if @masked
-                 "#{indent}#{declared ? '' : 'uint8_t '}" \
-                 "#{local_mask_name(name)} = #{emit_mask(assignment.expression)};\n"
+                 "#{indent}#{local_mask_name(name)} = " \
+                 "#{emit_mask(assignment.expression)};\n"
                else
                  ""
                end
 
         if assignment.expression.is_a?(Conditional)
-          lines = declared ? "" : "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{name};\n"
-          lines + emit_conditional_statement(assignment.expression, name, type, indent) + mask
+          emit_conditional_statement(assignment.expression, name, type, indent) + mask
         else
-          prefix = declared ? "" : "#{COMPUTATION_C_TYPES.fetch(type)} "
-          "#{indent}#{prefix}#{name} = #{emit(assignment.expression, type)};\n" + mask
+          "#{indent}#{name} = #{emit(assignment.expression, type)};\n" + mask
         end
       end
 

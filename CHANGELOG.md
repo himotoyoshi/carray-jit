@@ -39,6 +39,18 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a kernel or `jit_function` body that reads a local after an inner
+  loop's block in which the local was first assigned, or after a `while` in
+  which it was first assigned, is refused with a message naming the local.
+  These did not compile before either, failing in the C compiler instead.
+  Give the local a value before the loop.
+
+- Fix: two inner loops in one kernel or `jit_function` body may assign a
+  local of the same name, at one type or two, and a local assigned inside a
+  `while` may be read after it when it was also assigned before it. The
+  first failed in the C compiler or was refused as changing type; the second
+  failed in the C compiler.
+
 - Fix: a loop in a `jit_function` body, and a `while` or inner loop in a
   kernel whose body held the kernel's first way to fail, kept running after
   an integer division by zero, a computed index out of range, `clamp` or

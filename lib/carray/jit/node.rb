@@ -183,6 +183,9 @@ class CArray
       # a descending loop ends one below the last index it visits, as an
       # extent written with `step` does.
       attr_reader :index, :from, :to, :step, :statements
+      # The locals its block declares, as [C name, type], and the ones that
+      # were live when the loop was entered -- both settled by the typing.
+      attr_accessor :declarations, :entering
       def initialize (index, from, to, statements, location = nil, step = 1)
         super(location)
         @index = index
@@ -598,11 +601,14 @@ class CArray
 
     class Assignment < Node
       attr_accessor :binding_name
-      attr_reader :name, :expression
-      def initialize (name, expression, location = nil)
+      # Which scope the local belongs to, counted out from the kernel's block
+      # -- or a function's -- at 0, one more for each inner loop's block.
+      attr_reader :name, :expression, :scope
+      def initialize (name, expression, location = nil, scope = 0)
         super(location)
         @name = name
         @expression = expression
+        @scope = scope
       end
       def children
         [@expression]
@@ -633,6 +639,9 @@ class CArray
 
     class KernelBody < Node
       attr_reader :statements
+      # The locals the kernel's block, or a function's, declares, as
+      # [C name, type].
+      attr_accessor :declarations
       def initialize (statements)
         super(nil)
         @statements = statements

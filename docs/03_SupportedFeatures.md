@@ -17,9 +17,12 @@ x = 1.5        # now x is a Float
 No single C variable is both, so types are settled in one forward pass and each type gets a variable of its own:
 
 ```c
-int64_t x = INT64_C(5);
-int64_t y = x >> 1;        /* the integer division Ruby did */
-double x__2 = 1.5;
+int64_t x;
+int64_t y;
+double x__2;
+x = INT64_C(5);
+y = x >> 1;                /* the integer division Ruby did */
+x__2 = 1.5;
 ```
 
 Reassignment at the same type reuses the variable. A local left with different types on the two arms of a branch does not survive it, and reading it after says so.
@@ -33,6 +36,8 @@ x = 2
 ```
 
 Ruby divides in integers on the first pass and in floats after; no single C variable does that. Writing `x = 2.0` settles it. A local that lives only inside the body may still change type, because it is assigned before it is read on every pass and so nothing crosses the edge.
+
+A local belongs to the scope Ruby gives it, and is declared at the head of the C block that stands for that scope. The kernel's block is one scope and each inner loop's block is another, so two loops side by side may both use `t`, at one type or two. `while` and `if` make no scope: a value assigned inside them is the same variable after them. What is assigned for the first time inside a loop's block is not there after the block -- Ruby reads the name there as a method call -- and what is assigned for the first time inside a `while` is refused if it is read after the loop, since the loop may run no passes and Ruby's value would then be nil. Give either one a value before the loop.
 
 The version before this one settled locals by joining every assignment's type and declaring the variable once. On the example above it printed the right answer -- by dividing in double where Ruby divided in integers, and then truncating 1.5 to 1 on the way back. Two errors that happened to cancel.
 

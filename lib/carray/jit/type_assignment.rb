@@ -209,6 +209,12 @@ class CArray
         }
         @bindings = {}
         @binding_counts = Hash.new(0)
+        # The scope nodes open around the statement being typed, outermost
+        # first, which is what an assignment's scope counts along.
+        @scope_nodes = []
+        # A name a `while` gave its first value, by that `while`: after the
+        # loop it may not have one, and the refusal says why.
+        @assigned_in_while = {}
         assign
       end
 
@@ -234,14 +240,27 @@ class CArray
         @bindings[name].last
       end
 
+      # A local is declared once per C variable, at the head of the block for
+      # its scope.  A binding the scope already declared is not declared again.
+      def declare (assignment)
+        scope = @scope_nodes.fetch(assignment.scope)
+        entry = [assignment.binding_name, assignment.type]
+        scope.declarations << entry unless scope.declarations.include?(entry)
+      end
+
       def walk (node)
         case node
         when KernelBody
+          node.declarations = []
+          @scope_nodes.push(node)
           node.statements.each { |statement| walk(statement) }
+          @scope_nodes.pop
         when Assignment
           walk(node.expression)
           node.type = node.expression.type
           node.binding_name = bind(node.name, node.type)
+          @assigned_in_while.delete(node.name)
+          declare(node)
         when ElementWrite
           walk_subscripts(write_subscripts(node))
           walk(node.expression)
@@ -264,8 +283,16 @@ class CArray
           walk(node.from)
           walk(node.to)
           entering = @bindings.dup
+          node.entering = entering
+          node.declarations = []
+          @scope_nodes.push(node)
           node.statements.each { |statement| walk(statement) }
+          @scope_nodes.pop
           verify_loop_carries_one_type(entering, node)
+          # What the block made is the block's.  Past it, the names outside
+          # are what they were on the way in, carrying whatever type the
+          # body left them -- which the check above says is the same one.
+          @bindings = @bindings.select { |name, _| entering.key?(name) }
         when While
           # The condition first, and that is not only an order: a name the
           # body introduces is not bound yet when the condition is walked, so
@@ -275,6 +302,12 @@ class CArray
           entering = @bindings.dup
           node.statements.each { |statement| walk(statement) }
           verify_loop_carries_one_type(entering, node)
+          # The body may run no passes, so what it gave a first value to may
+          # have none after it -- Ruby's nil, and a C variable nothing wrote.
+          (@bindings.keys - entering.keys).each do |name|
+            @assigned_in_while[name] = node
+          end
+          @bindings = merge_bindings(entering, @bindings)
         when Print
           node.arguments.each { |argument| walk(argument) }
         when CallStatement
@@ -331,6 +364,12 @@ class CArray
           node.type = type
         when LocalRead
           current = @bindings[node.name]
+          if !current && (loop = @assigned_in_while[node.name])
+            raise Unsupported.new(
+              "`#{node.name}` is first assigned inside this `while`, which may " \
+              "run no passes; give it a value before the loop",
+              loop.location)
+          end
           unless current
             raise Unsupported.new("`#{node.name}` is read before it is assigned",
                                   node.location)

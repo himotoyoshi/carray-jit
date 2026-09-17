@@ -142,9 +142,9 @@ class TestPrimitives < Minitest::Test
 
   def test_a_retyped_local_gets_its_own_c_variable
     kernel = compile_kernel("->(i) { x = 5; y = x / 2; x = 1.5; a[i] = y + x }")
-    assert_includes(kernel.c_source, "int64_t x =")
-    assert_includes(kernel.c_source, "double x__2 =")
-    assert_includes(kernel.c_source, "int64_t y =",
+    assert_includes(kernel.c_source, "int64_t x;")
+    assert_includes(kernel.c_source, "double x__2;")
+    assert_includes(kernel.c_source, "int64_t y;",
                     "the division reads the integer binding")
   end
 
