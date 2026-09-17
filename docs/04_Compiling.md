@@ -151,7 +151,7 @@ carray_jit_contiguous (char **pointers, int64_t *strides, int64_t *bounds, ...)
 }
 ```
 
-Every kernel has that same signature, which is what lets one Fiddle::Function shape serve all of them; the per-kernel detail arrives in the buffers and is unpacked into named locals at the top, where it also reads better. Abridged above are the ones this kernel barely uses: `reals` and `integers` for the captured scalars, `functions` and `data` for the address of each C function the block called and of each array it handed to one whole, `mask_pointers` and `mask_strides` for the masks, and `error` for the one thing a cell can raise. `bounds` carries a start, a limit and a step per axis -- which is also what a chunk looks like, and is why CArray's sweep can call this kernel directly.
+Every kernel has that same signature, which is what lets one Fiddle::Function shape serve all of them; the per-kernel detail arrives in the buffers and is unpacked into named locals at the top, where it also reads better. Abridged above are the ones this kernel barely uses: `reals` and `integers` for the captured scalars, `functions` and `data` for the address of each C function the block called and of each array it handed to one whole, `mask_pointers` and `mask_strides` for the masks, and `error` for the one thing a cell can raise. `bounds` carries a start, a limit and a step per axis -- which is also what a chunk looks like, and is why CArray's sweep can call this kernel directly. A name in the block that the generated C already has a use for -- a local called `error` or `p_legendre`, say -- is written as `carray_jit_name1_error` -- a number, then the name -- and every other name is the one the block used.
 
 ### The carray-jit command
 

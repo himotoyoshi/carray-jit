@@ -61,14 +61,23 @@ class CArray
     end
 
     class LocalRead < Node
-      # The C variable this read resolves to.  A Ruby local may hold an
-      # Integer at one point in the body and a Float at another; a C variable
-      # cannot, so each type gets its own.
-      attr_accessor :binding_name
+      # Which of the local's variables this read resolves to, counted from 1.
+      # A Ruby local may hold an Integer at one point in the body and a Float
+      # at another; a C variable cannot, so each type gets its own.
+      attr_accessor :binding
+      # Set only on a read the generator makes of one partial accumulator of
+      # a split fold: which one.
+      attr_accessor :lane
       attr_reader :name
       def initialize (name, location = nil)
         super(location)
         @name = name
+      end
+      # What says two reads are of one variable: the name the block wrote and
+      # which of its bindings.  Not a spelling -- the block may itself write a
+      # local spelled like another one's second binding.
+      def local
+        [@name, @binding]
       end
     end
 
@@ -183,8 +192,9 @@ class CArray
       # a descending loop ends one below the last index it visits, as an
       # extent written with `step` does.
       attr_reader :index, :from, :to, :step, :statements
-      # The locals its block declares, as [C name, type], and the ones that
-      # were live when the loop was entered -- both settled by the typing.
+      # The locals its block declares, as [name, binding, type], and the ones
+      # that were live when the loop was entered, by name as [type, binding]
+      # -- both settled by the typing.
       attr_accessor :declarations, :entering
       def initialize (index, from, to, statements, location = nil, step = 1)
         super(location)
@@ -600,7 +610,8 @@ class CArray
     end
 
     class Assignment < Node
-      attr_accessor :binding_name
+      # Which of the local's variables this writes, as LocalRead#binding.
+      attr_accessor :binding
       # Which scope the local belongs to, counted out from the kernel's block
       # -- or a function's -- at 0, one more for each inner loop's block.
       attr_reader :name, :expression, :scope
@@ -609,6 +620,9 @@ class CArray
         @name = name
         @expression = expression
         @scope = scope
+      end
+      def local
+        [@name, @binding]
       end
       def children
         [@expression]
@@ -640,7 +654,7 @@ class CArray
     class KernelBody < Node
       attr_reader :statements
       # The locals the kernel's block, or a function's, declares, as
-      # [C name, type].
+      # [name, binding, type].
       attr_accessor :declarations
       def initialize (statements)
         super(nil)

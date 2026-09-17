@@ -39,6 +39,18 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a block parameter that names a loop index is refused when the
+  generated C already uses that name for a captured array (`p_a`, `m_a`,
+  `a_s0`, `a_ms0` or `a_n0` for an array `a`), or when it contains `__` or
+  starts with `carray_jit_`. Rename the index.
+
+- Fix: a local in a kernel or `jit_function` body may be given a name the
+  generated C also uses -- a kernel parameter such as `error` or `data`, a C
+  keyword such as `int`, `a_n0` or `p_a` beside a captured array `a`, or a
+  name containing `__`. Such a local failed to compile, raised an
+  `IndexError` for an index in range, or shared its value with another local;
+  it is now renamed in the generated C only.
+
 - Change: a kernel or `jit_function` body that reads a local after an inner
   loop's block in which the local was first assigned, or after a `while` in
   which it was first assigned, is refused with a message naming the local.

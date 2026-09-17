@@ -393,6 +393,7 @@ class CArray
         @position_temporaries = {}.compare_by_identity
         @origin = origin
         @block_source = block_source
+        refuse_generated_indices
       end
 
       attr_reader :arrays, :reals, :integers, :complexes, :unsigned_integers,
@@ -1100,9 +1101,10 @@ class CArray
       # inside a `while` or an arm of an `if` included -- and nothing is read
       # before it is written, which the typing has already made sure of.
       def local_declarations (scope, indent)
-        scope.declarations.map { |name, type|
-          "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{name};\n" +
-            (@masked ? "#{indent}uint8_t #{local_mask_name(name)};\n" : "")
+        scope.declarations.map { |name, binding, type|
+          variable = local_c_name(name, binding)
+          "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{variable};\n" +
+            (@masked ? "#{indent}uint8_t #{local_mask_name(variable)};\n" : "")
         }.join
       end
 
@@ -1576,11 +1578,11 @@ class CArray
 
         assignment = loop_node.statements.first
         return nil unless assignment.is_a?(Assignment)
-        name = assignment.binding_name
-        # Live when this loop was entered, at this type, so the fold continues
-        # a value rather than starting one.
+        local = assignment.local
+        # Live when this loop was entered, at this type and binding, so the
+        # fold continues a value rather than starting one.
         return nil unless loop_node.entering&.[](assignment.name) ==
-                          [assignment.type, name]
+                          [assignment.type, assignment.binding]
 
         expression = assignment.expression
         return nil unless expression.is_a?(BinaryOperation)
@@ -1595,9 +1597,9 @@ class CArray
         return nil if literal_extent(loop_node)&.<(PARTIAL_ACCUMULATORS)
 
         left, right = expression.left, expression.right
-        if accumulator?(left, name) && !mentions_local?(right, name)
+        if accumulator?(left, local) && !mentions_local?(right, local)
           [assignment, operator]
-        elsif accumulator?(right, name) && !mentions_local?(left, name)
+        elsif accumulator?(right, local) && !mentions_local?(left, local)
           [assignment, operator]
         end
       end
@@ -1620,13 +1622,14 @@ class CArray
         end
       end
 
-      def accumulator? (node, name)
-        node.is_a?(LocalRead) && node.binding_name == name
+      # `local` is [name, binding]: the variable, not how it is spelled.
+      def accumulator? (node, local)
+        node.is_a?(LocalRead) && node.local == local
       end
 
-      def mentions_local? (node, name)
-        return true if accumulator?(node, name)
-        node.children.any? { |child| mentions_local?(child, name) }
+      def mentions_local? (node, local)
+        return true if accumulator?(node, local)
+        node.children.any? { |child| mentions_local?(child, local) }
       end
 
       # The fold, run as PARTIAL_ACCUMULATORS chains instead of one, with the
@@ -1647,12 +1650,16 @@ class CArray
 
       def emit_split_reduction (loop_node, accumulation, indent)
         assignment, operator = accumulation
-        name  = assignment.binding_name
+        name  = local_c_name(assignment.name, assignment.binding)
         type  = assignment.type
         index = loop_node.index
         base  = "#{index}__base"
         limit = "#{index}__end"
-        lanes = (0...PARTIAL_ACCUMULATORS).map { |lane| "#{name}__p#{lane}" }
+        # A lane belongs to the accumulator, so its C name comes the way every
+        # local's does.
+        lanes = (0...PARTIAL_ACCUMULATORS).map { |lane|
+          local_c_name(assignment.name, assignment.binding, lane)
+        }
         identity = (operator == :* ? ONES : ZEROES).fetch(type)
 
         inner = indent + "  "
@@ -1662,7 +1669,7 @@ class CArray
         text += "#{inner}#{COMPUTATION_C_TYPES.fetch(type)} #{lanes.first} = #{name}" +
                 lanes.drop(1).map { |lane| ", #{lane} = #{identity}" }.join + ";\n"
         rounds = lanes.each_with_index.map { |lane, offset|
-          term = lane_expression(assignment.expression, name, lane)
+          term = lane_expression(assignment.expression, assignment.local, offset)
           "#{inner}  {\n" \
           "#{inner}    const int64_t #{index} = #{base} + #{offset};\n" \
           "#{inner}    #{lane} = #{emit(term, type)};\n" \
@@ -1684,11 +1691,12 @@ class CArray
       # The same term, folding into one chain instead of into the
       # accumulator.  The accumulator appears once and at the top, which is
       # what reduction_accumulation checked, so only that operand moves.
-      def lane_expression (expression, name, lane)
+      def lane_expression (expression, local, lane)
         operands = [expression.left, expression.right].map { |operand|
-          next operand unless accumulator?(operand, name)
+          next operand unless accumulator?(operand, local)
           read = LocalRead.new(operand.name, operand.location)
-          read.binding_name = lane
+          read.binding = operand.binding
+          read.lane = lane
           read.type = operand.type
           read
         }
@@ -1734,7 +1742,7 @@ class CArray
       end
 
       def emit_assignment (assignment, indent)
-        name = assignment.binding_name
+        name = local_c_name(assignment.name, assignment.binding)
         type = assignment.type
 
         # A local carries a mask alongside its value, so that reading it later
@@ -1796,7 +1804,7 @@ class CArray
         when ElementRead
           cell_reference(node.array, node.subscripts, :mask)
         when LocalRead
-          local_mask_name(node.binding_name)
+          local_mask_name(local_c_name(node.name, node.binding, node.lane))
         when Conditional
           branches = "#{emit(node.condition, :boolean)} ? " \
                      "#{emit_mask(node.consequent)} : #{emit_mask(node.alternative)}"
@@ -1927,6 +1935,83 @@ class CArray
 
       def bare_name (name)
         bare_names.fetch(name) { c_name(name) }
+      end
+
+      # The names this generator writes of its own, beside the kernel's
+      # parameters and C's keywords: every decoration of every array the
+      # kernel reaches, at every axis it has, and a borrowed function's type.
+      # All of them, whether or not this kernel ends up writing each one, so
+      # that the set is settled before anything is emitted.
+      def decorated_names
+        @decorated_names ||=
+          @arrays.flat_map { |array|
+            [pointer_name(array), mask_pointer_name(array)] +
+              (0...array_rank(array)).flat_map { |axis|
+                [stride_name(array, axis), mask_stride_name(array, axis),
+                 extent_name(array, axis)]
+              }
+          } + @address_functions.keys.map { |name| c_function_type_name(name) }
+      end
+
+      # Whether a name is one the generator writes, or could.  Everything it
+      # makes up that is not a parameter, a keyword or a decoration has `__`
+      # in it or starts `carray_jit_` -- the suffixes a local's bindings take,
+      # an inner index's second name, the temporaries -- so those two are
+      # taken whole.
+      def generated_name? (text)
+        RESERVED_NAMES.include?(text.to_sym) || text.include?("__") ||
+          text.start_with?("carray_jit_") || decorated_names.include?(text)
+      end
+
+      # The C name of each local the block assigns, by its Ruby name.  A local
+      # is ordinary Ruby and may be called anything, including a name the
+      # generator writes -- `a_n0`, `error`, `int`, `x__2` -- and a local of
+      # that name declared in the kernel's body hid what it named.  So it is
+      # moved, to `carray_jit_name<K>_<name>`, K counting the moved locals from
+      # 1 in the order the body first assigns them, so the C -- and the cache
+      # key it is part of -- is the same every time.  One that does not
+      # collide keeps the name the block gave it, which is what a reader of
+      # the C looks for.
+      #
+      # The number is what keeps two moved locals apart once a suffix is on
+      # them.  A Ruby identifier cannot start with a digit, so the digits after
+      # `carray_jit_name` run to the next `_`, and a different K is a different
+      # C name whatever `__2`, `__p0` or `__mask` follows.
+      def local_c_names
+        @local_c_names ||= begin
+          moved = 0
+          assigned_locals(@analyzer.body).uniq.to_h { |name|
+            text = name.to_s
+            text = "carray_jit_name#{moved += 1}_#{text}" if generated_name?(text)
+            [name, text]
+          }
+        end
+      end
+
+      def assigned_locals (node)
+        own = node.is_a?(Assignment) ? [node.name] : []
+        own + node.children.compact.flat_map { |child| assigned_locals(child) }
+      end
+
+      # A local's C variable is its name, moved or not, and then what says
+      # which of its variables: `__2` for its second binding, `__p0` for a
+      # partial accumulator of a split fold -- `carray_jit_name_error__2`.
+      def local_c_name (name, binding, lane = nil)
+        local_c_names.fetch(name) + (binding == 1 ? "" : "__#{binding}") +
+          (lane ? "__p#{lane}" : "")
+      end
+
+      # An index is refused where a local is moved: its name is the block's
+      # text, and the messages speak of it.  The parameters and C's keywords
+      # were refused as the block was read; what is refused here needed the
+      # arrays first.
+      def refuse_generated_indices
+        taken = @analyzer.index_names.select { |name| generated_name?(c_name(name)) }
+        return if taken.empty?
+        raise Unsupported.new(
+          "#{taken.map { |name| "`#{name}`" }.join(', ')} " \
+          "#{taken.size == 1 ? 'is a name' : 'are names'} the kernel's own C " \
+          "uses, so #{taken.size == 1 ? 'it cannot be an index' : 'they cannot be indices'}")
       end
 
       def pointer_name (array)
@@ -2172,7 +2257,8 @@ class CArray
         when BoundsValue      then ["bounds[#{node.slot}]", LEAF_PRECEDENCE]
         when ZeroLike
           [ZEROES.fetch(node.type), LEAF_PRECEDENCE]
-        when LocalRead        then [node.binding_name.to_s, LEAF_PRECEDENCE]
+        when LocalRead        then [local_c_name(node.name, node.binding, node.lane),
+                                    LEAF_PRECEDENCE]
         when CaptureRead      then [bare_name(node.name), LEAF_PRECEDENCE]
         # A read is widened to the type the kernel computes in, because that
         # is the type the Ruby loop computes in: reading a float32 cell in
@@ -2681,9 +2767,11 @@ class CArray
         text
       end
 
+      # Spelled with `__`, which is what keeps it out of a block's way: a
+      # local with `__` in its name is moved (see `local_c_names`).
       def next_temporary (prefix = "result")
         @temporary_count += 1
-        "#{prefix}#{@temporary_count}"
+        "#{prefix}__#{@temporary_count}"
       end
 
     end

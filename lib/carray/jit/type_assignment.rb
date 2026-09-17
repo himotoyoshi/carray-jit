@@ -231,12 +231,14 @@ class CArray
         verify(@body)
       end
 
+      # A local's bindings are numbered per name, from 1: `x` at its first
+      # type is binding 1 and at its second binding 2.  What it is spelled in
+      # C is the generator's business.
       def bind (name, type)
         current = @bindings[name]
         return current.last if current && current.first == type
         @binding_counts[name] += 1
-        suffix = @binding_counts[name] == 1 ? "" : "__#{@binding_counts[name]}"
-        @bindings[name] = [type, :"#{name}#{suffix}"]
+        @bindings[name] = [type, @binding_counts[name]]
         @bindings[name].last
       end
 
@@ -244,7 +246,7 @@ class CArray
       # its scope.  A binding the scope already declared is not declared again.
       def declare (assignment)
         scope = @scope_nodes.fetch(assignment.scope)
-        entry = [assignment.binding_name, assignment.type]
+        entry = [assignment.name, assignment.binding, assignment.type]
         scope.declarations << entry unless scope.declarations.include?(entry)
       end
 
@@ -258,7 +260,7 @@ class CArray
         when Assignment
           walk(node.expression)
           node.type = node.expression.type
-          node.binding_name = bind(node.name, node.type)
+          node.binding = bind(node.name, node.type)
           @assigned_in_while.delete(node.name)
           declare(node)
         when ElementWrite
@@ -374,7 +376,7 @@ class CArray
             raise Unsupported.new("`#{node.name}` is read before it is assigned",
                                   node.location)
           end
-          node.type, node.binding_name = current
+          node.type, node.binding = current
         when UnaryMinus
           walk(node.operand)
           node.type = node.operand.type
