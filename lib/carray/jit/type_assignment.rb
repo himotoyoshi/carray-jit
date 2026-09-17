@@ -250,10 +250,47 @@ class CArray
         scope.declarations << entry unless scope.declarations.include?(entry)
       end
 
+      # The same for an array the body made.  Writing the same constructor
+      # twice in one scope is one C array and one declaration; what it emits
+      # at each statement is the clearing, which is the generator's.
+      def declare_array (declaration)
+        scope = @scope_nodes.fetch(declaration.scope)
+        entry = [declaration.name, declaration.binding,
+                 declaration.storage, declaration.shape]
+        scope.array_declarations << entry unless scope.array_declarations.include?(entry)
+      end
+
+      # An array's binding is its name's, and what counts as the same one is
+      # the storage type together with the shape: `w` at two shapes is two C
+      # arrays, exactly as `x` at two types is two C variables.
+      def bind_array (declaration)
+        bind(declaration.name,
+             [:local_array, declaration.storage, declaration.shape])
+      end
+
+      # Which of the name's variables a read or a write of an array resolves
+      # to.  The analyzer has already refused a name that holds a number here
+      # and an array there, so what is left to say is that the array reached
+      # for is still bound -- which is what a branch that made it in one arm
+      # only leaves untrue.
+      def array_binding (node)
+        current = @bindings[node.name]
+        wanted = [:local_array, node.storage, node.shape]
+        unless current && current.first == wanted
+          raise Unsupported.new(
+            "`#{node.name}` is not an array here: it is made on only one path " \
+            "to this line, or at another shape, so there is no one C array " \
+            "for it to be. Make it before the branch",
+            node.location)
+        end
+        current.last
+      end
+
       def walk (node)
         case node
         when KernelBody
           node.declarations = []
+          node.array_declarations = []
           @scope_nodes.push(node)
           node.statements.each { |statement| walk(statement) }
           @scope_nodes.pop
@@ -263,6 +300,21 @@ class CArray
           node.binding = bind(node.name, node.type)
           @assigned_in_while.delete(node.name)
           declare(node)
+        when LocalArrayDeclaration
+          # A declaration has no value, so it has no type: what it says is
+          # what to put at the head of the block.
+          node.binding = bind_array(node)
+          @assigned_in_while.delete(node.name)
+          declare_array(node)
+        when LocalArrayRead
+          node.binding = array_binding(node)
+          walk_local_array_subscripts(node)
+          node.type = self.class.storage_type(node.storage)
+        when LocalArrayWrite
+          node.binding = array_binding(node)
+          walk_local_array_subscripts(node)
+          walk(node.expression)
+          node.type = self.class.storage_type(node.storage)
         when ElementWrite
           walk_subscripts(write_subscripts(node))
           walk(node.expression)
@@ -287,6 +339,7 @@ class CArray
           entering = @bindings.dup
           node.entering = entering
           node.declarations = []
+          node.array_declarations = []
           @scope_nodes.push(node)
           node.statements.each { |statement| walk(statement) }
           @scope_nodes.pop
@@ -598,6 +651,14 @@ class CArray
         end
       end
 
+      # A local array's subscripts are walked the way an operand's are: a
+      # position that is an expression has to be an integer.  An axis the
+      # analyzer settled carries a literal offset rather than a node, and
+      # there is nothing there to type.
+      def walk_local_array_subscripts (node)
+        walk_subscripts(node.subscripts)
+      end
+
       def element_type (array, location)
         @element_types[array] or
           raise Unsupported.new("no array supplied for `#{array}`", location)
@@ -665,9 +726,11 @@ class CArray
       # raises too.  The one crossing Ruby does allow is `flags[i] = 1`, which
       # CArray takes for true -- and only 0 and 1, which is why it has to be a
       # literal here.
-      def verify_storable (node)
-        wanted = @element_types.fetch(node.array, nil)
-        given = node.expression.type
+      # What may be stored where, said about a storage type and a name rather
+      # than about an operand: an array the body made has a storage type of
+      # its own and no entry in the operand table.
+      def verify_storable (name, wanted, expression, location)
+        given = expression.type
         return if boolean?(wanted) && boolean?(given)
         # A Complex does not fit in a real cell, and Ruby says so: assigning
         # one into a float64 CArray raises rather than dropping the imaginary
@@ -675,26 +738,26 @@ class CArray
         # whose imaginary part is zero.
         if complex?(given) && real?(wanted)
           raise Unsupported.new(
-            "`#{node.array}` holds real numbers, and the value stored into " \
+            "`#{name}` holds real numbers, and the value stored into " \
             "it is a Complex; storing one into a real CArray raises in Ruby " \
             "too. Store `.real`, `.imag` or `.abs`",
-            node.location)
+            location)
         end
         return if !boolean?(wanted) && numeric?(given)
-        if boolean?(wanted) && node.expression.is_a?(IntegerLiteral) &&
-           [0, 1].include?(node.expression.value)
+        if boolean?(wanted) && expression.is_a?(IntegerLiteral) &&
+           [0, 1].include?(expression.value)
           return
         end
         if boolean?(wanted)
           raise Unsupported.new(
-            "`#{node.array}` is a boolean array, so it holds `true` and " \
+            "`#{name}` is a boolean array, so it holds `true` and " \
             "`false`; storing #{given} into it is what Ruby refuses too",
-            node.location)
+            location)
         end
         raise Unsupported.new(
-          "the value stored into `#{node.array}` is " \
+          "the value stored into `#{name}` is " \
           "#{given || 'undetermined'}, not a number",
-          node.location)
+          location)
       end
 
       # The nodes that arrive without a data type of their own: a literal and
@@ -875,7 +938,21 @@ class CArray
           node.children.each { |child| verify(child) }
         when ElementWrite
           verify(node.expression)
-          verify_storable(node)
+          verify_storable(node.array, @element_types.fetch(node.array, nil),
+                          node.expression, node.location)
+        when LocalArrayDeclaration
+          # Nothing to check: no value is computed.
+        when LocalArrayRead
+          node.subscripts.each { |_index, offset|
+            verify(offset) if offset.is_a?(Node)
+          }
+        when LocalArrayWrite
+          node.subscripts.each { |_index, offset|
+            verify(offset) if offset.is_a?(Node)
+          }
+          verify(node.expression)
+          verify_storable(node.name, self.class.storage_type(node.storage),
+                          node.expression, node.location)
         when LocalRead
           unless node.type
             raise Unsupported.new("`#{node.name}` is read before it is assigned",

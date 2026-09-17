@@ -39,6 +39,20 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a `CArray` made inside a `CArray.jit_for` block is a C array on the
+  block's stack -- `w = CArray.double(9)`, `CArray.new(:int64, [256])` or
+  `CArray.empty(:float64, [9])`, read and written at a subscript. One axis,
+  with the length written out as an integer or integers joined by `+`, `-` and
+  `*`; the zeroed spellings are cleared each time the line runs, as Ruby makes
+  a fresh array there. A subscript is checked as the block is read where the
+  loop's range says it can be, and at the access otherwise, raising
+  `IndexError`. One array is held to 4 KiB of stack and one kernel's to 16 KiB.
+  Excluded for now: more than one axis, passing one to a C function, the other
+  entry points (`jit_each`, `jit_map`, `jit_stencil`, `jit_function`), a kernel
+  that carries masks, and CArray's Numo/NumPy spellings (`CArray.zeros`,
+  `CArray::Int64.empty`), which are refused with the carray spelling named.
+  Note `CArray.float` is float32 and `CArray.complex` is cmplx64.
+
 - Change: a block parameter that names a loop index is refused when the
   generated C already uses that name for a captured array (`p_a`, `m_a`,
   `a_s0`, `a_ms0` or `a_n0` for an array `a`), or when it contains `__` or

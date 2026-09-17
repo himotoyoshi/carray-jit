@@ -192,10 +192,11 @@ class CArray
       # a descending loop ends one below the last index it visits, as an
       # extent written with `step` does.
       attr_reader :index, :from, :to, :step, :statements
-      # The locals its block declares, as [name, binding, type], and the ones
-      # that were live when the loop was entered, by name as [type, binding]
-      # -- both settled by the typing.
-      attr_accessor :declarations, :entering
+      # The locals its block declares, as [name, binding, type], the arrays it
+      # declares, as [name, binding, storage, shape], and the ones that were
+      # live when the loop was entered, by name as [type, binding] -- all
+      # settled by the typing.
+      attr_accessor :declarations, :array_declarations, :entering
       def initialize (index, from, to, statements, location = nil, step = 1)
         super(location)
         @index = index
@@ -651,11 +652,95 @@ class CArray
       end
     end
 
+    # `w = CArray.double(9)`, `CArray.new(:int64, [256])`, or
+    # `CArray.empty(:float64, [9])`: an array the body owns.
+    #
+    # It is declared at the head of the C block its Ruby scope stands for, as
+    # a local is, and lives on that block's stack.  The zeroed spellings are
+    # cleared where the statement stands -- in Ruby a fresh array is made
+    # there each time the line runs, and the clearing is what says the same
+    # thing in C.  `empty` says nothing there, and its cells are whatever the
+    # stack held.
+    #
+    # Not an ElementWrite or an Assignment.  Those are tied to the operand
+    # tables -- the line-up, the dispatcher, the extents, the masks, the box a
+    # view is transferred in -- and this array is in none of them: the block
+    # wrote its shape, so its strides are constants and its bounds are settled
+    # either where the block is read or at the access.  `PointerRead` stands
+    # apart for the same reason.
+    class LocalArrayDeclaration < Node
+      # Which of the name's variables this declares, as LocalRead#binding.
+      attr_accessor :binding
+      # `zeroed` is false for the `empty` spelling.
+      # `scope` is counted the way Assignment#scope is.
+      attr_reader :name, :storage, :shape, :zeroed, :scope
+      def initialize (name, storage, shape, zeroed, location = nil, scope = 0)
+        super(location)
+        @name = name
+        @storage = storage
+        @shape = shape
+        @zeroed = zeroed
+        @scope = scope
+      end
+      def local
+        [@name, @binding]
+      end
+      def cells
+        @shape.inject(1, :*)
+      end
+    end
+
+    # `w[k]`, `w[j + 1]`, `w[counts[i]]`.
+    #
+    # `subscripts` holds one [index, offset] pair per axis, the shape
+    # ElementRead's take: an index with a literal offset where the reach was
+    # settled as the block was read, or [nil, expression] where the position
+    # is one only the running kernel knows and is checked there.
+    class LocalArrayRead < Node
+      attr_accessor :binding
+      attr_reader :name, :storage, :shape, :subscripts
+      def initialize (name, storage, shape, subscripts, location = nil)
+        super(location)
+        @name = name
+        @storage = storage
+        @shape = shape
+        @subscripts = subscripts
+      end
+      def local
+        [@name, @binding]
+      end
+      def children
+        @subscripts.filter_map { |_index, offset| offset if offset.is_a?(Node) }
+      end
+    end
+
+    class LocalArrayWrite < Node
+      attr_accessor :binding
+      attr_reader :name, :storage, :shape, :subscripts, :expression
+      def initialize (name, storage, shape, subscripts, expression,
+                      location = nil)
+        super(location)
+        @name = name
+        @storage = storage
+        @shape = shape
+        @subscripts = subscripts
+        @expression = expression
+      end
+      def local
+        [@name, @binding]
+      end
+      def children
+        [@expression] +
+          @subscripts.filter_map { |_index, offset| offset if offset.is_a?(Node) }
+      end
+    end
+
     class KernelBody < Node
       attr_reader :statements
       # The locals the kernel's block, or a function's, declares, as
-      # [name, binding, type].
-      attr_accessor :declarations
+      # [name, binding, type], and the arrays it declares, as
+      # [name, binding, storage, shape].
+      attr_accessor :declarations, :array_declarations
       def initialize (statements)
         super(nil)
         @statements = statements

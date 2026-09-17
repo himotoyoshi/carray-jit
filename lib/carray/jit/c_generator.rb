@@ -394,6 +394,7 @@ class CArray
         @origin = origin
         @block_source = block_source
         refuse_generated_indices
+        refuse_a_masked_local_array
       end
 
       attr_reader :arrays, :reals, :integers, :complexes, :unsigned_integers,
@@ -408,6 +409,41 @@ class CArray
       # knows whether to look the symbol up.
       def uses_error_flag?
         @uses_error_flag
+      end
+
+      # Whether some array the body made is one of the zeroed spellings, which
+      # is what `<string.h>` is included for.  A pasted function's body is
+      # emitted into this file too, and when a function body may make one of
+      # its own this has to ask the pasted ones as well.
+      def clears_a_local_array?
+        @analyzer.clears_a_local_array?
+      end
+
+      # A local array has no mask beside it -- it is cells and nothing else --
+      # so a kernel that carries masks has nowhere to put one.  Refused rather
+      # than half-done: a body that read a cell it had written under a mask
+      # would get the value and not the absence.
+      #
+      # The two reasons are told apart because what to do about them differs.
+      def refuse_a_masked_local_array
+        return unless @masked
+        made = @analyzer.local_array_declarations
+        return if made.empty?
+        name = made.first[1]
+        if @analyzer.uses_undef?
+          raise Unsupported,
+                "`#{name}` is a local array, and this block asks about " \
+                "UNDEF -- so the kernel carries masks, and a local array has " \
+                "no mask beside its cells to carry one into. Keep a value " \
+                "that stands for missing, or split the question out of the " \
+                "kernel"
+        end
+        raise Unsupported,
+              "`#{name}` is a local array, and an operand of this kernel " \
+              "carries a mask -- so the kernel carries masks, and a local " \
+              "array has no mask beside its cells to carry one into. " \
+              "`strip_mask(fill)` says what the missing cells should be, and " \
+              "a kernel over that carries none"
       end
 
       def generate
@@ -635,7 +671,11 @@ class CArray
         # `ptrdiff_t` was written down.
         text = +"#include <stdint.h>\n#include <stddef.h>\n" \
                 "#include <math.h>\n#include <complex.h>\n" \
-                "#include <stdio.h>\n\n"
+                "#include <stdio.h>\n"
+        # `memset`, and only where a body clears an array of its own.  A
+        # kernel that clears nothing generates what it always did.
+        text << "#include <string.h>\n" if clears_a_local_array?
+        text << "\n"
         unless @address_functions.empty?
           text << "/* The C functions the block called.  They arrive as\n" \
                   "   addresses rather than by linkage, so nothing here says\n" \
@@ -1105,6 +1145,21 @@ class CArray
           variable = local_c_name(name, binding)
           "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{variable};\n" +
             (@masked ? "#{indent}uint8_t #{local_mask_name(variable)};\n" : "")
+        }.join + local_array_declarations(scope, indent)
+      end
+
+      # The arrays a scope holds, declared at the head of its block beside the
+      # locals.  The length is the one the block wrote, so the C array is a
+      # real one -- a fixed-size automatic object, not a pointer into
+      # anything -- and its cells are addressed by constants.
+      #
+      # What clears the zeroed ones is emitted where the statement stands
+      # rather than here: in Ruby a fresh array is made at that line each time
+      # it runs, so a loop's body starts from cleared cells on every pass.
+      def local_array_declarations (scope, indent)
+        scope.array_declarations.map { |name, binding, storage, shape|
+          "#{indent}#{storage_c_type(storage)} " \
+          "#{local_c_name(name, binding)}#{shape.map { |n| "[#{n}]" }.join};\n"
         }.join
       end
 
@@ -1221,6 +1276,9 @@ class CArray
       def emit_statement (statement, indent)
         case statement
         when Assignment    then emit_assignment(statement, indent)
+        when LocalArrayDeclaration then emit_local_array_clearing(statement, indent)
+        when LocalArrayWrite then guarded(statement, indent) { |inner|
+                                  emit_local_array_write(statement, inner) }
         when ElementWrite  then guarded(statement, indent) { |inner|
                                   emit_element_write(statement, inner) }
         when MaskWrite     then guarded(statement, indent) { |inner|
@@ -1487,8 +1545,18 @@ class CArray
         subscripts.each_with_index.filter_map { |(index, offset), axis|
           next unless index.nil? && offset.is_a?(Node) &&
                       !Analyzer.fixed_subscript?(offset)
-          [next_temporary("position"), offset, extent_name(write.array, axis)]
+          [next_temporary("position"), offset, write_extent(write, axis)]
         }
+      end
+
+      # The extent an axis of a write is tested against.  An operand's is a
+      # variable the kernel was handed; an array the body made carries the
+      # length the block wrote, and there is no variable to name.
+      def write_extent (write, axis)
+        case write
+        when LocalArrayWrite then write.shape.fetch(axis).to_s
+        else extent_name(write.array, axis)
+        end
       end
 
       # `out[i] = UNDEF` marks the cell missing.  The bytes underneath are out
@@ -1784,6 +1852,66 @@ class CArray
         subscripts || @analyzer.index_names.map { |name| [name, 0] }
       end
 
+      # `w = CArray.double(9)` where the statement stands.  The declaration is
+      # at the head of the block; what is left here is what Ruby does at this
+      # line, which for the zeroed spellings is a fresh array of zeros.
+      #
+      # `sizeof` rather than a byte count written out: the length is already
+      # in the declaration, and one place for it is one place to be wrong.
+      def emit_local_array_clearing (declaration, indent)
+        return "" unless declaration.zeroed
+        name = local_c_name(declaration.name, declaration.binding)
+        "#{indent}memset(#{name}, 0, sizeof #{name});\n"
+      end
+
+      def emit_local_array_write (write, indent)
+        target = local_array_reference(write)
+        expression = write.expression
+        if expression.is_a?(Conditional)
+          temporary = next_temporary
+          type = expression.type
+          "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{temporary};\n" +
+            emit_conditional_statement(expression, temporary, type, indent) +
+            "#{indent}#{target} = " \
+            "#{cast_to_storage(temporary, type, write.storage)};\n"
+        else
+          value = cast_to_storage(emit(expression, expression.type),
+                                  expression.type, write.storage)
+          "#{indent}#{target} = #{value};\n"
+        end
+      end
+
+      # `w[(k) + 1]`, and for a rank above one the row-major offset with the
+      # strides folded in -- the shape is written in the block, so they are
+      # constants rather than numbers the kernel is handed.
+      def local_array_reference (node)
+        name = local_c_name(node.name, node.binding)
+        terms = node.subscripts.each_with_index.map { |(index, offset), axis|
+          position = local_array_position(node, index, offset, axis)
+          stride = node.shape[(axis + 1)..].inject(1, :*)
+          stride == 1 ? position : "(#{position}) * #{stride}"
+        }
+        "#{name}[#{terms.join(' + ')}]"
+      end
+
+      # An axis the analyzer settled carries an index and a literal offset,
+      # and the C says so with nothing around it.  One it could not settle
+      # carries the expression, and the check is here.
+      def local_array_position (node, index, offset, axis)
+        if index.nil?
+          return offset.to_s unless offset.is_a?(Node)
+          return emit(offset, :int64) if Analyzer.fixed_subscript?(offset)
+          # A write has already worked this position out and tested it.
+          held = @position_temporaries[offset]
+          return held if held
+          @uses_index_check = true
+          return "carray_jit_index(#{emit(offset, :int64)}, " \
+                 "#{node.shape.fetch(axis)}, #{error_argument})"
+        end
+        return index.to_s if offset.zero?
+        offset.negative? ? "#{index} - #{-offset}" : "#{index} + #{offset}"
+      end
+
       def emit_element_write (write, indent)
         unless @masked
           @masked_flag = nil
@@ -2015,8 +2143,15 @@ class CArray
         end
       end
 
+      # Every name the body binds, in the order it first binds them.  An array
+      # the body made is one of these: it is a local that happens to have
+      # cells, and it is moved off the generator's own names for the same
+      # reason and by the same numbering.
       def assigned_locals (node)
-        own = node.is_a?(Assignment) ? [node.name] : []
+        own = case node
+              when Assignment, LocalArrayDeclaration then [node.name]
+              else []
+              end
         own + node.children.compact.flat_map { |child| assigned_locals(child) }
       end
 
@@ -2297,6 +2432,15 @@ class CArray
         # A boolean cell is a byte holding 0 or 1, so it is already the value
         # it stands for.  Keeping it that way on the way out is this kernel's
         # business, and cast_to_storage does it.
+        when LocalArrayRead
+          cell = local_array_reference(node)
+          widening = widening_cast(node.storage, node.type)
+          if widening
+            ["#{widening}#{parenthesize(cell, LEAF_PRECEDENCE, UNARY_PRECEDENCE)}",
+             UNARY_PRECEDENCE]
+          else
+            [cell, LEAF_PRECEDENCE]
+          end
         when ElementRead
           cell = cell_reference(node.array, node.subscripts)
           widening = widening_cast(array_storage(node.array), node.type)

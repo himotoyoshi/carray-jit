@@ -41,6 +41,90 @@ A local belongs to the scope Ruby gives it, and is declared at the head of the C
 
 The version before this one settled locals by joining every assignment's type and declaring the variable once. On the example above it printed the right answer -- by dividing in double where Ruby divided in integers, and then truncating 1.5 to 1 on the way back. Two errors that happened to cancel.
 
+### Local arrays
+
+A local variable becomes a C variable; a `CArray` the block makes becomes a C array. It lives on the stack of the block it was written in, its length is whatever the block wrote, and it is reached at a subscript the way a captured array is.
+
+```ruby
+# labels: a uint8 classification image (rows x cols), mode: the commonest class per row
+CArray.jit_for(rows) { |i|
+  counts = CArray.int64(256)
+  (0...cols).each { |j| counts[labels[i, j]] += 1 }
+  best = 0
+  (1...256).each { |c| best = c if counts[c] > counts[best] }
+  mode[i] = best
+}
+```
+
+```c
+for (int64_t i = ...) {
+  int64_t counts[256];
+  memset(counts, 0, sizeof counts);
+  ...
+}
+```
+
+The declaration is hoisted to the head of the block, as a local's is. What stays at the line is the clearing: in Ruby that line makes a fresh array of zeros each time it runs, so every pass of the loop starts from cleared cells, and `memset` is what says the same thing in C.
+
+Three spellings are taken, and they are CArray's own:
+
+| Written | The cells start as | Where it comes from |
+|---|---|---|
+| `CArray.<type>(n)` | zero | the singleton methods CArray defines for each type |
+| `CArray.new(:type, [n])` | zero | `CArray#initialize` |
+| `CArray.empty(:type, [n])` | **whatever the stack held** | `CArray.empty`, from carray 3.0.2 |
+
+The types are the ones CArray has, minus the two a kernel computes with neither of: `int8` `int16` `int32` `int64`, `uint8` `uint16` `uint32` `uint64`, `float32` `float64`, `cmplx64` `cmplx128`, `boolean`. `object` and `fixlen` are refused.
+
+The aliases are CArray's too, and two of them are worth reading twice: **`CArray.float` is a float32** and **`CArray.complex` is a cmplx64** -- single precision, the opposite of what Ruby's own `Float` and `Complex` would suggest. `CArray.double` is float64 and `CArray.dcomplex` is cmplx128. `byte`, `short` and `int` are uint8, int16 and int32.
+
+`CArray.empty(data_type, dim)` is carray 3.0.2's spelling. A block is read rather than run, so a kernel takes it whatever version of CArray is loaded -- but calling it outside a kernel needs 3.0.2.
+
+The shape is **written out**: an integer, or integers joined by `+`, `-` and `*`, so `CArray.double(2 * 4 + 1)` is a nine-cell array. A length only the call knows is refused -- there would be no C array to declare and no bound to check against -- and so is a length of zero or less. One axis in this release; `CArray.double(3, 4)` says which release takes more.
+
+The compatibility layer is not taken. `CArray.zeros(4)`, `CArray.ones(4)`, `CArray.full(4, 1.0)`, `CArray.empty(4)` and the Numo spellings `CArray::Int64.zeros(4)` / `CArray::Int64.empty(4)` are all refused, each naming the carray spelling it stands for. `data_type_extension.rb` opens by calling itself "Numo / NumPy-style" and "not the 'main' carray API"; the words inside a block are carray's own.
+
+**A subscript is checked, and where depends on what it is made of.** Where the position is an inner loop's index at a literal offset and that loop states its range in literals, the reach is known as the block is read, and the C carries no test:
+
+```ruby
+t = CArray.double(4)
+(0...4).each { |k| t[k + 1] = 0.0 }
+#=> `t[k + 1]` reaches cell 4 of a local array of 4 cells, where the cells are
+#   0 to 3: `k` runs 0 to 3 here.
+```
+
+This looks at the loop's range and not at what stands around the line, which is the character the captured arrays' own check already has: putting the line inside `if k < 3` does not make the reach smaller, because the reach is the loop's. Narrowing the loop's range is what makes it smaller.
+
+Every other position -- a plain local, a value read out of an array, an index whose loop bound is a captured integer -- is checked where the cell is reached. A read outside the array reads cell zero and reports, and the loop leaves at the head of its next pass; a write outside it writes nothing and reports, since a report after the damage would be no use. Either way the call raises `IndexError`.
+
+```ruby
+CArray.jit_for(1) { |i|
+  w = CArray.double(4)
+  j = 0
+  while w[j] == 0.0     # reads off the end on the fifth pass
+    j += 1
+  end
+}
+#=> IndexError: index out of range
+```
+
+**A local array is a workspace and not a value.** It has no methods, is not read bare, and does not yet go to a C function:
+
+```ruby
+w = CArray.double(4)
+x = w                #=> `w` is a local array; index it, as in `w[0]`
+x = w.sum            #=> `sum` is a method CArray answers outside a kernel
+f.call(w)            #=> handing one to a C function is a later release
+```
+
+A constructor stands on the right of an assignment and nowhere else: there is no name for the C array to be declared under otherwise.
+
+`CArray.jit_for` takes them. `jit_each`, `jit_map`, `jit_stencil` and `jit_function` take them in a later release, and a contraction takes none -- its body is one expression, so there is no run of statements for a workspace to be used by. A kernel that carries masks takes none either: a local array is cells and nothing beside them, so there is nowhere for a mask to go.
+
+**They are on the stack, so they are held to a size.** One array is held to 4 KiB and one kernel's arrays together to 16 KiB. Both numbers are provisional -- what a Ruby thread's stack actually is has not been measured -- and what the total does not count is a pasted `jit_function`'s own arrays, recursion, and whatever a future thread pool gives its threads. For anything larger, pass a captured array of workspace: it is on the heap and has no such limit.
+
+What a local array buys over that captured array is the memory. A 3x3 median filter over a 2000x2000 image needs nine doubles at a time; a row of workspace per cell is `work[2000, 2000, 9]`, which is 288 MB to hold 72 bytes in use. And `jit_stencil` cannot use one at all, its block having no index to pick a row by -- which is the release this is heading for.
+
 ### Postfix math
 
 `CArray::CoreExtensions` is a refinement that puts `sqrt`, `tanh` and the rest on `Float` and `Integer`, so that one formula reads the same whether it is applied to a scalar or to a whole array:
@@ -719,5 +803,9 @@ Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symb
 - **An inner loop's stride is a literal.** It is what says which way the loop runs, and the C is written one way or the other before anything is known, so `k.step(0, s)` with `s` a captured integer is refused. `downto`, `upto` and `reverse_each` are refused by name, with `step` named as the spelling to use -- one way of counting down is enough to keep, and it is the one an extent already takes.
 - **A kernel draws from a `CArray::Rng` and from nothing else.** `rand` is Ruby's, and Ruby's generator is reached through the VM: a kernel runs with the GVL released, which is not where it may be reached at all. What a kernel *can* draw from is a generator whose C it can paste, which is what `CArray::Rng` is: `rand = CArray::Rng.new(seed: 4)` and then `rand.random` in the block, once per cell, giving a double in `[0.0, 1.0)`. `rand.randomn` is a standard normal, which costs two draws and keeps no spare -- the classical pairing would have to hold the second in the generator's state, and a spare held between an array and a kernel is a second thing to keep in step. `random(rng: rand)` and `randomn(rng: rand)` are those two spelled as `CArray#random!(rng:)` spells them -- the only keyword arguments the subset has -- and `rand.bits` is the raw word a draw came from, as a `uint64`. All of them read one generator, so mixing them walks one sequence. It is a generator on both sides of the compiler: `a.random!(rng: rand)` fills an array from it and leaves it where a kernel then carries on, because CArray compiles the generator and hands out the same text for the kernel to paste rather than the two agreeing by construction. Two generators in one kernel are two sequences. What is not offered is a draw fixed to a *position*: which draw lands in which cell is the loop's order, and this compiler does not fix that order -- a stencil's border is a second loop over the frame, and a reduction may split its accumulator. Where that matters -- common random numbers, antithetic variates, stratification -- fill an array with `CArray#random!` before the call and read a cell of it, which was drawn in one order and stays in it. A compiled function is a third case: `jit_function` takes everything through its parameters and has nowhere to keep a state, so a body that needs draws takes the state as an `int64_t state[4]` parameter and is passed `rand.state`.
 - **An operand that is not an entity is transferred before the loop.** A kernel walks memory, so an array that is not one -- a view that does not fold to an entity, a `CAObject` computing its cells in Ruby -- has the box the kernel touches transferred into a packed buffer first, and written back afterwards if the kernel wrote it. The box, not the array: an extent covering two cells transfers two. What that costs is a copy; what it changes is when the cells are read. An array whose cells are computed on read is read once per cell per call, so two reads of one cell in a kernel give the same number where the same Ruby loop would give two -- and a one-cell source is one number for the whole loop. Drawing random numbers that way therefore works, and means what filling an array before the call means.
+- **A local array's subscript counts from the start.** CArray's `w[-1]` is the last cell; a kernel has no such reading, so a literal negative subscript is refused by name and one the kernel works out raises `IndexError`. This is the difference the captured arrays already have. Write `w[n - 1]`.
+- **`CArray.empty` leaves its cells as the stack left them.** Reading one before writing it is out of contract, the way reading under a mask is: the value is whatever was there. What it saves is the clearing, which for a 256-cell array inside a per-cell loop is 2 KiB a cell.
+- **A local array is held to 4 KiB, and one kernel's to 16 KiB together.** Both are provisional, and neither counts a pasted function's own arrays, recursion, or a future thread pool's stacks. See [Local arrays](#local-arrays).
+- **Storing a real number into an integer array is C's conversion.** A value past the type's range, or a NaN, is undefined behaviour rather than a number -- and the same is true of a captured integer array, so a kernel brings no new hazard here. Round and clamp before storing where the value may leave the range.
 - **A block's source must be recoverable.** Blocks defined in `eval` or in a console have no file to read back; pass `source:` there, or set `RubyVM.keep_script_lines = true` before defining them. This also ties the gem to CRuby, which CArray requires anyway.
 - **Nothing existing is replaced.** `jit_for` is a new method, not a faster `each_index`: the two differ in what they reject, and a caller should be able to choose.

@@ -12,6 +12,94 @@ class CArray
     # so the caller passes them in -- it knows, because it has the values.
     class Analyzer
 
+      # ---- the vocabulary a local array is written in ----
+
+      # The types a body may make an array of: CArray's own constructor names,
+      # each naming the storage type CArray gives it.  Taken from CArray
+      # rather than invented here, which is why the aliases land where they
+      # do -- `CArray.float` is a float32 and `CArray.complex` is a cmplx64,
+      # the opposite of what Ruby's own Float and Complex would suggest.
+      LOCAL_ARRAY_TYPES = {
+        :int8     => "int8",     :int16    => "int16",
+        :int32    => "int32",    :int64    => "int64",
+        :uint8    => "uint8",    :uint16   => "uint16",
+        :uint32   => "uint32",   :uint64   => "uint64",
+        :float32  => "float32",  :float64  => "float64",
+        :cmplx64  => "cmplx64",  :cmplx128 => "cmplx128",
+        :boolean  => "boolean",
+        # The aliases, as CArray spells them.
+        :float    => "float32",  :double   => "float64",
+        :complex  => "cmplx64",  :dcomplex => "cmplx128",
+        :byte     => "uint8",    :short    => "int16",
+        :int      => "int32",
+      }.freeze
+
+      # What one cell of each takes, which is what the limits below are
+      # counted in.  Beside the table above so that a type added to one is
+      # visibly missing from the other.
+      LOCAL_ARRAY_STORAGE_BYTES = {
+        "int8" => 1, "int16" => 2, "int32" => 4, "int64" => 8,
+        "uint8" => 1, "uint16" => 2, "uint32" => 4, "uint64" => 8,
+        "float32" => 4, "float64" => 8,
+        "cmplx64" => 8, "cmplx128" => 16,
+        "boolean" => 1,
+      }.freeze
+
+      # A local array is on the stack, so there is a size past which it stops
+      # being a good idea and starts being a crash a long way from here.
+      #
+      # Both numbers are provisional: what a Ruby thread's stack actually is
+      # on each platform has not been measured, and until it has, these are a
+      # guess with room under it.  They are in one place so that measuring
+      # moves one number rather than several.  What the total does not count
+      # is in docs: a pasted function's own arrays, recursion, and whatever a
+      # future thread pool gives its threads.
+      LOCAL_ARRAY_BYTE_LIMIT = 4 * 1024
+      LOCAL_ARRAY_TOTAL_BYTE_LIMIT = 16 * 1024
+
+      # The types CArray has that a kernel computes with neither of, and what
+      # each of them holds instead -- which is what the refusal says.
+      LOCAL_ARRAY_REFUSED_TYPES_HOLD = {
+        :object => "Ruby objects",
+        :fixlen => "fixed-length byte strings",
+      }.freeze
+      LOCAL_ARRAY_REFUSED_TYPES = LOCAL_ARRAY_REFUSED_TYPES_HOLD.keys.freeze
+
+      # CArray's compatibility layer, which `data_type_extension.rb` opens by
+      # calling itself "Numo / NumPy-style" and "not the 'main' carray API".
+      # The words inside a block are carray's own, so these are sent to the
+      # spelling they stand for rather than taken.
+      LOCAL_ARRAY_COMPATIBILITY_NAMES = [:zeros, :ones, :full].freeze
+
+      # Every name a constructor may be written under, so that the receiver of
+      # one is known for what it is before anything else has been read.
+      LOCAL_ARRAY_CONSTRUCTOR_NAMES =
+        (LOCAL_ARRAY_TYPES.keys + LOCAL_ARRAY_REFUSED_TYPES +
+         LOCAL_ARRAY_COMPATIBILITY_NAMES + [:new, :empty]).freeze
+
+      # `CArray`, `::CArray`, or one of the type classes under either.  A
+      # constructor is written on one of these and on nothing else.
+      def self.carray_receiver? (node)
+        case node
+        when Prism::ConstantReadNode
+          node.name == :CArray
+        when Prism::ConstantPathNode
+          text = node.slice
+          text == "::CArray" ||
+            text.start_with?("CArray::") || text.start_with?("::CArray::")
+        else
+          false
+        end
+      end
+
+      # Whether this call is one a body would make an array with -- including
+      # the spellings that are refused, so that each is refused by the reader
+      # that knows why rather than by the capture scan.
+      def self.local_array_constructor? (node)
+        node.is_a?(Prism::CallNode) && carray_receiver?(node.receiver) &&
+          LOCAL_ARRAY_CONSTRUCTOR_NAMES.include?(node.name)
+      end
+
       # Ruby Math methods that correspond 1:1 to a math.h function.
       #
       # Deliberately excludes anything whose C counterpart disagrees on
@@ -221,6 +309,16 @@ class CArray
                   :written_arrays, :array_ranks, :subscripts, :inner_ranges,
                   :index_sources,
                   :contracted_names
+      # The C arrays the body declares, as [scope, name, storage, shape].
+      # Nothing in the operand tables says a body has any, so this is how the
+      # generator learns it has a header to include and a mask to refuse.
+      attr_reader :local_array_declarations
+
+      # Whether any of them is one of the zeroed spellings, which is what
+      # `<string.h>` is included for.
+      def clears_a_local_array?
+        @clears_a_local_array
+      end
 
       # A kernel that mentions UNDEF is a masked kernel whatever its arrays
       # happen to carry: it asks about masks, or makes them.
@@ -358,6 +456,19 @@ class CArray
         @free_names = []
         @index_names = []
         @local_names = []
+        # The arrays the body made, by name: [storage type, shape] for the
+        # declaration in sight.  Kept beside @local_names rather than in it,
+        # because the two are different things under one syntax and a name
+        # holds one or the other -- which is what lets each say so.
+        @local_array_names = []
+        @local_arrays = {}
+        # One entry per C array the body declares, as
+        # [scope, name, storage, shape], so that the room they take together
+        # can be counted once the body has been read.  Two sibling loops that
+        # each declare `w` are one entry: their blocks do not overlap, so
+        # neither do their frames.
+        @local_array_declarations = []
+        @clears_a_local_array = false
         # The locals each scope holds, innermost last: the kernel's block --
         # or a function's -- and one for every inner loop's block around the
         # statement being built.  `while` and `if` make none, as in Ruby.
@@ -513,6 +624,16 @@ class CArray
       def names_constants (node)
         return [] unless node
         return [] if raise_call?(node)
+        # The receiver of a constructor is part of a spelling rather than a
+        # name the block reached outside for: `CArray.double(9)` says what to
+        # declare, and the class in front of it is not a value to look up.
+        # Left in, it is looked up, found to be a Class, and refused for
+        # being one -- which says nothing about the line that was written.
+        if self.class.local_array_constructor?(node)
+          arguments = node.arguments ? node.arguments.arguments : []
+          return arguments.flat_map { |argument| names_constants(argument) } +
+                 names_constants(node.block)
+        end
         # `Foo::TABLE` names one thing, and `Foo` on its own names none of
         # it, so a path is read whole and not descended into.
         return [node.slice.to_sym] if node.is_a?(Prism::ConstantPathNode)
@@ -1059,6 +1180,14 @@ class CArray
             @uses_undef = true
             return MaskWrite.new(node.name, node.location)
           end
+          # A constructor is read before the right-hand side is built, the way
+          # `out = UNDEF` above is: what it says is a declaration, not a value
+          # to compute and store.
+          if (made = read_local_array_constructor(node.value))
+            storage, shape, zeroed = made
+            return declare_local_array(node.name, storage, shape, zeroed,
+                                       node.location, node.depth)
+          end
           expression = build(node.value)
           assign_local(node.name, expression, node.location, node.depth)
         when Prism::LocalVariableOperatorWriteNode
@@ -1407,6 +1536,433 @@ class CArray
         node ? node.body : []
       end
 
+      # ---- the arrays a body makes for itself ----
+
+      LOCAL_ARRAY_SUBSCRIPTS = [:[], :[]=].freeze
+
+      # A constructor stands on the right of an assignment and nowhere else.
+      # Everywhere else it is an array standing where a number goes -- in an
+      # argument, under a subscript, as an operand -- and there is no name for
+      # the C array to be declared under.
+      def refuse_a_constructor_in_an_expression (node)
+        return unless node
+        return unless self.class.local_array_constructor?(node)
+        raise Unsupported.new(
+          "`#{node.slice}` makes an array, and a constructor stands on the " \
+          "right of an assignment and nowhere else: write " \
+          "`w = #{node.slice}` on a line of its own, then reach `w` at a " \
+          "subscript",
+          node.location)
+      end
+
+      # `[storage type, shape, zeroed]` for a constructor, or nil where this
+      # call is not one.  Nil is the answer for everything else a body may
+      # write, so nothing outside this vocabulary is touched; once the answer
+      # is not nil the call is a constructor, and a spelling that cannot be
+      # taken is refused here rather than further along.
+      def read_local_array_constructor (node)
+        return nil unless self.class.local_array_constructor?(node)
+        refuse_a_local_array_in_this_spelling(node)
+        if node.block
+          raise Unsupported.new(
+            "`#{node.slice}` fills the array from a block, and a local " \
+            "array is either zero-filled or left as it stands; write the " \
+            "fill out as a loop over its cells",
+            node.location)
+        end
+        arguments = node.arguments ? node.arguments.arguments : []
+        if arguments.any? { |argument| argument.is_a?(Prism::KeywordHashNode) }
+          raise Unsupported.new(
+            "`#{node.slice}` passes a keyword, and a local array is the " \
+            "type and the shape only", node.location)
+        end
+        if node.receiver.is_a?(Prism::ConstantPathNode) &&
+           node.receiver.slice != "::CArray"
+          return refuse_a_type_class_constructor(node, arguments)
+        end
+        case node.name
+        when :new   then read_carray_new(node, arguments, true)
+        when :empty then read_carray_empty(node, arguments)
+        else             read_type_constructor(node, arguments)
+        end
+      end
+
+      # `CArray.double(9)` and the rest of the singleton methods CArray's own
+      # `Init` defines: the type is the name and the shape is the arguments.
+      def read_type_constructor (node, arguments)
+        if LOCAL_ARRAY_REFUSED_TYPES.include?(node.name)
+          raise Unsupported.new(
+            "`#{node.name}` holds #{LOCAL_ARRAY_REFUSED_TYPES_HOLD.fetch(node.name)} " \
+            "rather than numbers, and a kernel computes with numbers; a " \
+            "local array is one of " \
+            "#{LOCAL_ARRAY_TYPES.keys.take(13).map { |name| "`#{name}`" }.join(', ')}",
+            node.location)
+        end
+        if LOCAL_ARRAY_COMPATIBILITY_NAMES.include?(node.name)
+          return refuse_a_compatibility_constructor(node, arguments, nil)
+        end
+        storage = LOCAL_ARRAY_TYPES.fetch(node.name)
+        if arguments.empty?
+          raise Unsupported.new(
+            "`#{node.slice}` says no shape; a local array is written " \
+            "`CArray.#{node.name}(n)` with the length written out",
+            node.location)
+        end
+        [storage, read_local_array_shape(node, arguments), true]
+      end
+
+      # `CArray.new(:int64, [256])` -- `rb_ca_initialize`, whose
+      # `carray_safe_setup` is what fills the cells with zero.
+      def read_carray_new (node, arguments, zeroed)
+        unless arguments.size == 2
+          raise Unsupported.new(
+            "`CArray.#{node.name}` takes the type and the shape, as in " \
+            "`CArray.#{node.name}(:float64, [9])`", node.location)
+        end
+        [read_local_array_type(node, arguments.first),
+         read_local_array_shape(node, read_shape_arguments(node, arguments.last)),
+         zeroed]
+      end
+
+      # Two spellings share the name.  `CArray.empty(:float64, [9])` is
+      # carray's, and stands beside `CArray.new` with the fill left out;
+      # `CArray.empty(9)` is the compatibility layer's NumPy form, where the
+      # type is float64 by convention rather than by anything written down.
+      def read_carray_empty (node, arguments)
+        carray_form = arguments.size == 2 &&
+                      arguments.first.is_a?(Prism::SymbolNode) &&
+                      arguments.last.is_a?(Prism::ArrayNode)
+        return read_carray_new(node, arguments, false) if carray_form
+        refuse_a_compatibility_constructor(node, arguments, nil)
+      end
+
+      def read_shape_arguments (node, argument)
+        unless argument.is_a?(Prism::ArrayNode)
+          raise Unsupported.new(
+            "the shape `CArray.#{node.name}` takes is an Array, as in " \
+            "`CArray.#{node.name}(:float64, [9])`", node.location)
+        end
+        argument.elements
+      end
+
+      # The type is a Symbol written out.  One of CArray's constants would be
+      # a name looked up outside the block, and one kernel serves every value
+      # of a capture -- so a type that arrived that way would not be in the C
+      # at all.
+      def read_local_array_type (node, argument)
+        unless argument.is_a?(Prism::SymbolNode)
+          raise Unsupported.new(
+            "the type `CArray.#{node.name}` takes is a Symbol written out, " \
+            "as in `CArray.#{node.name}(:float64, [9])`; " \
+            "`#{argument.slice}` is looked up where the block was written, " \
+            "and one compiled kernel serves every value of that",
+            node.location)
+        end
+        name = argument.unescaped.to_sym
+        if LOCAL_ARRAY_REFUSED_TYPES.include?(name)
+          raise Unsupported.new(
+            "`:#{name}` holds #{LOCAL_ARRAY_REFUSED_TYPES_HOLD.fetch(name)} " \
+            "rather than numbers, and a kernel computes with numbers",
+            node.location)
+        end
+        LOCAL_ARRAY_TYPES.fetch(name) do
+          raise Unsupported.new(
+            "`#{argument.slice}` is not a type a local array holds; they are " \
+            "#{LOCAL_ARRAY_TYPES.keys.take(13).map { |n| "`:#{n}`" }.join(', ')}",
+            node.location)
+        end
+      end
+
+      # The shape is written out, the way a window's offsets are: the lengths
+      # are what the C declares and what every subscript is checked against,
+      # and a length that is not known until the kernel runs could be neither.
+      def read_local_array_shape (node, arguments)
+        if arguments.size > 1
+          raise Unsupported.new(
+            "`#{node.slice}` asks for #{arguments.size} axes, and a local " \
+            "array has one axis in this release; a captured array of " \
+            "workspace takes as many as it is given",
+            node.location)
+        end
+        arguments.map { |argument|
+          extent = literal_integer(argument)
+          unless extent
+            raise Unsupported.new(
+              "the shape of a local array is written out -- an integer, or " \
+              "integers joined by `+`, `-` and `*` -- and " \
+              "`#{argument.slice}` is not. A length the call decides has no " \
+              "C array to declare and no bound to check against; pass a " \
+              "captured array of workspace instead",
+              node.location)
+          end
+          unless extent.positive?
+            raise Unsupported.new(
+              "a local array holds at least one cell, and `#{argument.slice}` " \
+              "asks for #{extent}", node.location)
+          end
+          extent
+        }
+      end
+
+      # `CArray.zeros(4)`, `CArray.empty(4)`, `CArray.ones(4)`: the
+      # compatibility layer, which `data_type_extension.rb` opens by calling
+      # itself "Numo / NumPy-style" and "not the 'main' carray API".  The
+      # words inside a block are carray's own.
+      def refuse_a_compatibility_constructor (node, arguments, type)
+        storage = type || "float64"
+        length = arguments.empty? ? nil : literal_integer(arguments.first)
+        shape = length ? "[#{length}]" : "[n]"
+        raise Unsupported.new(
+          "`#{node.slice}` is CArray's Numo/NumPy compatibility layer, and " \
+          "a kernel body is written in carray's own words: " \
+          "`CArray.new(:#{storage}, #{shape})` for cells that start at zero, " \
+          "or `CArray.empty(:#{storage}, #{shape})` where every cell is " \
+          "written before it is read",
+          node.location)
+      end
+
+      # `CArray::Int64.empty(4)` and `CArray::Int64.zeros(4)`: the same layer
+      # reached through a type class, which is the Numo spelling of it.
+      def refuse_a_type_class_constructor (node, arguments)
+        tail = node.receiver.slice.split("::").last.to_s
+        type = LOCAL_ARRAY_TYPES[tail.downcase.to_sym]
+        refuse_a_compatibility_constructor(node, arguments, type)
+      end
+
+      # Which entry points take one, and which release takes the rest.  The
+      # shape of the check is the mode this analyzer was made in, because that
+      # is what says how the block is being read.
+      LOCAL_ARRAY_ELSEWHERE = {
+        :contract => ["a contraction's body", nil],
+        :function => ["the body of a compiled function", "a later release"],
+        :stencil  => ["a `jit_stencil` block", "a later release"],
+        :map      => ["a `jit_map` block", "a later release"],
+        :each     => ["a `jit_each` block", "a later release"],
+      }.freeze
+
+      def refuse_a_local_array_in_this_spelling (node)
+        mode = if @contract          then :contract
+               elsif @function       then :function
+               elsif @windows.any?   then :stencil
+               elsif @map            then :map
+               elsif @whole_array    then :each
+               end
+        return unless mode
+        where, when_ = LOCAL_ARRAY_ELSEWHERE.fetch(mode)
+        if mode == :contract
+          raise Unsupported.new(
+            "`#{node.slice}` makes a local array, and #{where} is one " \
+            "expression -- with, at most, an assignment into an array of its " \
+            "own -- so there is no run of statements for a workspace to be " \
+            "used by. Write the body as `CArray.jit_for`",
+            node.location)
+        end
+        raise Unsupported.new(
+          "`#{node.slice}` makes a local array, which #{where} takes in " \
+          "#{when_}; `CArray.jit_for` takes one now, and a captured array of " \
+          "workspace works here today",
+          node.location)
+      end
+
+      # The declaration itself.
+      def declare_local_array (name, storage, shape, zeroed, location, depth)
+        if index_in_scope?(name)
+          raise Unsupported.new(
+            "`#{name}` is a loop index, and the loop is what owns it; give " \
+            "the array a name of its own",
+            location)
+        end
+        if @local_names.include?(name) && local_in_sight?(name)
+          raise Unsupported.new(
+            "`#{name}` holds a number here, and a local array is not a " \
+            "number; the two cannot be one C variable, so give the array a " \
+            "name of its own",
+            location)
+        end
+        verify_local_array_fits(name, storage, shape, location)
+        @local_array_names << name unless @local_array_names.include?(name)
+        @local_arrays[name] = [storage, shape]
+        scope = [@scopes.size - 1 - depth, 0].max
+        @scopes[scope] << name unless @scopes[scope].include?(name)
+        entry = [scope, name, storage, shape]
+        @local_array_declarations << entry unless @local_array_declarations.include?(entry)
+        @clears_a_local_array ||= zeroed
+        verify_local_arrays_fit_together(name, location)
+        LocalArrayDeclaration.new(name, storage, shape, zeroed, location, scope)
+      end
+
+      def local_array_bytes (storage, shape)
+        LOCAL_ARRAY_STORAGE_BYTES.fetch(storage) * shape.inject(1, :*)
+      end
+
+      def verify_local_array_fits (name, storage, shape, location)
+        bytes = local_array_bytes(storage, shape)
+        return if bytes <= LOCAL_ARRAY_BYTE_LIMIT
+        raise Unsupported.new(
+          "`#{name}` asks for #{bytes} bytes of #{storage} on the stack, and " \
+          "one local array is held to #{LOCAL_ARRAY_BYTE_LIMIT}; pass a " \
+          "captured array of workspace, which is on the heap and has no such " \
+          "limit",
+          location)
+      end
+
+      def verify_local_arrays_fit_together (name, location)
+        total = @local_array_declarations.sum { |_scope, _name, storage, shape|
+          local_array_bytes(storage, shape)
+        }
+        return if total <= LOCAL_ARRAY_TOTAL_BYTE_LIMIT
+        raise Unsupported.new(
+          "the local arrays of this kernel come to #{total} bytes of stack " \
+          "with `#{name}`, and one kernel is held to " \
+          "#{LOCAL_ARRAY_TOTAL_BYTE_LIMIT}; pass a captured array of " \
+          "workspace for the larger ones",
+          location)
+      end
+
+      # A name is in sight where some scope still standing holds it.  The
+      # scopes are pushed and popped with the inner loops' blocks, so a name
+      # an inner loop introduced is out of sight after it -- which is what
+      # Ruby says about it too.
+      def local_in_sight? (name)
+        @scopes.any? { |scope| scope.include?(name) }
+      end
+
+      # The name of the local array this receiver is, or nil.
+      #
+      # A name the body did make an array under, but in a block that has since
+      # closed, is neither: it says so rather than falling through to be
+      # refused for not being a captured array, which is not what happened.
+      def local_array_name (node)
+        name = case node
+               when Prism::LocalVariableReadNode
+                 node.name
+               when Prism::CallNode
+                 node.name if node.receiver.nil? && node.arguments.nil? &&
+                              node.block.nil?
+               end
+        return nil unless name && @local_array_names.include?(name)
+        unless local_in_sight?(name)
+          raise Unsupported.new(
+            "`#{name}` belongs to the loop block it was assigned in, and is " \
+            "not there after it; make the array before the loop",
+            node.location)
+        end
+        name
+      end
+
+      # `[storage, shape]` for the declaration in sight under this name.
+      def local_array_in_sight (name)
+        @local_arrays.fetch(name)
+      end
+
+      # A local array's subscripts.
+      #
+      # Not `read_subscripts`.  That one answers for the operand tables: it
+      # refuses an index where the block takes none, records the array's rank
+      # in a table shared with every other array, and hands a window its
+      # offsets instead.  A local array is in none of that -- its rank is its
+      # shape's, and its subscripts are written wherever the block stands.
+      # What the two share is only the two ways a position is checked.
+      def local_array_subscripts (name, shape, arguments, location)
+        unless arguments.size == shape.size
+          raise Unsupported.new(
+            "`#{name}` has #{shape.size == 1 ? 'one axis' : "#{shape.size} axes"}, " \
+            "so it takes #{shape.size == 1 ? 'one subscript' : "#{shape.size} subscripts"}, " \
+            "and #{arguments.size} #{arguments.size == 1 ? 'was' : 'were'} written",
+            location)
+        end
+        arguments.each_with_index.map { |argument, axis|
+          local_array_subscript(name, shape[axis], argument, location)
+        }
+      end
+
+      # (a) An index whose loop states its range in literals reaches a set of
+      # positions that is known now, so it is checked now and the C carries no
+      # test.  (b) Anything else is checked where the cell is reached.
+      #
+      # A literal position is (a) as well, its range being itself.
+      def local_array_subscript (name, extent, argument, location)
+        if (index = index_name(argument)) && index_in_scope?(index)
+          return checked_index_subscript(name, index, 0, extent, argument, location)
+        end
+        if argument.is_a?(Prism::CallNode) && [:+, :-].include?(argument.name) &&
+           (receiver = index_name(argument.receiver)) && index_in_scope?(receiver)
+          arguments = argument.arguments ? argument.arguments.arguments : []
+          if arguments.size == 1 && (offset = literal_integer(arguments.first))
+            offset = -offset if argument.name == :-
+            return checked_index_subscript(name, receiver, offset, extent,
+                                           argument, location)
+          end
+        end
+        if (position = literal_integer(argument))
+          unless (0...extent).cover?(position)
+            raise Unsupported.new(
+              "`#{name}[#{argument.slice}]` is outside a local array of " \
+              "#{extent} #{extent == 1 ? 'cell' : 'cells'}, whose " \
+              "#{extent == 1 ? 'only cell is 0' : "cells are 0 to #{extent - 1}"}" +
+              (position.negative? ?
+                 ". A subscript here counts from the start, so CArray's " \
+                 "`#{name}[-1]` for the last cell is written " \
+                 "`#{name}[#{extent - 1}]`" : ""),
+              location)
+          end
+          return [nil, IntegerLiteral.new(position, location)]
+        end
+        [nil, build(argument)]
+      end
+
+      def checked_index_subscript (name, index, offset, extent, argument, location)
+        identifier = index_identifier(index)
+        verify_index_reach(name, identifier, offset, extent, argument, location)
+        [identifier, offset]
+      end
+
+      # The lowest and highest position an index takes, where its loop says so
+      # in literals; nil where it does not, or where the loop runs no passes
+      # at all and so reaches nothing.
+      #
+      # Computed rather than enumerated: `(0...10_000_000).each` states its
+      # range in literals too.
+      def index_reach (identifier)
+        range = @inner_ranges[identifier]
+        return nil unless range
+        from, to, step = range
+        return nil unless from.is_a?(IntegerLiteral) && to.is_a?(IntegerLiteral)
+        first = from.value
+        last_excluded = to.value
+        if step.positive?
+          return nil unless first < last_excluded
+          [first, first + ((last_excluded - 1 - first) / step) * step]
+        else
+          return nil unless first > last_excluded
+          stride = -step
+          [first - ((first - (last_excluded + 1)) / stride) * stride, first]
+        end
+      end
+
+      # This looks at the loop's range and not at what stands around the
+      # access, which is the character the captured arrays' own bounds check
+      # already has: an `if` around the line does not make the reach smaller,
+      # because the reach is the loop's.  Narrowing the loop's range is what
+      # makes it smaller.
+      def verify_index_reach (name, identifier, offset, extent, argument, location)
+        reach = index_reach(identifier)
+        return unless reach
+        low = reach.first + offset
+        high = reach.last + offset
+        return if low >= 0 && high < extent
+        outside = low.negative? ? low : high
+        spelled = @index_sources.fetch(identifier, identifier)
+        raise Unsupported.new(
+          "`#{name}[#{argument.slice}]` reaches cell #{outside} of a local " \
+          "array of #{extent} #{extent == 1 ? 'cell' : 'cells'}, where the " \
+          "cells are 0 to #{extent - 1}: `#{spelled}` runs #{reach.first} to " \
+          "#{reach.last} here. Narrow the loop's range, or give `#{name}` " \
+          "more cells -- an `if` around the line does not narrow the reach, " \
+          "which is the loop's",
+          location)
+      end
+
       # In the whole-array spelling every name in the block is a cell, so an
       # assignment to a name that is an array outside writes that array's
       # cell -- the one the loop is on, the same cell every read in the block
@@ -1433,6 +1989,22 @@ class CArray
             "rebinds the parameter and the loop runs on. Use a local of " \
             "another name",
             location)
+        end
+        if @local_array_names.include?(name)
+          if local_in_sight?(name)
+            raise Unsupported.new(
+              "`#{name}` is a local array here, and cannot hold a number; the " \
+              "two cannot be one C variable, so give the number a name of its " \
+              "own",
+              location)
+          end
+          # Out of sight, the array belonged to a block that has closed, and
+          # this line introduces a variable that merely shares its name.  The
+          # record goes, so a read below is read as the number it now is.
+          # The array itself stays counted: its C declaration is still in that
+          # block, and still on that block's stack.
+          @local_array_names.delete(name)
+          @local_arrays.delete(name)
         end
         @local_names << name unless @local_names.include?(name)
         scope = [@scopes.size - 1 - depth, 0].max
@@ -1521,6 +2093,23 @@ class CArray
           name, index = pointer
           return PointerWrite.new(name, index,
                                   expression || build(value_node), location)
+        end
+        refuse_a_constructor_in_an_expression(node.receiver)
+        if (name = local_array_name(node.receiver))
+          storage, shape = local_array_in_sight(name)
+          if value_node && undef_constant?(value_node)
+            raise Unsupported.new(
+              "`#{name}` is a local array, and a local array carries no mask " \
+              "-- it is cells and nothing beside them, so there is nowhere " \
+              "for UNDEF to be recorded. Keep a value that stands for " \
+              "missing, or write the result into a captured array and mark " \
+              "the cell there",
+              location)
+          end
+          return LocalArrayWrite.new(
+            name, storage, shape,
+            local_array_subscripts(name, shape, indices, location),
+            expression || build(value_node), location)
         end
         array = array_name(node.receiver, location)
         # `out[] = ...` was how a block that had to run as Ruby said "the
@@ -1624,6 +2213,19 @@ class CArray
         if @inner_names.include?(name)
           return IndexVariable.new(@inner_aliases.fetch(name, name), nil, location)
         end
+        if @local_array_names.include?(name)
+          unless local_in_sight?(name)
+            raise Unsupported.new(
+              "`#{name}` belongs to the loop block it was assigned in, and is " \
+              "not there after it; make the array before the loop",
+              location)
+          end
+          raise Unsupported.new(
+            "`#{name}` is a local array; index it, as in `#{name}[0]`. An " \
+            "array has no value of its own in a kernel -- what the name " \
+            "stands for is its cells",
+            location)
+        end
         if @local_names.include?(name)
           # A local of an inner loop's block that has closed is not in sight:
           # Ruby reads the same name after the block as a method call.
@@ -1696,6 +2298,20 @@ class CArray
       def build_call (node)
         if node.receiver.nil? && node.arguments.nil? && node.block.nil?
           return build_name_read(node.name, node.location)
+        end
+        refuse_a_constructor_in_an_expression(node)
+        # A method on a local array.  The operators are left alone so that
+        # `w + 1` is refused for reading the array bare, which is what it
+        # does; a named method is refused here, where the name can be said.
+        if (holder = local_array_name(node.receiver)) &&
+           !LOCAL_ARRAY_SUBSCRIPTS.include?(node.name) &&
+           !(ARITHMETIC_OPERATORS + COMPARISON_OPERATORS +
+             BIT_OPERATORS + [:**]).include?(node.name)
+          raise Unsupported.new(
+            "`#{holder}` is a local array, and `#{node.name}` is a method " \
+            "CArray answers outside a kernel; inside one an array is reached " \
+            "at a subscript. Write the loop out over `#{holder}[k]`",
+            node.location)
         end
         if (recursive = recursive_call(node))
           return recursive
@@ -2069,6 +2685,17 @@ class CArray
       # name means a cell in one argument position and the whole array in
       # another -- `poly.call(x[i], coef)` says both.
       def build_c_function_argument (argument, parameter, c_function)
+        # A local array is an array, and the C name it is declared under would
+        # decay to exactly the pointer the callee wants -- so this is a matter
+        # of matching the declaration's element type and length against the
+        # shape the block wrote, which is a later release.
+        if (name = local_array_name(argument))
+          raise Unsupported.new(
+            "`#{name}` is a local array, and handing one to a C function is " \
+            "a later release; copy its cells into a captured array and pass " \
+            "that, or read `#{name}[k]` and pass the numbers",
+            argument.location)
+        end
         # Inside a function, one of its own pointer parameters is already the
         # address the callee wants, and handing it on is what C does -- for a
         # `void *` slot as much as for a run of numbers, since neither is
@@ -2127,6 +2754,15 @@ class CArray
       def build_element_read (node, indices = nil)
         if (pointer = pointer_subscript(node, indices: indices))
           return PointerRead.new(pointer.first, pointer.last, node.location)
+        end
+        refuse_a_constructor_in_an_expression(node.receiver)
+        if (name = local_array_name(node.receiver))
+          storage, shape = local_array_in_sight(name)
+          arguments = indices || (node.arguments ? node.arguments.arguments : [])
+          return LocalArrayRead.new(
+            name, storage, shape,
+            local_array_subscripts(name, shape, arguments, node.location),
+            node.location)
         end
         array = array_name(node.receiver, node.location)
         arguments = indices || (node.arguments ? node.arguments.arguments : [])
