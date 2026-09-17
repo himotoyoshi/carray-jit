@@ -448,6 +448,7 @@ class CArray
         @own_symbol = name
         @in_function = true
         @error_parameter = error_parameter
+        @body_reports = false
         @contiguous = true
         @declared_locals = {}
         @temporary_count = 0
@@ -1474,8 +1475,23 @@ class CArray
       end
 
       # The loop a reduction runs in, inside one cell of the outer loops.
+      #
+      # A failure that reports and carries on -- a division handed back a
+      # zero, a computed index handed back cell 0 -- is stopped here, at the
+      # head of the next pass, in a function as in a kernel.  The flag is
+      # spelled three ways: a kernel's slot, the flag standing in a function's
+      # own object, and the pointer a pasted body is handed, which a kernel
+      # passes as null under a masked cell and so is asked about first.
+      #
+      # Called once the loop's body is emitted, since the body is what says
+      # whether there is anything to report.
       def inner_loop_guard (indent)
-        @body_reports ? "#{indent}  if ( *error ) break;\n" : ""
+        return "" unless @body_reports
+        flag = if !@in_function then "*error"
+               elsif @error_parameter then "#{ERROR_FLAG} && *#{ERROR_FLAG}"
+               else ERROR_FLAG
+               end
+        "#{indent}  if ( #{flag} ) break;\n"
       end
 
       # The same shape the bounded loop gets, minus the counter -- including
@@ -1501,13 +1517,13 @@ class CArray
         @carried_masks =
           @masked ? (outer + [emit_mask(loop_node.condition)]).uniq : outer
 
-        text = "#{indent}while (#{emit(loop_node.condition, :boolean)}) {\n" +
-               inner_loop_guard(indent)
-        text += loop_node.statements.map { |statement|
+        condition = emit(loop_node.condition, :boolean)
+        body = loop_node.statements.map { |statement|
           emit_statement(statement, indent + "  ")
         }.join
         @carried_masks = outer
-        text + "#{indent}}\n"
+        "#{indent}while (#{condition}) {\n" + inner_loop_guard(indent) +
+          body + "#{indent}}\n"
       end
 
       def emit_inner_loop (loop_node, indent)
@@ -1516,14 +1532,13 @@ class CArray
 
         index = loop_node.index
         step = loop_node.step
-        text = "#{indent}for (int64_t #{index} = #{emit(loop_node.from, :int64)}; " \
-               "#{index} #{step.positive? ? '<' : '>'} " \
-               "#{emit(loop_node.to, :int64)}; #{stride_step(index, step)}) {\n" +
-               inner_loop_guard(indent)
-        text += loop_node.statements.map { |statement|
+        opening = "#{indent}for (int64_t #{index} = #{emit(loop_node.from, :int64)}; " \
+                  "#{index} #{step.positive? ? '<' : '>'} " \
+                  "#{emit(loop_node.to, :int64)}; #{stride_step(index, step)}) {\n"
+        body = loop_node.statements.map { |statement|
           emit_statement(statement, indent + "  ")
         }.join
-        text + "#{indent}}\n"
+        opening + inner_loop_guard(indent) + body + "#{indent}}\n"
       end
 
       # The loop is a reduction when its whole body is one local folding a
@@ -1631,22 +1646,22 @@ class CArray
         text += "#{inner}const int64_t #{limit} = #{emit(loop_node.to, :int64)};\n"
         text += "#{inner}#{COMPUTATION_C_TYPES.fetch(type)} #{lanes.first} = #{name}" +
                 lanes.drop(1).map { |lane| ", #{lane} = #{identity}" }.join + ";\n"
+        rounds = lanes.each_with_index.map { |lane, offset|
+          term = lane_expression(assignment.expression, name, lane)
+          "#{inner}  {\n" \
+          "#{inner}    const int64_t #{index} = #{base} + #{offset};\n" \
+          "#{inner}    #{lane} = #{emit(term, type)};\n" \
+          "#{inner}  }\n"
+        }.join
         text += "#{inner}for (; #{base} + #{PARTIAL_ACCUMULATORS} <= #{limit}; " \
                 "#{base} += #{PARTIAL_ACCUMULATORS}) {\n"
-        text += inner_loop_guard(inner)
-        lanes.each_with_index do |lane, offset|
-          term = lane_expression(assignment.expression, name, lane)
-          text += "#{inner}  {\n"
-          text += "#{inner}    const int64_t #{index} = #{base} + #{offset};\n"
-          text += "#{inner}    #{lane} = #{emit(term, type)};\n"
-          text += "#{inner}  }\n"
-        end
+        text += inner_loop_guard(inner) + rounds
         text += "#{inner}}\n"
         text += "#{inner}#{name} = #{combine_partials(lanes, operator)};\n"
+        tail = emit_statement(assignment, inner + "  ")
         text += "#{inner}for (int64_t #{index} = #{base}; #{index} < #{limit}; " \
                 "#{index}++) {\n"
-        text += inner_loop_guard(inner)
-        text += emit_statement(assignment, inner + "  ")
+        text += inner_loop_guard(inner) + tail
         text += "#{inner}}\n"
         text + "#{indent}}\n"
       end
@@ -1962,18 +1977,19 @@ class CArray
       end
 
       def error_argument
+        # Asking for the slot is what says this body can report, and every
+        # place that can -- a checked subscript, the division helpers, a
+        # `raise`, a pasted function that takes the flag -- asks here.  So the
+        # loops around it learn it from the statements they hold, which are
+        # emitted before the loop's guard is written.  A function's loops ask
+        # too: they stop on its flag the way a kernel's stop on the slot.
+        @body_reports = true
         if @in_function
           @uses_error_flag = true
           # A pasted body reports into the kernel's slot, which reaches it as
           # a parameter; a standalone one into the flag in its own object.
           return @error_parameter ? ERROR_FLAG : "&#{ERROR_FLAG}"
         end
-        # Asking for the slot is what says this body can report, and every
-        # place that can -- a checked subscript, the division helpers, a
-        # `raise`, a pasted function that takes the flag -- asks here.  So the
-        # loops above learn it from the statements they will hold, which are
-        # emitted before the loop is opened.
-        @body_reports = true
         @masked_flag ? "(#{@masked_flag} ? (int32_t *) 0 : error)" : "error"
       end
 

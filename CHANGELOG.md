@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a loop in a `jit_function` body, and a `while` or inner loop in a
+  kernel whose body held the kernel's first way to fail, kept running after
+  an integer division by zero, a computed index out of range, `clamp` or
+  `Math.gamma` had reported a failure -- so a `while` decided by the value
+  handed back could run forever. Such a loop now leaves at the head of its
+  next pass, and the call raises as it already did.
+
 - Change: `CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are this
   gem's alone. From CArray 3.0.2 they are not defined until
   `require "carray/jit"` has run, so a program that calls one without it gets
