@@ -403,11 +403,15 @@ Where the clearing is *not* dead it costs about what clearing that many bytes co
 | 256 | 256 | 441.6 | 412.3 | 29.3 |
 | 256 | 9 | 26.9 | 2.7 | 24.2 |
 
-(ns a cell.) Reading the last two rows together is the point: **what costs is how many cells the body reads back, not how many the array has.** A 256-cell array whose body reads nine of them is 2.7 ns a cell; the same array read all the way through is 412. Holding the cells is nearly free -- it is a stack pointer moving -- and the scan is the bill.
+(ns a cell.) **The `empty` column is there to compare times and for nothing else: this body reads cells it never wrote, so with `CArray.empty` its answers are undefined -- whatever the stack held.** It is in the table because subtracting it from the column beside it is what isolates the clearing; it is not a spelling to reach for here.
+
+Reading the last two rows together is the point: **what costs is how many cells the body reads back, not how many the array has.** A 256-cell array whose body reads nine of them is 2.7 ns a cell; the same array read all the way through is 412. Holding the cells is nearly free -- it is a stack pointer moving -- and the scan is the bill.
 
 The clearing is the separate, smaller column: about 24 ns a cell for 2 KiB of int64, roughly the same whichever body sits on top of it, and lost in the noise at 9 and 64 cells.
 
-`CArray.empty(:type, [n])` is the spelling that skips it, for a body that writes every cell before reading any: reading one first is out of contract, the way reading under a mask is. Where the body writes all nine and then reads them, as the median above does, the clearing is already free and the plain constructor is the one to write.
+So `CArray.empty(:type, [n])` is for one kind of body only: **one that writes every cell before it reads any.** Reading a cell first is out of contract, the way reading under a mask is -- and a histogram is exactly the body that breaks it, since the zeros it counts up from are values it genuinely reads.
+
+Among bodies that do write every cell first, whether the clearing costs anything depends on how the writing is spelled. The median above writes its nine cells in nine lines, and there the clearing is dropped as dead: nothing to save, so write the plain constructor. Fill 256 cells with a loop instead and the `memset` is still in the generated C, costing **199.9 ns a cell against `empty`'s 185.8** -- 14 ns, and both spellings give the same answer because every cell really is written. That is where `CArray.empty` earns its place.
 
 The same row of a captured array is still the right answer for a workspace that outlives the cell, or one past the 4 KiB a local array is held to.
 
