@@ -812,6 +812,38 @@ class TestIntrinsics < Minitest::Test
     assert_match(/#include <string\.h>/, MED3.c_source)
   end
 
+  # ---------- the argument stays one axis ----------
+
+  # A local array may have more than one axis, but these four take one.
+  # `sum(m)` over a row-major sweep of every cell would be natural enough;
+  # `sort(m)` has no obvious meaning at all, and the four keep one rule.
+  def test_more_than_one_axis_is_refused
+    { "sum" => "out[i] = sum(m)", "min" => "out[i] = min(m)",
+      "max" => "out[i] = max(m)", "sort" => "sort(m)\n  out[i] = m[0, 0]" }
+      .each do |name, line|
+      error = refuse(<<~RUBY, /`m` has 2 axes/, arrays: { :out => "float64" })
+        proc { |i|
+          m = CArray.double(3, 4)
+          #{line}
+        }
+      RUBY
+      assert_match(/`#{name}` takes an array of one axis/, error.message)
+    end
+  end
+
+  def test_one_axis_of_a_two_dimensional_array_is_not_a_way_round_it
+    # There is no spelling that hands one row over: a subscript reaches a
+    # cell, not a row, so `m[0]` is refused for not being an array at all
+    # rather than for its rank.
+    error = refuse(<<~RUBY, /`m\[0\]` is not one/, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(3, 4)
+        out[i] = sum(m[0])
+      }
+    RUBY
+    assert_match(/takes a local array .* named on its own/, error.message)
+  end
+
   # ---------- the names are the compiler's, not the block's ----------
 
   def test_a_local_may_be_called_sum_beside_a_call_to_sum

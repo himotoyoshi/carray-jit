@@ -1175,8 +1175,13 @@ class CArray
       # it runs, so a loop's body starts from cleared cells on every pass.
       def local_array_declarations (scope, indent)
         scope.array_declarations.map { |name, binding, storage, shape|
+          # One flat run of cells, whatever the rank: the subscripts are
+          # folded to a row-major offset with the strides baked in (see
+          # #local_array_reference), and a flat array is also what a C
+          # function's pointer parameter is handed.  `double m[3][4]` would
+          # be the same bytes and a second spelling to keep in step.
           "#{indent}#{storage_c_type(storage)} " \
-          "#{local_c_name(name, binding)}#{shape.map { |n| "[#{n}]" }.join};\n"
+          "#{local_c_name(name, binding)}[#{shape.inject(1, :*)}];\n"
         }.join
       end
 

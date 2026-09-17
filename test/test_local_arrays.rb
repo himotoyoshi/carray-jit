@@ -640,21 +640,6 @@ class TestLocalArrays < Minitest::Test
     end
   end
 
-  def test_the_two_dimensional_shapes_say_which_release_takes_them
-    refuse(<<~RUBY, /one axis/, arrays: { :out => "float64" })
-      proc { |i|
-        m = CArray.double(3, 4)
-        out[i] = m[0]
-      }
-    RUBY
-    refuse(<<~RUBY, /one axis/, arrays: { :out => "float64" })
-      proc { |i|
-        m = CArray.new(:float64, [3, 4])
-        out[i] = m[0]
-      }
-    RUBY
-  end
-
   def test_object_and_fixlen_are_not_types_a_kernel_computes_with
     refuse(<<~RUBY, /`object`/, arrays: { :out => "float64" })
       proc { |i|
@@ -1499,17 +1484,6 @@ class TestLocalArrays < Minitest::Test
     assert_equal(4, got[0], "and the exponent the borrowed function wrote")
   end
 
-  def test_two_axes_are_still_refused_as_an_argument
-    error = assert_raises(CArray::JIT::Unsupported) do
-      out = CArray.double(1)
-      CArray.jit_for(1) { |i|
-        m = CArray.double(2, 2)
-        out[i] = DOT4.call(m, m)
-      }
-    end
-    assert_match(/one axis in this release/, error.message)
-  end
-
   # ---------- inside a compiled function's body ----------
 
   # A function body is the one place with no captures at all, so a workspace
@@ -1831,6 +1805,332 @@ class TestLocalArrays < Minitest::Test
     assert_match(/a contraction's body is one expression/, error.message)
   end
 
+  # ---------- more than one axis ----------
+
+  # The shape is written out, so the strides are constants and each axis has
+  # an extent of its own to be checked against.  That is what flattening by
+  # hand gives up: `m[r * 4 + c]` with `c` at 4 walks into the next row and
+  # says nothing, where `m[r, c]` is refused.
+
+  def test_a_two_dimensional_local_array_is_addressed_per_axis
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      m = CArray.double(3, 4)
+      3.times { |r| 4.times { |c| m[r, c] = (r * 4 + c) * 1.0 } }
+      out[i] = m[2, 3] * 100.0 + m[0, 1]
+    }
+    assert_equal([1101.0] * 3, out.to_a)
+  end
+
+  def test_the_declaration_is_flat_and_the_strides_are_constants
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(3, 4)
+        m[2, 3] = 1.0
+        out[i] = m[2, 3]
+      }
+    RUBY
+    assert_match(/double m\[12\];/, kernel.c_source,
+                 "twelve cells, packed row-major")
+    assert_match(/m\[\(INT64_C\(2\)\) \* 4 \+ INT64_C\(3\)\]/, kernel.c_source,
+                 "the stride is baked from the shape")
+  end
+
+  def test_a_three_dimensional_local_array
+    out = CArray.double(2)
+    CArray.jit_for(2) { |i|
+      m = CArray.double(2, 3, 4)
+      2.times { |p| 3.times { |r| 4.times { |c| m[p, r, c] = (p * 12 + r * 4 + c) * 1.0 } } }
+      out[i] = m[1, 2, 3]
+    }
+    assert_equal([23.0] * 2, out.to_a, "the last cell of 2x3x4")
+  end
+
+  def test_three_axes_bake_two_strides
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(2, 3, 4)
+        m[1, 2, 3] = 1.0
+        out[i] = m[1, 2, 3]
+      }
+    RUBY
+    assert_match(/double m\[24\];/, kernel.c_source)
+    assert_match(/\* 12 \+/, kernel.c_source, "the outer stride is 3 * 4")
+    assert_match(/\* 4 \+/, kernel.c_source, "and the middle one is 4")
+  end
+
+  # Example 4 of the proposal: a 3x3 system per cell, forward elimination and
+  # back substitution, with the triangular ranges written as `if` (§6.8).
+  def test_the_three_by_three_solve_matches_the_same_loop_in_ruby
+    ny, nx = 3, 4
+    coef = CArray.double(ny, nx, 3, 4)
+    coef.seq!(1.0, 0.25)
+    # Make the diagonal dominant so the pivotless elimination is sound.
+    ny.times { |i| nx.times { |j| 3.times { |r|
+      coef[i, j, r, r] = coef[i, j, r, r] + 20.0
+    } } }
+    x = CArray.double(ny, nx, 3)
+    CArray.jit_for(ny, nx) { |i, j|
+      m = CArray.double(3, 4)
+      3.times { |r| 4.times { |c| m[r, c] = coef[i, j, r, c] } }
+      3.times { |p|
+        3.times { |r|
+          if r > p
+            f = m[r, p] / m[p, p]
+            4.times { |c| m[r, c] -= f * m[p, c] }
+          end
+        }
+      }
+      sol = CArray.double(3)
+      2.step(0, -1) { |r|
+        s = m[r, 3]
+        3.times { |c| s -= m[r, c] * sol[c] if c > r }
+        sol[r] = s / m[r, r]
+      }
+      3.times { |r| x[i, j, r] = sol[r] }
+    }
+    reference = CArray.double(ny, nx, 3)
+    ny.times { |i| nx.times { |j|
+      m = CArray.double(3, 4)
+      3.times { |r| 4.times { |c| m[r, c] = coef[i, j, r, c] } }
+      3.times { |p|
+        3.times { |r|
+          if r > p
+            f = m[r, p] / m[p, p]
+            4.times { |c| m[r, c] -= f * m[p, c] }
+          end
+        }
+      }
+      sol = CArray.double(3)
+      2.step(0, -1) { |r|
+        sum = m[r, 3]
+        3.times { |c| sum -= m[r, c] * sol[c] if c > r }
+        sol[r] = sum / m[r, r]
+      }
+      3.times { |r| reference[i, j, r] = sol[r] }
+    } }
+    assert_arrays_bits_equal(reference.flatten, x.flatten)
+  end
+
+  # ---------- the checks, per axis ----------
+
+  def test_one_axis_past_its_end_is_refused_while_the_others_fit
+    pattern = /the subscript `c` on axis 1 of `m`, which is 3 x 4,/
+    error = refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(3, 4)
+        3.times { |r| 5.times { |c| m[r, c] = 1.0 } }
+        out[i] = m[0, 0]
+      }
+    RUBY
+    assert_match(/reaches cell 4 of that axis's 4 cells/, error.message,
+                 "the axis is named rather than a spelling nobody wrote")
+  end
+
+  def test_the_row_axis_past_its_end_is_refused_too
+    refuse(<<~RUBY, /reaches cell 3/, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(3, 4)
+        4.times { |r| 4.times { |c| m[r, c] = 1.0 } }
+        out[i] = m[0, 0]
+      }
+    RUBY
+  end
+
+  def test_a_computed_column_out_of_range_raises
+    columns = CArray.int64(3).seq!(9)
+    out = CArray.double(3)
+    assert_raises(IndexError) do
+      CArray.jit_for(3) { |i|
+        m = CArray.double(3, 4)
+        out[i] = m[0, columns[i]]
+      }
+    end
+  end
+
+  # The point of per-axis checking: a column past its end does not silently
+  # become a cell of the next row.
+  def test_a_write_past_one_axis_leaves_the_next_row_alone
+    columns = CArray.int64(3)
+    columns[0] = 0
+    columns[1] = 1
+    columns[2] = 9
+    seen = CArray.double(3)
+    assert_raises(IndexError) do
+      CArray.jit_for(3) { |i|
+        m = CArray.double(3, 4)
+        m[1, 0] = 7.0
+        m[0, columns[i]] = 99.0
+        seen[i] = m[1, 0]
+      }
+    end
+    assert_equal(7.0, seen[0], "an inside column does not touch row 1")
+    assert_equal(7.0, seen[1])
+  end
+
+  def test_the_number_of_subscripts_has_to_match_the_axes
+    error = refuse(<<~RUBY, /has 2 axes/, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(3, 4)
+        out[i] = m[1]
+      }
+    RUBY
+    assert_match(/takes 2 subscripts/, error.message)
+    assert_match(/1 was written/, error.message)
+  end
+
+  def test_a_literal_subscript_past_one_axis_is_refused
+    pattern = /the subscript `4` on axis 1 of `m`, which is 3 x 4, is outside/
+    error = refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(3, 4)
+        m[0, 4] = 1.0
+        out[i] = m[0, 0]
+      }
+    RUBY
+    assert_match(/that axis's 4 cells, whose cells are 0 to 3/, error.message)
+  end
+
+  # ---------- the room it takes ----------
+
+  def test_a_shape_whose_cells_come_to_more_than_the_limit_is_refused
+    cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
+    side = Integer(Math.sqrt(cells)) + 1
+    error = refuse(<<~RUBY, /one local array is held to/, arrays: { :out => "float64" })
+      proc { |i|
+        m = CArray.double(#{side}, #{side})
+        out[i] = m[0, 0]
+      }
+    RUBY
+    assert_match(/#{side * side * 8} bytes/, error.message,
+                 "counted over every cell, not per axis")
+  end
+
+  def test_two_dimensional_arrays_count_towards_the_total
+    each = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8 / 16
+    body = (0...5).map { |n|
+      "  m#{n} = CArray.double(16, #{each})\n  m#{n}[0, 0] = 1.0\n"
+    }.join
+    refuse(<<~RUBY, /come to \d+ bytes of stack/, arrays: { :out => "float64" })
+      proc { |i|
+      #{body}
+        out[i] = m0[0, 0]
+      }
+    RUBY
+  end
+
+  # ---------- across the entry points ----------
+
+  def test_more_than_one_axis_in_every_entry_point
+    a = CArray.double(4).seq!(1.0)
+
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i|
+      m = CArray.double(2, 2)
+      m[0, 0] = a[i]; m[1, 1] = a[i] * 2.0
+      out[i] = m[0, 0] + m[1, 1]
+    }
+    assert_equal((0...4).map { |k| a[k] * 3.0 }, out.to_a, "jit_for")
+
+    each = CArray.double(4)
+    CArray.jit_each {
+      m = CArray.double(2, 2)
+      m[0, 0] = a
+      m[1, 1] = a * 2.0
+      each = m[0, 0] + m[1, 1]
+    }
+    assert_equal((0...4).map { |k| a[k] * 3.0 }, each.to_a, "jit_each")
+
+    mapped = CArray.jit_map {
+      m = CArray.double(2, 2)
+      m[0, 0] = a
+      m[1, 1] = a * 2.0
+      m[0, 0] + m[1, 1]
+    }
+    assert_equal((0...4).map { |k| a[k] * 3.0 }, mapped.to_a, "jit_map")
+
+    image = CArray.double(5, 5).seq!
+    stencilled = CArray.jit_stencil(image, border: :clamp) { |win|
+      m = CArray.double(2, 2)
+      m[0, 0] = win[0, 0]
+      m[1, 1] = win[0, 0] * 2.0
+      m[0, 0] + m[1, 1]
+    }
+    assert_equal(image[2, 2] * 3.0, stencilled[2, 2], "jit_stencil")
+
+    body = CArray.jit_function("double twodim(double x)") { |x|
+      m = CArray.double(2, 2)
+      m[0, 0] = x
+      m[1, 1] = x * 2.0
+      m[0, 0] + m[1, 1]
+    }
+    assert_equal(9.0, body.call(3.0), "a function body")
+    from_kernel = CArray.double(2)
+    CArray.jit_for(2) { |i| from_kernel[i] = body.call(i * 1.0) }
+    assert_equal([0.0, 3.0], from_kernel.to_a, "and the same body pasted")
+  end
+
+  # ---------- handed to a C function, flat ----------
+
+  # A local array is packed row-major, so C takes it as the flat run of cells
+  # it is: a `double[3][4]` goes to `const double a[12]`.
+  def test_a_two_dimensional_array_goes_to_a_flat_declaration
+    total = CArray.jit_function("double total12(const double a[12])") { |a|
+      s = 0.0
+      (0...12).each { |k| s = s + a[k] }
+      s
+    }
+    out = CArray.double(2)
+    CArray.jit_for(2) { |i|
+      m = CArray.double(3, 4)
+      3.times { |r| 4.times { |c| m[r, c] = (r * 4 + c) * 1.0 } }
+      out[i] = total.call(m)
+    }
+    assert_equal([(0...12).sum * 1.0] * 2, out.to_a)
+  end
+
+  def test_row_major_is_the_order_the_callee_sees
+    first = CArray.jit_function("double cell(const double a[12], double k)") { |a, k|
+      a[k.to_i]
+    }
+    out = CArray.double(12)
+    CArray.jit_for(12) { |i|
+      m = CArray.double(3, 4)
+      3.times { |r| 4.times { |c| m[r, c] = r * 100.0 + c } }
+      out[i] = first.call(m, i * 1.0)
+    }
+    reference = (0...3).flat_map { |r| (0...4).map { |c| r * 100.0 + c } }
+    assert_equal(reference, out.to_a, "row after row")
+  end
+
+  def test_too_few_cells_for_the_declaration_is_refused_as_it_is_read
+    error = assert_raises(CArray::JIT::Unsupported) do
+      total = CArray.jit_function("double total12b(const double a[12])") { |a| a[0] }
+      out = CArray.double(1)
+      CArray.jit_for(1) { |i|
+        m = CArray.double(2, 4)
+        out[i] = total.call(m)
+      }
+    end
+    assert_match(/reads 12 cells/, error.message)
+    assert_match(/has 8/, error.message, "eight cells over both axes")
+  end
+
+  def test_a_three_dimensional_array_goes_to_a_flat_declaration_too
+    total = CArray.jit_function("double total24(const double a[24])") { |a|
+      s = 0.0
+      (0...24).each { |k| s = s + a[k] }
+      s
+    }
+    out = CArray.double(1)
+    CArray.jit_for(1) { |i|
+      m = CArray.double(2, 3, 4)
+      2.times { |p| 3.times { |r| 4.times { |c| m[p, r, c] = 1.0 } } }
+      out[i] = total.call(m)
+    }
+    assert_equal([24.0], out.to_a)
+  end
+
   # ---------- a name the window already had ----------
 
   # Giving one of the block's own arrays the window's name rebinds it, here as
@@ -1896,15 +2196,6 @@ class TestLocalArrays < Minitest::Test
   end
 
   # ---------- still refused, as in the first release ----------
-
-  def test_two_axes_are_still_refused_in_the_new_entry_points
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { m = CArray.double(3, 4); out = m[0] }
-    end
-    assert_match(/one axis in this release/, error.message)
-  end
 
   def test_two_shapes_of_one_block_are_two_kernels
     first = compile_kernel(<<~RUBY, arrays: { :out => "float64" })

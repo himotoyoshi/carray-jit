@@ -1601,12 +1601,6 @@ class CArray
             "`#{name}` to; declare what it points at",
             argument.location)
         end
-        unless shape.size == 1
-          raise Unsupported.new(
-            "`#{name}` has #{shape.size} axes, and a local array is handed to " \
-            "a C function with one axis in this release",
-            argument.location)
-        end
         wanted = CDeclaration::DATA_TYPES.fetch(parameter.element.fiddle).to_s
         unless storage == wanted
           raise Unsupported.new(
@@ -1616,10 +1610,16 @@ class CArray
             "matched exactly here, as it is for a captured array",
             argument.location)
         end
-        if parameter.sized? && shape.first < parameter.array
+        # The cells over every axis, because that is what the callee is handed:
+        # a local array is packed row-major, so `double[3][4]` is the twelve
+        # cells `const double a[12]` asks for.
+        cells = shape.inject(1, :*)
+        if parameter.sized? && cells < parameter.array
+          shaped = shape.size == 1 ? "" :
+                     " (#{shape.join(' x ')}, packed row-major)"
           raise Unsupported.new(
             "`#{c_function}` takes `#{parameter.text}` there, which reads " \
-            "#{parameter.array} cells, and `#{name}` has #{shape.first}. A " \
+            "#{parameter.array} cells, and `#{name}` has #{cells}#{shaped}. A " \
             "local array is on this block's stack and the function does not " \
             "check a subscript of its own, so the missing cells would be the " \
             "frame; give `#{name}` at least #{parameter.array}",
@@ -1703,7 +1703,10 @@ class CArray
         unless shape.size == 1
           raise Unsupported.new(
             "`#{name}` has #{shape.size} axes, and `#{node.name}` takes an " \
-            "array of one axis in this release",
+            "array of one axis. A sweep over every cell would read well " \
+            "enough for `sum`, and `sort` over one has no obvious meaning at " \
+            "all, so the four keep one rule; walk the axes yourself, or copy " \
+            "the cells you want into an array of one axis",
             node.location)
         end
         [name, storage, shape]
@@ -1870,11 +1873,10 @@ class CArray
       # are what the C declares and what every subscript is checked against,
       # and a length that is not known until the kernel runs could be neither.
       def read_local_array_shape (node, arguments)
-        if arguments.size > 1
+        if arguments.empty?
           raise Unsupported.new(
-            "`#{node.slice}` asks for #{arguments.size} axes, and a local " \
-            "array has one axis in this release; a captured array of " \
-            "workspace takes as many as it is given",
+            "`#{node.slice}` says no shape; a local array is written " \
+            "`CArray.#{node.name}(n)` with the length written out",
             node.location)
         end
         arguments.map { |argument|
@@ -2072,8 +2074,35 @@ class CArray
             location)
         end
         arguments.each_with_index.map { |argument, axis|
-          local_array_subscript(name, shape[axis], argument, location)
+          local_array_subscript(name, shape, axis, argument, location)
         }
+      end
+
+      # How a message names the thing that is out of range.
+      #
+      # With one axis the whole subscript is the thing, and quoting it back is
+      # exactly right.  With more than one it is not: the block wrote
+      # `m[r, c]`, so quoting `m[c]` would be a spelling nobody typed, and an
+      # extent on its own ("a local array of 4 cells") is a poor account of a
+      # 3 x 4 one.  So the axis is named instead, and the shape with it.
+      def local_array_subject (name, shape, axis, argument)
+        if shape.size == 1
+          "`#{name}[#{argument.slice}]`"
+        else
+          "the subscript `#{argument.slice}` on axis #{axis} of `#{name}`, " \
+          "which is #{shape.join(' x ')},"
+        end
+      end
+
+      # What the cells of the axis in question are, said whole rather than as
+      # a fragment to glue on: the two ranks want different sentences and
+      # composing them produced "is outside and that axis has 4 cells".
+      def local_array_cells_phrase (shape, axis)
+        extent = shape[axis]
+        cells = "#{extent} #{extent == 1 ? 'cell' : 'cells'}"
+        run = extent == 1 ? "only cell is 0" : "cells are 0 to #{extent - 1}"
+        shape.size == 1 ? "a local array of #{cells}, whose #{run}"
+                        : "that axis's #{cells}, whose #{run}"
       end
 
       # (a) An index whose loop states its range in literals reaches a set of
@@ -2081,25 +2110,26 @@ class CArray
       # test.  (b) Anything else is checked where the cell is reached.
       #
       # A literal position is (a) as well, its range being itself.
-      def local_array_subscript (name, extent, argument, location)
+      def local_array_subscript (name, shape, axis, argument, location)
+        extent = shape[axis]
         if (index = index_name(argument)) && index_in_scope?(index)
-          return checked_index_subscript(name, index, 0, extent, argument, location)
+          return checked_index_subscript(name, shape, axis, index, 0,
+                                         argument, location)
         end
         if argument.is_a?(Prism::CallNode) && [:+, :-].include?(argument.name) &&
            (receiver = index_name(argument.receiver)) && index_in_scope?(receiver)
           arguments = argument.arguments ? argument.arguments.arguments : []
           if arguments.size == 1 && (offset = literal_integer(arguments.first))
             offset = -offset if argument.name == :-
-            return checked_index_subscript(name, receiver, offset, extent,
+            return checked_index_subscript(name, shape, axis, receiver, offset,
                                            argument, location)
           end
         end
         if (position = literal_integer(argument))
           unless (0...extent).cover?(position)
             raise Unsupported.new(
-              "`#{name}[#{argument.slice}]` is outside a local array of " \
-              "#{extent} #{extent == 1 ? 'cell' : 'cells'}, whose " \
-              "#{extent == 1 ? 'only cell is 0' : "cells are 0 to #{extent - 1}"}" +
+              "#{local_array_subject(name, shape, axis, argument)} is " \
+              "outside #{local_array_cells_phrase(shape, axis)}" +
               (position.negative? ?
                  ". A subscript here counts from the start, so CArray's " \
                  "`#{name}[-1]` for the last cell is written " \
@@ -2111,9 +2141,11 @@ class CArray
         [nil, build(argument)]
       end
 
-      def checked_index_subscript (name, index, offset, extent, argument, location)
+      def checked_index_subscript (name, shape, axis, index, offset, argument,
+                                   location)
         identifier = index_identifier(index)
-        verify_index_reach(name, identifier, offset, extent, argument, location)
+        verify_index_reach(name, shape, axis, identifier, offset, argument,
+                           location)
         [identifier, offset]
       end
 
@@ -2145,7 +2177,9 @@ class CArray
       # already has: an `if` around the line does not make the reach smaller,
       # because the reach is the loop's.  Narrowing the loop's range is what
       # makes it smaller.
-      def verify_index_reach (name, identifier, offset, extent, argument, location)
+      def verify_index_reach (name, shape, axis, identifier, offset, argument,
+                              location)
+        extent = shape[axis]
         reach = index_reach(identifier)
         return unless reach
         low = reach.first + offset
@@ -2154,12 +2188,11 @@ class CArray
         outside = low.negative? ? low : high
         spelled = @index_sources.fetch(identifier, identifier)
         raise Unsupported.new(
-          "`#{name}[#{argument.slice}]` reaches cell #{outside} of a local " \
-          "array of #{extent} #{extent == 1 ? 'cell' : 'cells'}, where the " \
-          "cells are 0 to #{extent - 1}: `#{spelled}` runs #{reach.first} to " \
-          "#{reach.last} here. Narrow the loop's range, or give `#{name}` " \
-          "more cells -- an `if` around the line does not narrow the reach, " \
-          "which is the loop's",
+          "#{local_array_subject(name, shape, axis, argument)} reaches cell " \
+          "#{outside} of #{local_array_cells_phrase(shape, axis)}: " \
+          "`#{spelled}` runs #{reach.first} to #{reach.last} here. Narrow " \
+          "the loop's range, or give `#{name}` more cells -- an `if` around " \
+          "the line does not narrow the reach, which is the loop's",
           location)
       end
 

@@ -82,6 +82,33 @@ The aliases are CArray's too, and two of them are worth reading twice: **`CArray
 
 The shape is **written out**: an integer, or integers joined by `+`, `-` and `*`, so `CArray.double(2 * 4 + 1)` is a nine-cell array. A length only the call knows is refused -- there would be no C array to declare and no bound to check against -- and so is a length of zero or less. One axis in this release; `CArray.double(3, 4)` says which release takes more.
 
+**More than one axis** is written the way CArray writes it, and each axis is checked against its own extent:
+
+```ruby
+CArray.jit_for(ny, nx) { |i, j|
+  m = CArray.double(3, 4)                 # double m[12]; packed row-major
+  3.times { |r| 4.times { |c| m[r, c] = coef[i, j, r, c] } }
+  ...
+}
+```
+
+The shape is literal, so the strides are constants the compiler can see: `m[r, c]` becomes `m[(r) * 4 + (c)]`, and a rank above two folds the same way. One subscript per axis, and a count that does not match the axes is refused.
+
+Per-axis checking is the thing this buys, and the reason to write `m[r, c]` rather than flattening by hand. Write `m[r * 4 + c]` yourself and a `c` of 4 is a cell of the next row -- a real read, of the wrong number, saying nothing. Write `m[r, c]` and the column is held to four:
+
+```ruby
+m = CArray.double(3, 4)
+3.times { |r| 5.times { |c| m[r, c] = 1.0 } }
+#=> the subscript `c` on axis 1 of `m`, which is 3 x 4, reaches cell 4 of that
+#   axis's 4 cells, whose cells are 0 to 3: `c` runs 0 to 4 here.
+```
+
+A column the kernel works out is checked where it is reached, per axis as well, so a write past one axis raises rather than landing in the next row.
+
+The limits count cells rather than axes: `CArray.double(32, 32)` is 8 KiB and is refused for the 4 KiB an array is held to.
+
+To a C function a local array goes as what it is -- one flat run of cells, row after row -- so a `double[3][4]` is handed to `const double a[12]`, and the length is matched over every cell.
+
 The compatibility layer is not taken. `CArray.zeros(4)`, `CArray.ones(4)`, `CArray.full(4, 1.0)`, `CArray.empty(4)` and the Numo spellings `CArray::Int64.zeros(4)` / `CArray::Int64.empty(4)` are all refused, each naming the carray spelling it stands for. `data_type_extension.rb` opens by calling itself "Numo / NumPy-style" and "not the 'main' carray API"; the words inside a block are carray's own.
 
 **A subscript is checked, and where depends on what it is made of.** Where the position is an inner loop's index at a literal offset and that loop states its range in literals, the reach is known as the block is read, and the C carries no test:
@@ -144,7 +171,7 @@ They are written as bare calls, the way `random(rng: r)` is, and not as methods 
 
 The name does not collide with anything the block writes. `sum = 0.0` beside `sum(w)` is a local and reads as one, because a bare name with no arguments is a capture; `sum.call(x)` is a call to whatever `sum` holds, because a name with a receiver is. Only the receiverless call with arguments is the intrinsic.
 
-**What they take.** One local array, of one axis, named on its own. A captured array is refused, and the message says why: walking all of it at every cell is a pass over the whole array per cell, which is not what the line looks like it costs. Reducing a whole array is `CArray#sum` outside the kernel. A scalar, an expression and two arguments are all refused -- for the minimum of two numbers write `x < y ? x : y`, and to hold a value between bounds write `x.clamp(lo, hi)`.
+**What they take.** One local array, of one axis, named on its own -- a local array may have more than one axis, but these four do not take one: a row-major sweep would read well enough for `sum`, `sort` over one has no obvious meaning, and the four keep a single rule. Walk the axes yourself, or copy the cells you want into an array of one axis. A captured array is refused, and the message says why: walking all of it at every cell is a pass over the whole array per cell, which is not what the line looks like it costs. Reducing a whole array is `CArray#sum` outside the kernel. A scalar, an expression and two arguments are all refused -- for the minimum of two numbers write `x < y ? x : y`, and to hold a value between bounds write `x.clamp(lo, hi)`.
 
 **`sum`** accumulates in the element's computation type, in index order from the first cell: an int32 array sums in `int64_t`, a float32 array in `float`. It is the same loop written out, in the same order, so the last bit is the same one -- no partial sums, unlike a reduction over a captured array, because a local array is small enough that splitting buys nothing and would change the answer. An integer sum wraps where the width wraps. A boolean array is refused: CArray reads the sum of one as a count, and counting is a meaning this would be borrowing rather than deciding. Count into an integer array and sum that.
 

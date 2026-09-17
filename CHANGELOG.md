@@ -39,6 +39,19 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a local array may have more than one axis --
+  `CArray.double(3, 4)`, `CArray.new(:float64, [2, 3, 4])` -- in any of the
+  five places one can be made. The shape is written out as it always was, so
+  the strides are constants: `m[r, c]` is `m[(r) * 4 + (c)]`, one subscript
+  per axis, and each axis is checked against its own extent. That is what
+  flattening by hand gives up -- `m[r * 4 + c]` with a column of 4 reads a
+  cell of the next row and says nothing, where `m[r, c]` is refused by name
+  and a computed column raises. The stack limits count cells rather than
+  axes, so `CArray.double(32, 32)` is 8 KiB and past the 4 KiB an array is
+  held to. Handed to a C function the array goes as the flat run of cells it
+  is, row after row, so a `double[3][4]` reaches `const double a[12]` and the
+  length is matched over every cell. The four intrinsics still take one axis.
+
 - New: a `CArray.jit_function` body may make a local array and use
   `sum`/`min`/`max`/`sort` over one, which completes the four entry points.
   A body closes over nothing, so this is the only place scratch space could
