@@ -306,6 +306,12 @@ class CArray
           node.binding = bind_array(node)
           @assigned_in_while.delete(node.name)
           declare_array(node)
+        when LocalArrayAddress
+          # The address of an array the body made.  Its binding is what says
+          # which C name the callee is handed; there is no value here, so no
+          # computation type either -- the declaration settled what it is.
+          node.binding = array_binding(node)
+          node.type = :address
         when IntrinsicCall
           node.binding = array_binding(node)
           node.type = self.class.storage_type(node.storage)
@@ -986,6 +992,9 @@ class CArray
                           node.expression, node.location)
         when LocalArrayDeclaration
           # Nothing to check: no value is computed.
+        when LocalArrayAddress
+          # Nothing to check: the declaration was matched against the shape
+          # and the storage type as the block was read.
         when IntrinsicCall, IntrinsicStatement
           # The element type was checked as the types were assigned, and the
           # argument is an array rather than an expression: there is nothing

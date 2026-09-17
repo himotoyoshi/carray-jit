@@ -2688,6 +2688,10 @@ class CArray
         when MathCall then emit_math_call(node)
         when ArrayAddress
           [bare_name(node.array), LEAF_PRECEDENCE]
+        when LocalArrayAddress
+          # The array's own name, which is the address: C decays it at the
+          # call, and there is no buffer for the caller to have packed.
+          [local_c_name(node.name, node.binding), LEAF_PRECEDENCE]
         when PointerRead
           # A pointer parameter is reached the way C reaches it: contiguous,
           # from the address it was handed.  No base, no stride, no bounds --
@@ -2701,7 +2705,8 @@ class CArray
           # scalars; this one is right here, so the call is direct.
           arguments = node.arguments.zip(node.parameters)
                           .map { |argument, parameter|
-                            if argument.is_a?(ArrayAddress)
+                            if argument.is_a?(ArrayAddress) ||
+                               argument.is_a?(LocalArrayAddress)
                               emit(argument, :address)
                             else
                               emit(argument, parameter.computation)
@@ -2722,7 +2727,8 @@ class CArray
           c_function = @c_functions.fetch(node.name)
           arguments = node.arguments.zip(c_function.parameters)
                           .map { |argument, parameter|
-                            if argument.is_a?(ArrayAddress)
+                            if argument.is_a?(ArrayAddress) ||
+                               argument.is_a?(LocalArrayAddress)
                               emit(argument, :address)
                             else
                               emit(argument, parameter.computation)

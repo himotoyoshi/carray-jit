@@ -774,6 +774,28 @@ class CArray
       end
     end
 
+    # A local array standing where a C function wants a pointer.
+    #
+    # Not `ArrayAddress`, which is an operand's: that one is spelled by
+    # `bare_name` and is entered in `@address_arrays`, the list of arrays the
+    # caller packs and hands over through `data[]`.  This array is already
+    # here, on the stack of the block that made it, so it is spelled by the
+    # name its declaration was written under and the caller has nothing to
+    # pack.
+    class LocalArrayAddress < Node
+      attr_accessor :binding
+      attr_reader :name, :storage, :shape
+      def initialize (name, storage, shape, location = nil)
+        super(location)
+        @name = name
+        @storage = storage
+        @shape = shape
+      end
+      def local
+        [@name, @binding]
+      end
+    end
+
     class KernelBody < Node
       attr_reader :statements
       # The locals the kernel's block, or a function's, declares, as

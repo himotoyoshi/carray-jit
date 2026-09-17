@@ -39,6 +39,21 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a local array may be handed to a C function -- one from
+  `CArray.jit_function` or `CArray.jit_extern` -- wherever the declaration
+  takes a pointer, from any of the four entry points that make one. What the
+  declaration says is matched as the block is read rather than at the call,
+  both the element type and the length being written in the block: an exact
+  element type, and at least as many cells as a sized declarator asks for.
+  A parameter that is not `const` may be written through, and the line after
+  the call reads what the callee left; the zeroed constructors still clear at
+  the line, so nothing carries into the next cell. Passing one array to two
+  parameters is fine, the declarations carrying no `restrict`. Note that a
+  borrowed function which keeps the pointer past the call is left pointing at
+  a stack frame that has gone, and that a declaration carrying no length --
+  `const double *x` -- gives nothing to check against. Still excluded: a
+  `jit_function` body, more than one axis, and a contraction.
+
 - New: a local array, and the four intrinsics over one, may be written in a
   `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil` block as well as
   in `CArray.jit_for`. These are the spellings that wanted one: a block with

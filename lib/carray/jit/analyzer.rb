@@ -1576,6 +1576,58 @@ class CArray
         node ? node.body : []
       end
 
+      # Handing a local array to a C function, with the declaration matched
+      # against what the block wrote.
+      #
+      # The length check is the one that matters, and it is not decoration: a
+      # compiled function does not check a subscript on a pointer parameter
+      # (unchecked by design -- the caller's business, as in C), and this
+      # array is on the stack of the block that made it.  A declaration that
+      # reads more cells than the array holds would walk over the frame, and
+      # the return address is in it.
+      def build_local_array_address (name, argument, parameter, c_function)
+        storage, shape = local_array_in_sight(name)
+        unless parameter&.pointer
+          raise Unsupported.new(
+            "`#{c_function}` takes #{parameter ? "`#{parameter.text}`" : 'a number'} " \
+            "there, and `#{name}` is an array; pass a cell of it, as in " \
+            "`#{name}[0]`",
+            argument.location)
+        end
+        unless parameter.indexable?
+          raise Unsupported.new(
+            "`#{c_function}` takes `#{parameter.text}` there, which points at " \
+            "nothing in particular, so there is no element type to hold " \
+            "`#{name}` to; declare what it points at",
+            argument.location)
+        end
+        unless shape.size == 1
+          raise Unsupported.new(
+            "`#{name}` has #{shape.size} axes, and a local array is handed to " \
+            "a C function with one axis in this release",
+            argument.location)
+        end
+        wanted = CDeclaration::DATA_TYPES.fetch(parameter.element.fiddle).to_s
+        unless storage == wanted
+          raise Unsupported.new(
+            "`#{c_function}` takes `#{parameter.text}` there, which is a " \
+            "#{wanted} array, and `#{name}` is #{storage}; make it with " \
+            "`CArray.new(:#{wanted}, [#{shape.first}])` -- an element type is " \
+            "matched exactly here, as it is for a captured array",
+            argument.location)
+        end
+        if parameter.sized? && shape.first < parameter.array
+          raise Unsupported.new(
+            "`#{c_function}` takes `#{parameter.text}` there, which reads " \
+            "#{parameter.array} cells, and `#{name}` has #{shape.first}. A " \
+            "local array is on this block's stack and the function does not " \
+            "check a subscript of its own, so the missing cells would be the " \
+            "frame; give `#{name}` at least #{parameter.array}",
+            argument.location)
+        end
+        LocalArrayAddress.new(name, storage, shape, argument.location)
+      end
+
       # ---- the functions the compiler brings with it ----
 
       # Written as bare calls, the way `random(rng: r)` is: names of this
@@ -2841,16 +2893,15 @@ class CArray
       # name means a cell in one argument position and the whole array in
       # another -- `poly.call(x[i], coef)` says both.
       def build_c_function_argument (argument, parameter, c_function)
-        # A local array is an array, and the C name it is declared under would
-        # decay to exactly the pointer the callee wants -- so this is a matter
-        # of matching the declaration's element type and length against the
-        # shape the block wrote, which is a later release.
+        # A local array decays to the pointer the callee wants, as it does in
+        # C -- the name its declaration was written under is already the
+        # address.  What the declaration says about it is matched here, as the
+        # block is read, because both halves are written in the block: the
+        # element type is the constructor and the length is a literal.  A
+        # captured array is matched at the call instead (`address_buffer`),
+        # neither being knowable until there is an array.
         if (name = local_array_name(argument))
-          raise Unsupported.new(
-            "`#{name}` is a local array, and handing one to a C function is " \
-            "a later release; copy its cells into a captured array and pass " \
-            "that, or read `#{name}[k]` and pass the numbers",
-            argument.location)
+          return build_local_array_address(name, argument, parameter, c_function)
         end
         # Inside a function, one of its own pointer parameters is already the
         # address the callee wants, and handing it on is what C does -- for a

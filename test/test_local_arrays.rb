@@ -810,20 +810,6 @@ class TestLocalArrays < Minitest::Test
     RUBY
   end
 
-  def test_a_local_array_is_not_handed_to_a_c_function_in_this_release
-    f = CArray.jit_function("double s2(const double x[2])") { |x| x[0] + x[1] }
-    out = CArray.double(1)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_for(1) { |i|
-        w = CArray.double(2)
-        w[0] = 1.0
-        w[1] = 2.0
-        out[i] = f.call(w)
-      }
-    end
-    assert_match(/`w` is a local array/, error.message)
-  end
-
   # ---------- the room it takes ----------
 
   def test_one_array_larger_than_the_limit_is_refused
@@ -1299,6 +1285,245 @@ class TestLocalArrays < Minitest::Test
     end
   end
 
+  # ---------- handed to a C function ----------
+
+  # A local array decays to the pointer a C function wants, as it does in C.
+  # What the declaration says about it -- the element type, and the length
+  # where the declarator carries one -- is matched as the block is read,
+  # because both are written in the block: the shape is a literal and the type
+  # is the constructor.  A captured array is matched at the call instead, its
+  # type and length not being knowable until there is an array.
+  #
+  # The match has to happen: a compiled function does not check a subscript on
+  # a pointer parameter (unchecked by design, the caller's business as in C),
+  # and a local array is on the stack, so a declaration that reads more cells
+  # than the array holds would walk over the frame.
+
+  DOT4 = CArray.jit_function(
+    "double dot4(const double x[4], const double y[4])") { |x, y|
+    x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]
+  }
+
+  # Example 6 of the proposal.
+  def test_a_local_array_is_handed_to_a_compiled_function
+    n = 12
+    signal = CArray.double(n).seq!(1.0, 0.5)
+    weights = CArray.double(4)
+    weights[0] = 0.1; weights[1] = 0.2; weights[2] = 0.3; weights[3] = 0.4
+    smoothed = CArray.double(n)
+    CArray.jit_for(0...(n - 3)) { |i|
+      w = CArray.double(4)
+      w[0] = signal[i]; w[1] = signal[i + 1]
+      w[2] = signal[i + 2]; w[3] = signal[i + 3]
+      smoothed[i] = DOT4.call(w, weights)
+    }
+    reference = CArray.double(n)
+    (0...(n - 3)).each { |i|
+      reference[i] = (0...4).inject(0.0) { |total, k|
+        total + signal[i + k] * weights[k]
+      }
+    }
+    assert_arrays_bits_equal(reference, smoothed)
+  end
+
+  def test_a_local_array_reaches_a_function_from_every_entry_point
+    a = CArray.double(6).seq!(1.0)
+    ones = CArray.double(4)
+    (0...4).each { |k| ones[k] = 1.0 }
+
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(4)
+      (0...4).each { |k| w[k] = a[i] }
+      out[i] = DOT4.call(w, ones)
+    }
+    assert_equal((0...6).map { |k| a[k] * 4.0 }, out.to_a, "jit_for")
+
+    # Both arguments are local arrays in the spellings below.  A *captured*
+    # array handed over by address joins the line-up and is broadcast against
+    # the operands, so one of a different length clashes there -- which is
+    # so with or without a local array, and is not this release's business.
+    each = CArray.double(6)
+    CArray.jit_each {
+      w = CArray.double(4)
+      u = CArray.double(4)
+      w[0] = a; w[1] = a; w[2] = a; w[3] = a
+      u[0] = 1.0; u[1] = 1.0; u[2] = 1.0; u[3] = 1.0
+      each = DOT4.call(w, u)
+    }
+    assert_equal((0...6).map { |k| a[k] * 4.0 }, each.to_a, "jit_each")
+
+    mapped = CArray.jit_map {
+      w = CArray.double(4)
+      u = CArray.double(4)
+      w[0] = a; w[1] = a; w[2] = a; w[3] = a
+      u[0] = 1.0; u[1] = 1.0; u[2] = 1.0; u[3] = 1.0
+      DOT4.call(w, u)
+    }
+    assert_equal((0...6).map { |k| a[k] * 4.0 }, mapped.to_a, "jit_map")
+
+    image = CArray.double(5, 5).seq!
+    stencilled = CArray.jit_stencil(image, border: :clamp) { |win|
+      w = CArray.double(4)
+      u = CArray.double(4)
+      w[0] = win[0, 0]; w[1] = win[0, 0]
+      w[2] = win[0, 0]; w[3] = win[0, 0]
+      u[0] = 1.0; u[1] = 1.0; u[2] = 1.0; u[3] = 1.0
+      DOT4.call(w, u)
+    }
+    assert_equal(image[2, 2] * 4.0, stencilled[2, 2], "jit_stencil")
+  end
+
+  # The callee writes through a parameter that is not const, and the line
+  # after the call reads what it wrote.
+  def test_a_function_writes_into_a_local_array_it_was_handed
+    fill = CArray.jit_function("double fill3(double x[3])") { |x|
+      x[0] = 10.0
+      x[1] = 20.0
+      x[2] = 30.0
+      x[0] + x[1] + x[2]
+    }
+    total = CArray.double(3)
+    first = CArray.double(3)
+    last = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      w = CArray.double(3)
+      total[i] = fill.call(w)
+      first[i] = w[0]
+      last[i] = w[2]
+    }
+    assert_equal([60.0] * 3, total.to_a, "what the function returned")
+    assert_equal([10.0] * 3, first.to_a, "what it wrote, read back after")
+    assert_equal([30.0] * 3, last.to_a)
+  end
+
+  # And what it wrote does not survive into the next cell: the clearing runs
+  # again, as it does for any other pass.
+  def test_what_a_function_wrote_does_not_reach_the_next_cell
+    bump = CArray.jit_function("double bump2(double x[2])") { |x|
+      x[0] = x[0] + 1.0
+      x[0]
+    }
+    seen = CArray.double(4)
+    CArray.jit_for(4) { |i| w = CArray.double(2); seen[i] = bump.call(w) }
+    assert_equal([1.0] * 4, seen.to_a,
+                 "each cell starts from a cleared array, so each sees 1.0")
+  end
+
+  def test_the_same_local_array_may_be_handed_to_two_arguments
+    # The declarations carry no `restrict`, so this is well-formed C.
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      w = CArray.double(4)
+      (0...4).each { |k| w[k] = 2.0 }
+      out[i] = DOT4.call(w, w)
+    }
+    assert_equal([16.0] * 3, out.to_a)
+  end
+
+  def test_a_function_declaration_carries_no_restrict
+    refute_match(/restrict/, DOT4.c_source.lines.grep(/carray_jit_dot4/).join,
+                 "a declaration with `restrict` would make `f.call(w, w)` "                  "undefined, and that call is taken")
+  end
+
+  # ---------- what the declaration is held to ----------
+
+  def test_an_element_type_that_does_not_match_is_refused
+    error = assert_raises(CArray::JIT::Unsupported) do
+      out = CArray.double(1)
+      CArray.jit_for(1) { |i|
+        w = CArray.float32(4)
+        (0...4).each { |k| w[k] = 1.0 }
+        out[i] = DOT4.call(w, w)
+      }
+    end
+    assert_match(/`w` is float32/, error.message)
+    assert_match(/float64 array/, error.message)
+    assert_match(/CArray\.new\(:float64, \[4\]\)/, error.message,
+                 "the message should say what to write instead")
+  end
+
+  def test_an_array_shorter_than_the_declaration_is_refused
+    error = assert_raises(CArray::JIT::Unsupported) do
+      out = CArray.double(3)
+      CArray.jit_for(3) { |i|
+        w = CArray.double(3)
+        (0...3).each { |k| w[k] = 1.0 }
+        out[i] = DOT4.call(w, w)
+      }
+    end
+    assert_match(/`w`/, error.message)
+    assert_match(/4/, error.message)
+    assert_match(/3/, error.message)
+  end
+
+  # Refused as the block is read, so no kernel is ever built for it.
+  def test_a_short_array_is_refused_before_a_kernel_is_built
+    CArray::JIT.clear_registry
+    out = CArray.double(1)
+    assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(1) { |i|
+        w = CArray.double(2)
+        w[0] = 1.0; w[1] = 2.0
+        out[i] = DOT4.call(w, w)
+      }
+    end
+    assert_empty(CArray::JIT.registry,
+                 "the refusal comes from reading the block, so nothing " \
+                 "should have been compiled for it")
+  end
+
+  def test_an_array_longer_than_the_declaration_is_taken
+    # The callee reads four of the six, which is what a captured array of six
+    # is allowed to do as well.
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      w = CArray.double(6)
+      (0...6).each { |k| w[k] = 2.0 }
+      out[i] = DOT4.call(w, w)
+    }
+    assert_equal([16.0] * 3, out.to_a)
+  end
+
+  def test_a_declaration_with_no_length_takes_any_local_array
+    star = CArray.jit_function("double first(const double *x)") { |x| x[0] }
+    out = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      w = CArray.double(2)
+      w[0] = 7.0
+      out[i] = star.call(w)
+    }
+    assert_equal([7.0] * 3, out.to_a)
+  end
+
+  def test_a_borrowed_function_takes_a_local_array
+    # `hypot` takes no pointer, so the borrowed function here is one that
+    # does: memcpy's cousin `fabs` will not do.  `cblas_ddot` is not on every
+    # machine, so the borrowed declaration is `qsort`-free and uses libm's
+    # `frexp`, which takes an `int *`.
+    frexp = CArray.jit_extern("double frexp(double value, int *exponent)")
+    out = CArray.double(1)
+    got = CArray.int32(1)
+    CArray.jit_for(1) { |i|
+      e = CArray.new(:int32, [1])
+      out[i] = frexp.call(8.0, e)
+      got[i] = e[0]
+    }
+    assert_equal(0.5, out[0], "8.0 is 0.5 * 2**4")
+    assert_equal(4, got[0], "and the exponent the borrowed function wrote")
+  end
+
+  def test_two_axes_are_still_refused_as_an_argument
+    error = assert_raises(CArray::JIT::Unsupported) do
+      out = CArray.double(1)
+      CArray.jit_for(1) { |i|
+        m = CArray.double(2, 2)
+        out[i] = DOT4.call(m, m)
+      }
+    end
+    assert_match(/one axis in this release/, error.message)
+  end
+
   # ---------- a name the window already had ----------
 
   # Giving one of the block's own arrays the window's name rebinds it, here as
@@ -1372,15 +1597,6 @@ class TestLocalArrays < Minitest::Test
       CArray.jit_each { m = CArray.double(3, 4); out = m[0] }
     end
     assert_match(/one axis in this release/, error.message)
-  end
-
-  def test_a_c_function_is_still_refused_in_the_new_entry_points
-    f = CArray.jit_function("double s2(const double x[2])") { |x| x[0] + x[1] }
-    a = CArray.double(6).seq!(1.0)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_map { w = CArray.double(2); w[0] = a; w[1] = a; f.call(w) }
-    end
-    assert_match(/handing one to a C function is a later release/, error.message)
   end
 
   def test_two_shapes_of_one_block_are_two_kernels

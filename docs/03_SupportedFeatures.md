@@ -574,6 +574,44 @@ r.call(7, 0)       # => ZeroDivisionError: divided by 0, as r.block would
 
 Nothing in the generated C reaches Ruby to do that. The function returns a number and touches no Ruby value, so its address is still safe to hand to a library or to call off the GVL; `CFunction#call` is what looks at the flag afterwards and raises. A caller coming from C sees what C arranges for a function that has to return something regardless -- a stand-in, and the flag standing beside it. Which one of those is the answer is the [next section](#lending-the-address).
 
+#### Handing over an array the body made
+
+A local array (see [Local arrays](#local-arrays)) goes to a pointer parameter, which is what makes one worth having beside a function: the workspace is on the block's stack and the callee is handed its address, as C hands one over.
+
+```ruby
+DOT4 = CArray.jit_function("double dot4(const double x[4], const double y[4])") { |x, y|
+  x[0]*y[0] + x[1]*y[1] + x[2]*y[2] + x[3]*y[3]
+}
+
+CArray.jit_for(0...(n - 3)) { |i|
+  w = CArray.double(4)
+  w[0] = signal[i]; w[1] = signal[i+1]; w[2] = signal[i+2]; w[3] = signal[i+3]
+  smoothed[i] = DOT4.call(w, weights)
+}
+```
+
+**What the declaration says is matched as the block is read**, not at the call. Both halves are written in the block -- the element type is the constructor and the length is a literal -- so `CArray.float32(4)` against `const double x[4]`, or `CArray.double(3)` against it, is refused before anything is compiled. A captured array is matched at the call instead (there is no array to look at until then), and the rules are the same ones: the element type exactly, and at least as many cells as a sized declarator asks for. More cells than it asks for is fine, as it is for a captured array -- the callee reads the four it was promised.
+
+The length check is doing real work here rather than tidying up. A subscript on a pointer parameter is unchecked by design, and a local array is on the stack: a declaration that read more cells than the array holds would walk over the frame the return address is in.
+
+A parameter that is not `const` may be written through, and the line after the call reads what the callee left:
+
+```ruby
+SOLVE3 = CArray.jit_function("void solve3(const double a[12], double x[3])") { |a, x| ... }
+
+CArray.jit_for(ny, nx) { |i, j|
+  rhs = CArray.double(12)
+  sol = CArray.double(3)
+  ...
+  SOLVE3.call(rhs, sol)
+  out[i, j] = sol[0]
+}
+```
+
+The zeroed constructors clear at the line as they always do, so what a callee wrote into `sol` is gone by the next cell rather than carried into it.
+
+Passing the same local array to two parameters -- `DOT4.call(w, w)` -- is well-formed, the declarations carrying no `restrict`.
+
 #### Lending the address
 
 `#call` is one call and answers for it. A library given `#pointer` calls whenever it likes, as often as it likes, and what wants an answer is the whole of that -- so the window is what the flag is put down for, and what it is read for:
@@ -851,6 +889,7 @@ Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symb
 - **An inner loop's stride is a literal.** It is what says which way the loop runs, and the C is written one way or the other before anything is known, so `k.step(0, s)` with `s` a captured integer is refused. `downto`, `upto` and `reverse_each` are refused by name, with `step` named as the spelling to use -- one way of counting down is enough to keep, and it is the one an extent already takes.
 - **A kernel draws from a `CArray::Rng` and from nothing else.** `rand` is Ruby's, and Ruby's generator is reached through the VM: a kernel runs with the GVL released, which is not where it may be reached at all. What a kernel *can* draw from is a generator whose C it can paste, which is what `CArray::Rng` is: `rand = CArray::Rng.new(seed: 4)` and then `rand.random` in the block, once per cell, giving a double in `[0.0, 1.0)`. `rand.randomn` is a standard normal, which costs two draws and keeps no spare -- the classical pairing would have to hold the second in the generator's state, and a spare held between an array and a kernel is a second thing to keep in step. `random(rng: rand)` and `randomn(rng: rand)` are those two spelled as `CArray#random!(rng:)` spells them -- the only keyword arguments the subset has -- and `rand.bits` is the raw word a draw came from, as a `uint64`. All of them read one generator, so mixing them walks one sequence. It is a generator on both sides of the compiler: `a.random!(rng: rand)` fills an array from it and leaves it where a kernel then carries on, because CArray compiles the generator and hands out the same text for the kernel to paste rather than the two agreeing by construction. Two generators in one kernel are two sequences. What is not offered is a draw fixed to a *position*: which draw lands in which cell is the loop's order, and this compiler does not fix that order -- a stencil's border is a second loop over the frame, and a reduction may split its accumulator. Where that matters -- common random numbers, antithetic variates, stratification -- fill an array with `CArray#random!` before the call and read a cell of it, which was drawn in one order and stays in it. A compiled function is a third case: `jit_function` takes everything through its parameters and has nowhere to keep a state, so a body that needs draws takes the state as an `int64_t state[4]` parameter and is passed `rand.state`.
 - **An operand that is not an entity is transferred before the loop.** A kernel walks memory, so an array that is not one -- a view that does not fold to an entity, a `CAObject` computing its cells in Ruby -- has the box the kernel touches transferred into a packed buffer first, and written back afterwards if the kernel wrote it. The box, not the array: an extent covering two cells transfers two. What that costs is a copy; what it changes is when the cells are read. An array whose cells are computed on read is read once per cell per call, so two reads of one cell in a kernel give the same number where the same Ruby loop would give two -- and a one-cell source is one number for the whole loop. Drawing random numbers that way therefore works, and means what filling an array before the call means.
+- **A borrowed function that keeps the pointer outlives the array.** A local array lives on the stack of the block that made it, so a `jit_extern` function that stores the pointer somewhere and reads it after the call is reading a frame that has gone. That is C's own bargain, taken along with `void *params`; a captured array is the way to hand over something that has to outlast the call. And where the declaration carries no length -- `const double *x`, `double x[]` -- there is nothing for this compiler to check the array against, so how many cells the callee reads is between you and its documentation, exactly as it is for a captured array.
 - **A local array's subscript counts from the start.** CArray's `w[-1]` is the last cell; a kernel has no such reading, so a literal negative subscript is refused by name and one the kernel works out raises `IndexError`. This is the difference the captured arrays already have. Write `w[n - 1]`.
 - **`CArray.empty` leaves its cells as the stack left them.** Reading one before writing it is out of contract, the way reading under a mask is: the value is whatever was there. What it saves is the clearing, which for a 256-cell array inside a per-cell loop is 2 KiB a cell.
 - **A local array is held to 4 KiB, and one kernel's to 16 KiB together.** Both are provisional, and neither counts a pasted function's own arrays, recursion, or a future thread pool's stacks. See [Local arrays](#local-arrays).
