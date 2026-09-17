@@ -144,8 +144,10 @@ carray_jit_contiguous (char **pointers, int64_t *strides, int64_t *bounds, ...)
   const double x = reals[0];
 
   for (int64_t i = bounds[0]; i < bounds[1]; i++) {
-    double w = x * ((double *)(p_legendre))[i - 1];
-    double wy = w - ((double *)(p_legendre))[i - 2];
+    double w;
+    double wy;
+    w = x * ((double *)(p_legendre))[i - 1];
+    wy = w - ((double *)(p_legendre))[i - 2];
     ((double *)(p_legendre))[i] = wy + w - wy / (double)i;
   }
 }
