@@ -6,12 +6,14 @@
 # Thomas algorithm applies -- two sequential sweeps, which is the part an
 # array library cannot do for you.
 #
-# The two boundary conditions differ only in the first and last row.  Natural
+# The boundary conditions differ only in the first and last row.  Natural
 # asks for zero curvature at the ends, and needs nothing but the samples;
 # clamped asks for a given slope there, and needs to be told what it is.  What
 # that buys is visible below: where the true curve is still bending at the end,
 # the natural spline flattens it, and the error there is several times what it
-# is anywhere inside -- the clamped fit removes it.
+# is anywhere inside -- the clamped fit removes it.  Not-a-knot asks for the
+# first two pieces to be one cubic, and the last two as well, which costs no
+# information at all and recovers a good part of the difference.
 #
 # Evaluating the result is a second kernel, and a different shape of one --
 # every query point searches for its interval on its own, so the body is a
@@ -35,7 +37,15 @@ def slope (x)      Math.exp(-0.35 * x) * (2.0 * Math.cos(2.0 * x) - 0.35 * Math.
 
 # The moments M[i] = S''(x[i]).  Interior rows come from the continuity of the
 # first derivative; the two end rows are the boundary condition and are the
-# only thing natural and clamped disagree about.
+# only thing the three of them disagree about.
+#
+# Not-a-knot is the one that does not fit in a row of its own: asking S''' to
+# be continuous at x[1] puts M[0], M[1] and M[2] in one equation, which is a
+# band too wide.  Stated the other way round it says M is linear across x[1],
+# so M[0] is an extrapolation of the two inside it -- drop the first and last
+# unknown, solve the n-2 rows between them, and put the two back afterwards.
+# That is what `first_row` and `last_row` are: the same two sweeps, over the
+# rows that are actually unknown.
 def moments (x, y, n, work, ends)
   a, b, c, d, cc, dd, moment = work
 
@@ -48,10 +58,22 @@ def moments (x, y, n, work, ends)
     d[i] = 6.0 * ((y[i+1] - y[i]) / right - (y[i] - y[i-1]) / left)
   }
 
-  if ends.nil?                                  # natural: S'' = 0 at both ends
+  case ends
+  when nil                                      # natural: S'' = 0 at both ends
+    first_row, last_row = 0, n-1
     b[0] = 1.0 ; c[0] = 0.0 ; d[0] = 0.0
     a[n-1] = 0.0 ; b[n-1] = 1.0 ; d[n-1] = 0.0
+  when :not_a_knot                              # not-a-knot: S''' continuous at x[1], x[n-2]
+    raise ArgumentError, "not-a-knot needs at least 4 points, got #{n}" if n < 4
+    first_row, last_row = 1, n-2
+    h0 = x[1] - x[0] ; h1 = x[2] - x[1]         # d[1] and d[n-2] are the interior
+    b[1] = 3.0 * h0 + 2.0 * h1 + h0 * h0 / h1   # right-hand sides already
+    c[1] = (h1 * h1 - h0 * h0) / h1
+    hm = x[n-2] - x[n-3] ; hn = x[n-1] - x[n-2]
+    a[n-2] = (hm * hm - hn * hn) / hm
+    b[n-2] = 2.0 * hm + 3.0 * hn + hn * hn / hm
   else                                          # clamped: S' given at both ends
+    first_row, last_row = 0, n-1
     first, last = ends
     h0 = x[1] - x[0]
     b[0] = 2.0 * h0 ; c[0] = h0
@@ -61,18 +83,23 @@ def moments (x, y, n, work, ends)
     d[n-1] = 6.0 * (last - (y[n-1] - y[n-2]) / hn)
   end
 
-  cc[0] = c[0] / b[0]                           # Thomas, forward
-  dd[0] = d[0] / b[0]
-  CArray.jit_for(1...n) { |i|
+  cc[first_row] = c[first_row] / b[first_row]   # Thomas, forward
+  dd[first_row] = d[first_row] / b[first_row]
+  CArray.jit_for((first_row+1)..last_row) { |i|
     denominator = b[i] - a[i] * cc[i-1]
     cc[i] = c[i] / denominator
     dd[i] = (d[i] - a[i] * dd[i-1]) / denominator
   }
 
-  moment[n-1] = dd[n-1]                         # Thomas, back substitution
-  CArray.jit_for((n-2).step(0, -1)) { |i|
+  moment[last_row] = dd[last_row]               # Thomas, back substitution
+  CArray.jit_for((last_row-1).step(first_row, -1)) { |i|
     moment[i] = dd[i] - cc[i] * moment[i+1]
   }
+
+  if ends == :not_a_knot                        # the rows that were left out
+    moment[0]   = moment[1] - (x[1] - x[0]) * (moment[2] - moment[1]) / (x[2] - x[1])
+    moment[n-1] = moment[n-2] + (x[n-1] - x[n-2]) * (moment[n-2] - moment[n-3]) / (x[n-2] - x[n-3])
+  end
   moment
 end
 
@@ -157,6 +184,7 @@ y = CArray.double(n) { |i| curve(x[i]) }
 work = Array.new(7) { CArray.double(n) }
 natural = moments(x, y, n, work, nil).copy
 clamped = moments(x, y, n, work, [slope(x[0]), slope(x[n-1])]).copy
+not_a_knot = moments(x, y, n, work, :not_a_knot).copy
 
 points = 601
 query = CArray.double(points) { |k| x[0] + (x[n-1] - x[0]) * k / (points - 1) }
@@ -168,7 +196,7 @@ derivative = CArray.double(points)
 puts "cubic spline through #{n} unevenly spaced points, sampled at #{points}"
 
 results = {}
-{ "natural" => natural, "clamped" => clamped }.each do |name, moment|
+{ "natural" => natural, "clamped" => clamped, "not-a-knot" => not_a_knot }.each do |name, moment|
   evaluate(x, y, moment, n, query, value, derivative)
   results[name] = [value.copy, derivative.copy]
 
@@ -177,7 +205,7 @@ results = {}
   ends = (0...points).select { |k| query[k] < x[0] + edge || query[k] > x[n-1] - edge }
   inside = (0...points).to_a - ends
 
-  puts format("  %-8s  max error %.2e overall, %.2e in the end intervals, %.2e inside",
+  puts format("  %-10s  max error %.2e overall, %.2e in the end intervals, %.2e inside",
               name, error.max, ends.map { |k| error[k] }.max, inside.map { |k| error[k] }.max)
 end
 
@@ -186,8 +214,13 @@ puts format("  natural   S''(a) = %.1e, S''(b) = %.1e -- zero, by construction",
             natural[0], natural[n-1])
 puts format("  clamped   S'(a)  = %+.6f vs %+.6f asked for", results["clamped"][1][0], slope(x[0]))
 puts format("            S'(b)  = %+.6f vs %+.6f", results["clamped"][1][points-1], slope(x[n-1]))
+jump = lambda { |m, i, j, k|                   # S''' across the knot that is not one
+  (m[j] - m[i]) / (x[j] - x[i]) - (m[k] - m[j]) / (x[k] - x[j])
+}
+puts format("  not-knot  S''' jumps by %.1e at x[1] and %.1e at x[n-2] -- neither is a knot",
+            jump.call(not_a_knot, 0, 1, 2), jump.call(not_a_knot, n-3, n-2, n-1))
 
-# The interpolation itself: both pass through every knot.
+# The interpolation itself: all of them pass through every knot.
 knots = CArray.double(n) { |i| x[i] }
 at_knots = CArray.double(n)
 at_knots_slope = CArray.double(n)
