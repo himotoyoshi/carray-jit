@@ -2629,16 +2629,19 @@ class CArray
       def recursive_call (node)
         return nil unless @recursion
         name, parameters, result_type = @recursion
-        # `fact.call(n - 1)`, the spelling every other C function takes.  A
-        # bare `fact(n - 1)` would read better as C and is refused all the
-        # same: it is not Ruby, and the block has to stay runnable, since
-        # running it beside the compiled function is how the two are checked
-        # against each other.
+        # `fact.call(n - 1)`, the spelling every other C function takes,
+        # borrowed or written.  A bare `fact(n - 1)` reads better as C and is
+        # refused all the same, because a bare call is a spelling this
+        # compiler has taken for itself: `sum(w)` and `sort(w)` are its own
+        # functions, reached by no name the block wrote.  A function of yours
+        # is reached through the name that holds it -- which is also what
+        # makes a recursion read like a call to anything else.
         if node.receiver.nil? && node.name == name && node.arguments
           raise Unsupported.new(
             "`#{name}` calls itself the way any C function is called here, " \
-            "as `#{name}.call(...)` -- a bare `#{name}(...)` is not Ruby, and " \
-            "the block has to stay runnable",
+            "as `#{name}.call(...)` -- a bare `#{name}(...)` is how this " \
+            "compiler spells its own functions, such as `sum(w)`, and a " \
+            "function of yours is reached through the name that holds it",
             node.location)
         end
         return nil unless C_FUNCTION_CALL_NAMES.include?(node.name) &&

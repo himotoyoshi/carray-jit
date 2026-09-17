@@ -981,8 +981,9 @@ class TestCFunction < Minitest::Test
     assert_equal(36.0, total.block.call(8, values))
   end
 
-  # A bare `fact(...)` reads better as C and is not Ruby, so the block it
-  # was written in could never be run beside the compiled function.
+  # A bare `fact(...)` reads better as C and is refused all the same: the
+  # bare spelling is one this compiler has taken for its own functions, and
+  # a function of the caller's is reached through the name that holds it.
   def test_the_bare_spelling_is_refused
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double fact(double)") { |n|
@@ -990,7 +991,8 @@ class TestCFunction < Minitest::Test
       }
     end
     assert_match(/as `fact\.call\(\.\.\.\)`/, error.message)
-    assert_match(/has to stay runnable/, error.message)
+    assert_match(/this compiler spells its own functions/, error.message)
+    assert_match(/the name that holds it/, error.message)
   end
 
   # An anonymous declaration has no name to call itself by, which is C's

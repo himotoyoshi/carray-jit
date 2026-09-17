@@ -554,7 +554,7 @@ fact = CArray.jit_function("double fact(double)") { |n|
 }
 ```
 
-The spelling is `.call`, the one every C function takes here, because the block has to stay runnable in Ruby -- a bare `fact(n - 1.0)` would read better as C and is not Ruby at all, so it is refused with that message. `fact` in the block is a spelling, not a symbol: the compiled call goes to `carray_jit_fact_<digest>`, so it cannot reach anything else in the process that answers to `fact`. An anonymous declaration gets no recursion, having nothing to call itself by, which is C's position on a function pointer type too.
+The spelling is `.call`, the one every C function takes here, borrowed or written: it is how a block calls a Proc, so a name that holds a function reads as one, and a recursion reads the same as a call to anything else. A bare `fact(n - 1.0)` reads better as C and is refused all the same, with that message -- bare names that look like calls are the compiler's own (`sum(w)`, `sort(w)`, see [Intrinsics](#intrinsics)), and a function of yours is reached through the name that holds it. `fact` in the block is a spelling, not a symbol: the compiled call goes to `carray_jit_fact_<digest>`, so it cannot reach anything else in the process that answers to `fact`. An anonymous declaration gets no recursion, having nothing to call itself by, which is C's position on a function pointer type too.
 
 A pointer parameter may be handed on -- `total.call(n - 1, v)` passes the address the function was given, as C does -- so a recursion can walk an array. What it cannot do is stop itself running out of stack: a compiled function that recurses too deep is a SIGSEGV, not a `SystemStackError`. That is C's bargain, taken along with `void *params`.
 
@@ -600,7 +600,7 @@ The declaration stays C rather than becoming a vocabulary of this compiler's own
 
 The return type is stated rather than derived from the body, although it could be derived. The reason is the one already given for writing a loop's direction at the call site: a signature is what something outside agrees to, and editing the body must not silently change it.
 
-The block survives on the function, so what the compiled C computes and what Ruby computes can be put side by side -- which is the one place in this compiler where "the C agrees with the Ruby" is checkable rather than argued:
+The block survives on the function, and where its body stays inside what Ruby computes the same way -- no width that wraps where an Integer would grow, no intrinsic such as `sort(w)` that Ruby has no definition for -- the two can be put side by side, which is handy while writing one:
 
 ```ruby
 square.call(3.0)         # => 10.0, through the compiled C
