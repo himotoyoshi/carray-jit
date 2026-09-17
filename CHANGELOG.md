@@ -44,12 +44,12 @@ version you have and a newer one.
   `a_s0`, `a_ms0` or `a_n0` for an array `a`), or when it contains `__` or
   starts with `carray_jit_`. Rename the index.
 
-- Fix: a local in a kernel or `jit_function` body may be given a name the
-  generated C also uses -- a kernel parameter such as `error` or `data`, a C
-  keyword such as `int`, `a_n0` or `p_a` beside a captured array `a`, or a
-  name containing `__`. Such a local failed to compile, raised an
-  `IndexError` for an index in range, or shared its value with another local;
-  it is now renamed in the generated C only.
+- Fix: a local in a kernel or `jit_function` body, or a captured variable
+  starting `carray_jit_`, may be given a name the generated C also uses -- a
+  kernel parameter such as `error`, a C keyword such as `int`, `a_n0` beside a
+  captured array `a`, or a name containing `__`. It failed to compile, raised
+  an `IndexError` for an index in range, or shared its value with another
+  name; it is now renamed in the generated C only.
 
 - Change: a kernel or `jit_function` body that reads a local after an inner
   loop's block in which the local was first assigned, or after a `while` in

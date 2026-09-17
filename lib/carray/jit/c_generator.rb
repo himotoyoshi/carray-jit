@@ -1897,7 +1897,8 @@ class CArray
       # index.  A capture was not consulted about, and a block closing over
       # something called `data` compiled to C that redeclared the kernel's own
       # parameter.  A leading underscore is C's to reserve as well, which is
-      # what the made-up names here start with.
+      # what the made-up names here start with.  And a C name that starts
+      # `carray_jit_` is the generator's, whoever wrote it in Ruby.
       #
       # An index is refused for this rather than moved, because its name is
       # written in the block and read back in messages.  A capture's is not:
@@ -1921,7 +1922,8 @@ class CArray
           taken = names.map { |name| c_name(name) }
           names.each_with_object({}) do |name, found|
             text = c_name(name)
-            if RESERVED_NAMES.include?(name.to_sym) || text.start_with?("_")
+            if RESERVED_NAMES.include?(name.to_sym) || text.start_with?("_") ||
+               text.start_with?("carray_jit_")
               # Not the bare `carray_jit_` prefix: `carray_jit_error` is the
               # error flag, and a capture called `error` would land on it.
               text = "carray_jit_name_#{text}"
@@ -1976,7 +1978,8 @@ class CArray
       # The number is what keeps two moved locals apart once a suffix is on
       # them.  A Ruby identifier cannot start with a digit, so the digits after
       # `carray_jit_name` run to the next `_`, and a different K is a different
-      # C name whatever `__2`, `__p0` or `__mask` follows.
+      # C name whatever `__2`, `__p0` or `__mask` follows.  A C name starting
+      # `carray_jit_` is the generator's, so no capture is spelled like one.
       def local_c_names
         @local_c_names ||= begin
           moved = 0

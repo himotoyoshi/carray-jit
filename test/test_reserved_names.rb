@@ -455,6 +455,55 @@ class TestReservedNames < Minitest::Test
     assert_arrays_bits_equal(CArray.double(3) { reference }, out)
   end
 
+  # ---------- names that start `carray_jit_` ----------
+
+  # The generated C's own.  A capture spelled like a moved local was hidden
+  # by it, and the kernel added the local where the block added the capture.
+  def test_a_capture_spelled_like_a_moved_local
+    a = CArray.double(3).seq!(1.0)
+    out = CArray.double(3)
+    carray_jit_name1_error = 100.0
+    kernel = CArray.jit_for(3) { |i|
+      error = 1.0
+      out[i] = a[i] + error + carray_jit_name1_error
+    }
+    reference = (0...3).map { |i|
+      error = 1.0
+      a[i] + error + carray_jit_name1_error
+    }
+    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    refute_match(/\bcarray_jit_name1_error = reals\[/, kernel.c_source)
+  end
+
+  def test_a_capture_that_starts_like_the_generators_names
+    a = CArray.double(3).seq!(1.0)
+    out = CArray.double(3)
+    carray_jit_error = 7.0
+    kernel = CArray.jit_for(3) { |i| out[i] = a[i] + carray_jit_error }
+    reference = (0...3).map { |i| a[i] + carray_jit_error }
+    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    refute_match(/\bcarray_jit_error = reals\[/, kernel.c_source)
+  end
+
+  def test_a_local_that_starts_like_the_generators_names
+    a = CArray.double(3).seq!(1.0)
+    out = CArray.double(3)
+    kernel = CArray.jit_for(3) { |i| carray_jit_x = 2.0; out[i] = a[i] * carray_jit_x }
+    reference = (0...3).map { |i| carray_jit_x = 2.0; a[i] * carray_jit_x }
+    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    refute_match(/\bdouble carray_jit_x;/, kernel.c_source)
+  end
+
+  def test_an_index_that_starts_like_the_generators_names_is_refused
+    a = CArray.double(3).seq!
+    out = CArray.double(3)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(3) { |carray_jit_x| out[carray_jit_x] = a[carray_jit_x] }
+    end
+    assert_match(/`carray_jit_x` is a name the kernel's own C uses, so it cannot be an index/,
+                 error.message)
+  end
+
   def test_an_index_named_after_a_decoration_or_a_suffix_is_refused
     a = CArray.double(4).seq!
     out = CArray.double(4)
