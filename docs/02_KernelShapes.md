@@ -28,6 +28,8 @@ An indexed kernel reaches it too, and there the missing index is the whole point
 CArray.jit_for(n) { |i| out[i] = signal[i] * gain[] }
 ```
 
+`CScalar.int()` with no block is that one cell zero-filled, as `CArray.int(1)` is, which is enough for an accumulator that starts at zero; the block form says the starting value out loud, and is what to write where the value is part of what the code means.
+
 The two routes differ in how they get there. `jit_each` stretches it as it stretches a one-cell `CArray` -- a stride of zero -- while `jit_for` reads it where it lies. They compute the same thing, and `s[0]` keeps working in both, since it is still the one-cell array it is. Writing a wider expression into one is refused, with the shapes named, exactly as CArray refuses it.
 
 The other method is the same block with its value asked for:
