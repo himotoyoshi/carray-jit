@@ -245,6 +245,19 @@ version you have and a newer one.
   `NoMethodError` rather than CArray's `NotImplementedError`. With the gem
   required nothing changes, against any CArray this gem accepts.
 
+- New: `CArray#jit_init` fills an array from a formula over its indices, with
+  the block compiled: `CArray.int32(1000, 1000).jit_init { |i, j| (i + j) % 2 }`
+  is what the constructor block `CArray.int32(n, n) { |i, j| ... }` says,
+  without the Ruby call per cell. One parameter per axis, the block's value is
+  the cell, and the receiver comes back. It is the only entry point here that
+  is an instance method, because the array being written is the receiver: the
+  extents are its shape, so neither the index space nor the target is said
+  twice, where `CArray.jit_for(n, n) { |i, j| z[i, j] = ... }` says both. A
+  block outside the compilable subset raises rather than running the slow
+  loop, as every other entry point here does. Reach for it where the formula
+  will not go through whole-array arithmetic -- where it will, that needs no
+  compiler and is faster still.
+
 - New: a kernel can draw random numbers, from a `CArray::Rng`. `rand =
   CArray::Rng.new(seed: 4)` and then `rand.random` in a `jit_for`, `jit_each`
   or `jit_map` block draws one double in `[0.0, 1.0)` per cell, at about
