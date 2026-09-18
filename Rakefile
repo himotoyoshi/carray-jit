@@ -127,6 +127,8 @@ task :benchmark => :compile do
   ruby "#{carray_tree_flags} -Ilib benchmark/break_even.rb"
   puts
   ruby "#{carray_tree_flags} -Ilib benchmark/call_overhead.rb"
+  puts
+  ruby "#{carray_tree_flags} -Ilib benchmark/crossover.rb"
 end
 
 desc "Run every example"
