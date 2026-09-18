@@ -413,7 +413,7 @@ So `CArray.empty(:type, [n])` is for one kind of body only: **one that writes ev
 
 Among bodies that do write every cell first, whether the clearing costs anything depends on how the writing is spelled. The median above writes its nine cells in nine lines, and there the clearing is dropped as dead: nothing to save, so write the plain constructor. Fill 256 cells with a loop instead and the `memset` is still in the generated C, costing **199.9 ns a cell against `empty`'s 185.8** -- 14 ns, and both spellings give the same answer because every cell really is written. That is where `CArray.empty` earns its place.
 
-The same row of a captured array is still the right answer for a workspace that outlives the cell, or one past the 4 KiB a local array is held to.
+The same row of a captured array is still the right answer for a workspace that outlives the cell: a local array is the block's own and is gone when the cell is done, however large it is.
 
 What stays refused is the read that leaves the cell: `values[i] = ...` read at `values[j]` for an inner `j` reaches cells another outer iteration owns, and no evaluation order settles that. The message names the axis and what writes it.
 

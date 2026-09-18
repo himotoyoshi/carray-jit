@@ -673,20 +673,33 @@ class CArray
       attr_accessor :binding
       # `zeroed` is false for the `empty` spelling.
       # `scope` is counted the way Assignment#scope is.
-      attr_reader :name, :storage, :shape, :zeroed, :scope
-      def initialize (name, storage, shape, zeroed, location = nil, scope = 0)
+      # `heap` is true where the array does not go on the stack: its shape is
+      # larger than a frame should hold, or is not known until the kernel
+      # runs.  Then it is one allocation at the kernel's entry and a free at
+      # its exit, and the name is a pointer rather than an automatic array --
+      # which changes the declaration and nothing about how a cell is
+      # reached.
+      attr_reader :name, :storage, :shape, :zeroed, :scope, :heap
+      def initialize (name, storage, shape, zeroed, location = nil, scope = 0,
+                      heap = false)
         super(location)
         @name = name
         @storage = storage
         @shape = shape
         @zeroed = zeroed
         @scope = scope
+        @heap = heap
       end
       def local
         [@name, @binding]
       end
-      def cells
-        @shape.inject(1, :*)
+      # The shape's axes, as Nodes, for whatever has to walk them: an extent
+      # the block wrote as an expression is an expression like any other, and
+      # is typed and checked as one.
+      def children
+        @shape.filter_map { |extent|
+          extent.node if extent.is_a?(LocalArrayExtent)
+        }
       end
     end
 
@@ -732,6 +745,33 @@ class CArray
       def children
         [@expression] +
           @subscripts.filter_map { |_index, offset| offset if offset.is_a?(Node) }
+      end
+    end
+
+    # One axis of a local array whose length the block wrote as an
+    # expression over captured integers rather than as a number.
+    #
+    # Not a Node: it stands in a shape, where every other entry is an
+    # Integer, and what a shape is asked is how long an axis is -- not what
+    # type it computes in.  `text` is what the block wrote, which is what
+    # makes two of these the same extent: the expression is worked out at the
+    # kernel's entry, so two declarations that wrote the same thing are one C
+    # array, exactly as two that wrote the same number are.
+    class LocalArrayExtent
+      attr_reader :text, :node
+      def initialize (text, node)
+        @text = text
+        @node = node
+      end
+      def == (other)
+        other.is_a?(LocalArrayExtent) && other.text == @text
+      end
+      alias eql? ==
+      def hash
+        @text.hash
+      end
+      def to_s
+        @text
       end
     end
 

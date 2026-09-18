@@ -664,20 +664,21 @@ class TestLocalArrays < Minitest::Test
     RUBY
   end
 
-  def test_the_shape_is_written_out_rather_than_captured
+  # A shape over the integers the block captured is taken, in both
+  # spellings: the length is worked out at the kernel's entry and the array
+  # is allocated there (see the heap section below).
+  def test_the_shape_may_be_written_over_a_captured_integer
     arrays = { :out => "float64" }
-    refuse(<<~RUBY, /written out/, arrays: arrays, scalars: { :n => 4 })
-      proc { |i|
-        w = CArray.double(n)
-        out[i] = w[0]
-      }
-    RUBY
-    refuse(<<~RUBY, /written out/, arrays: arrays, scalars: { :n => 4 })
-      proc { |i|
-        w = CArray.new(:float64, [n])
-        out[i] = w[0]
-      }
-    RUBY
+    %w[CArray.double(n) CArray.new(:float64,\ [n])].each do |spelling|
+      kernel = compile_kernel(<<~RUBY, arrays: arrays, scalars: { :n => 4 })
+        proc { |i|
+          w = #{spelling.tr("\\", " ").squeeze(" ")}
+          out[i] = w[0]
+        }
+      RUBY
+      assert_match(/double \*w = NULL;/, kernel.c_source, spelling)
+      assert_match(/w__extent0 = n;/, kernel.c_source, spelling)
+    end
   end
 
   def test_a_shape_of_zero_or_less_is_refused
@@ -802,15 +803,22 @@ class TestLocalArrays < Minitest::Test
 
   # ---------- the room it takes ----------
 
-  def test_one_array_larger_than_the_limit_is_refused
+  # Past the limit the array is allocated at the kernel's entry instead of
+  # standing in the frame.  Nothing is refused for its size.
+  def test_one_array_larger_than_the_limit_goes_to_the_heap
     cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8 + 1
-    pattern = /#{CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT}/
-    refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
         w = CArray.double(#{cells})
+        w[0] = 1.0
         out[i] = w[0]
       }
     RUBY
+    assert_match(/double \*w = NULL;/, kernel.c_source)
+    assert_match(/w = malloc\(sizeof\(double\) \* \(size_t\) #{cells}\);/,
+                 kernel.c_source)
+    assert_match(/free\(w\);/, kernel.c_source)
+    refute_match(/double w\[/, kernel.c_source)
   end
 
   def test_one_array_at_the_limit_is_taken
@@ -825,20 +833,29 @@ class TestLocalArrays < Minitest::Test
     assert_match(/double w\[#{cells}\];/, kernel.c_source)
   end
 
-  def test_the_arrays_of_one_kernel_together_are_held_to_a_limit
+  # The arrays of one kernel are held to a total in the frame, and the one
+  # that would go past it is allocated instead -- so the ones before it stay
+  # where they were.
+  def test_the_array_that_would_pass_the_kernel_total_goes_to_the_heap
     each = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
     count = CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT /
             CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT + 1
     body = (0...count).map { |n|
       "  w#{n} = CArray.double(#{each})\n  w#{n}[0] = 1.0\n"
     }.join
-    pattern = /#{CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT}/
-    refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
       #{body}
         out[i] = w0[0]
       }
     RUBY
+    (0...(count - 1)).each { |n|
+      assert_match(/double w#{n}\[#{each}\];/, kernel.c_source,
+                   "w#{n} still stands in the frame")
+    }
+    last = count - 1
+    assert_match(/double \*w#{last} = NULL;/, kernel.c_source)
+    assert_match(/free\(w#{last}\);/, kernel.c_source)
   end
 
   # ---------- the entry points that do not take one yet ----------
@@ -1503,7 +1520,10 @@ class TestLocalArrays < Minitest::Test
   # The shadow is a byte a cell, and it is on the same stack, so it is
   # counted against the same limit: an array that fits by its cells alone
   # does not fit once it carries masks.
-  def test_the_shadow_is_counted_against_the_limit
+  # The shadow is a byte a cell on the same stack, so it counts towards
+  # where the array goes: one that fits in the frame by its cells alone is
+  # allocated once it carries masks.
+  def test_the_shadow_is_counted_towards_the_placement
     cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
     unmasked = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" })
       proc { |i|
@@ -1513,20 +1533,20 @@ class TestLocalArrays < Minitest::Test
       }
     RUBY
     assert_match(/double w\[#{cells}\];/, unmasked.c_source)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
-        proc { |i|
-          w = CArray.double(#{cells})
-          w[0] = a[i]
-          out[i] = w[0]
-        }
-      RUBY
-    end
-    assert_match(/#{CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT}/, error.message)
-    assert_match(/mask/, error.message)
+    masked = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
+      proc { |i|
+        w = CArray.double(#{cells})
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/double \*w = NULL;/, masked.c_source)
+    assert_match(/uint8_t \*w__mask = NULL;/, masked.c_source)
+    assert_match(/w__mask = malloc\(\(size_t\) #{cells}\);/, masked.c_source)
+    assert_match(/free\(w__mask\);/, masked.c_source)
   end
 
-  def test_the_shadow_is_counted_against_the_limit_for_the_kernel
+  def test_the_shadow_is_counted_towards_the_placement_for_the_kernel
     # Small enough that each array fits on its own either way -- what is
     # being measured is the total -- and enough of them that the shadows are
     # what puts it over.
@@ -1543,16 +1563,16 @@ class TestLocalArrays < Minitest::Test
       }
     RUBY
     assert_match(/double w0\[#{each}\];/, taken.c_source)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      compile_kernel(<<~RUBY, arrays: arrays, masked: true)
-        proc { |i|
-        #{body}
-          out[i] = w0[0]
-        }
-      RUBY
-    end
-    assert_match(/#{CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT}/,
-                 error.message)
+    masked = compile_kernel(<<~RUBY, arrays: arrays, masked: true)
+      proc { |i|
+      #{body}
+        out[i] = w0[0]
+      }
+    RUBY
+    # The shadows are what take the total past the frame's share, so the last
+    # of them is the one allocated.
+    assert_match(/double w0\[#{each}\];/, masked.c_source)
+    assert_match(/double \*w#{count - 1} = NULL;/, masked.c_source)
   end
 
   # `border: :mask` is not a masked kernel: the frame is marked before the
@@ -2061,9 +2081,10 @@ class TestLocalArrays < Minitest::Test
         a[0] + b[0] + c[0] + d[0] + e[0]
       }
     end
-    assert_match(/#{CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT}/,
-                 error.message)
-    assert_match(/come to \d+ bytes of stack/, error.message)
+    # A body has no entry outside the kernel's loop to allocate at, so the
+    # one that would not fit in the frame is refused rather than moved.
+    assert_match(/a function's body is called once per cell/, error.message)
+    assert_match(/pass it in/, error.message)
   end
 
   # The chain is not counted: each function answers for its own frame, which
@@ -2326,30 +2347,37 @@ class TestLocalArrays < Minitest::Test
 
   # ---------- the room it takes ----------
 
-  def test_a_shape_whose_cells_come_to_more_than_the_limit_is_refused
+  # Counted over every cell rather than per axis, which is what decides
+  # where a two-dimensional array of this size goes.
+  def test_a_shape_whose_cells_come_to_more_than_the_limit_goes_to_the_heap
     cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
     side = Integer(Math.sqrt(cells)) + 1
-    error = refuse(<<~RUBY, /one local array is held to/, arrays: { :out => "float64" })
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
         m = CArray.double(#{side}, #{side})
+        m[0, 0] = 1.0
         out[i] = m[0, 0]
       }
     RUBY
-    assert_match(/#{side * side * 8} bytes/, error.message,
-                 "counted over every cell, not per axis")
+    assert_match(/double \*m = NULL;/, kernel.c_source)
+    assert_match(/\(size_t\) #{side * side}\);/, kernel.c_source)
   end
 
-  def test_two_dimensional_arrays_count_towards_the_total
+  def test_two_dimensional_arrays_count_towards_the_placement
     each = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8 / 16
     body = (0...5).map { |n|
       "  m#{n} = CArray.double(16, #{each})\n  m#{n}[0, 0] = 1.0\n"
     }.join
-    refuse(<<~RUBY, /come to \d+ bytes of stack/, arrays: { :out => "float64" })
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
       #{body}
         out[i] = m0[0, 0]
       }
     RUBY
+    # Four of them fill the frame's share, counted over every cell; the
+    # fifth is allocated.
+    assert_match(/double m0\[#{16 * each}\];/, kernel.c_source)
+    assert_match(/double \*m4 = NULL;/, kernel.c_source)
   end
 
   # ---------- across the entry points ----------
@@ -2526,6 +2554,474 @@ class TestLocalArrays < Minitest::Test
       CArray.jit_map { v = CArray.double(2); v[0] = a; v }
     end
     assert_match(/`v` is a local array; index it/, error.message)
+  end
+
+  # ---------- the arrays the kernel allocates ----------
+
+  # Past the frame's share, and wherever the length is not known until the
+  # kernel runs, the array is one allocation at the kernel's entry and a free
+  # at its exit.  Nothing about how a cell is reached changes: what changes
+  # is the declaration, and that every check against the length happens
+  # where the cell is reached.
+
+  def test_a_shape_over_a_captured_integer_matches_the_same_loop_in_ruby
+    a = CArray.double(6).seq!(1.0)
+    n = 300
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(n)
+      (0...n).each { |k| w[k] = a[i] * k }
+      s = 0.0
+      (0...n).each { |k| s += w[k] }
+      out[i] = s
+    }
+    reference = (0...6).map { |i|
+      w = CArray.double(n)
+      (0...n).each { |k| w[k] = a[i] * k }
+      s = 0.0
+      (0...n).each { |k| s += w[k] }
+      s
+    }
+    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+  end
+
+  def test_a_literal_shape_over_the_limit_matches_the_same_loop_in_ruby
+    a = CArray.double(4).seq!(1.0)
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(4096)
+      (0...4096).each { |k| w[k] = a[i] + k }
+      out[i] = w[0] + w[4095]
+    }
+    reference = (0...4).map { |i| a[i] + (a[i] + 4095) }
+    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+  end
+
+  # The same block at two lengths is one kernel: the length travels as an
+  # argument, so it is not in the C and the C is shared.  Written out rather
+  # than built from a variable, because the source text is the cache key.
+  def test_two_lengths_of_one_block_are_one_kernel
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    # One `proc`, called twice: two blocks written out would be two source
+    # texts and so two kernels whatever the lengths were.
+    pass = proc { |n|
+      CArray.jit_for(6) { |i| w = CArray.double(n); w[0] = a[i] * n; out[i] = w[0] }
+    }
+    before = CArray::JIT.registry.size
+    pass.call(7)
+    after_one = CArray::JIT.registry.size
+    assert_equal(1, after_one - before, "the first call compiled one kernel")
+    assert_equal((0...6).map { |k| a[k] * 7 }, out.to_a)
+    pass.call(900)
+    assert_equal(after_one, CArray::JIT.registry.size,
+                 "the second length compiled nothing")
+    assert_equal((0...6).map { |k| a[k] * 900 }, out.to_a)
+  end
+
+  def test_the_length_is_worked_out_at_the_entry_and_freed_at_the_exit
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 8 })
+      proc { |i|
+        w = CArray.double(n * 2)
+        w[0] = 1.0
+        out[i] = w[0]
+      }
+    RUBY
+    body = kernel.c_source[/^static void\ncarray_jit_strided.*?\n^\}/m]
+    assert_match(/const int64_t w__extent0 = n \* INT64_C\(2\);/, body)
+    assert_match(/w = malloc\(sizeof\(double\) \* \(size_t\) w__cells\);/, body)
+    # Allocated before the loop and freed after it, once either way.
+    entry = body.index("malloc(")
+    opening = body.index("for (int64_t i")
+    closing = body.rindex("free(w);")
+    assert(entry < opening, "the allocation stands before the loop")
+    assert(closing > opening, "the free stands after it")
+    assert_equal(1, body.scan(/malloc\(/).size, "one allocation per body")
+  end
+
+  # Every body allocates and frees: the two the dispatcher chooses between,
+  # and the frame's own walk.
+  def test_each_body_allocates_and_frees
+    field = CArray.double(6, 6).seq!
+    n = 40
+    CArray.jit_stencil(field, border: :clamp) { |x|
+      w = CArray.double(n)
+      w[0] = x[0, 0]
+      w[1] = x[0, 1]
+      w[0] + w[1]
+    }
+    kernel = CArray::JIT.registry.values.last
+    %w[carray_jit_strided carray_jit_contiguous carray_jit_border].each do |name|
+      body = kernel.c_source[/^(?:static )?void\n#{name} .*?\n^\}/m]
+      refute_nil(body, "#{name} is in the file")
+      assert_equal(1, body.scan(/malloc\(/).size, "#{name} allocates once")
+      # Twice over: once where the allocation failed and the body leaves
+      # before the loop, once at the end.
+      assert_equal(2, body.scan(/free\(w\);/).size, "#{name} frees on both ways out")
+      assert_match(/free\(w\);\n\}\z/, body, "#{name} frees at its end")
+    end
+  end
+
+  # A `raise` leaves the function from inside the loop, which is the one way
+  # out that is not the end of it.
+  def test_a_raise_frees_before_it_leaves
+    a = CArray.double(6).seq!(1.0)
+    n = 40
+    out = CArray.double(6)
+    error = assert_raises(RuntimeError) do
+      CArray.jit_for(6) { |i|
+        w = CArray.double(n)
+        raise "past four" if a[i] > 4.5
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    end
+    assert_equal("past four", error.message)
+    kernel = CArray::JIT.registry.values.last
+    body = kernel.c_source[/^static void\ncarray_jit_strided.*?\n^\}/m]
+    reporting = body[/if \( error && !\*error \) \{.*?\n *\}/m]
+    assert_match(/free\(w\);/, reporting,
+                 "the array is freed on the way out of the raise")
+    assert_match(/free\(w\);\n *return;/, reporting)
+  end
+
+  def test_the_cells_are_cleared_at_every_pass
+    a = CArray.double(4).seq!(1.0)
+    n = 300
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(n)
+      if i == 0
+        (0...n).each { |k| w[k] = 99.0 }
+      end
+      s = 0.0
+      (0...n).each { |k| s += w[k] }
+      out[i] = s
+    }
+    assert_equal([99.0 * n, 0.0, 0.0, 0.0], out.to_a,
+                 "a fresh array of zeros at every pass, as in Ruby")
+  end
+
+  def test_the_empty_spelling_of_an_allocated_array_clears_nothing
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 8 })
+      proc { |i|
+        w = CArray.empty(:float64, [n])
+        w[0] = 1.0
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/w = malloc\(/, kernel.c_source)
+    refute_match(/memset\(w,/, kernel.c_source)
+  end
+
+  # ---------- the checks, against a length the kernel worked out ----------
+
+  # (a) has no number to compare a reach against, so every position on such
+  # an axis is checked where the cell is reached -- a literal one included,
+  # since 3 is inside an array of 4 cells and outside one of 2.
+  def test_every_position_on_such_an_axis_is_checked_at_the_access
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 8 })
+      proc { |i|
+        w = CArray.double(n)
+        w[0] = 1.0
+        (0...3).each { |k| w[k] = 2.0 }
+        out[i] = w[1]
+      }
+    RUBY
+    assert_match(/w\[carray_jit_index\(INT64_C\(1\), w__extent0, error\)\]/,
+                 kernel.c_source)
+    assert_match(/position__\d+ < w__extent0/, kernel.c_source)
+  end
+
+  def test_a_read_past_the_end_raises
+    a = CArray.double(4).seq!(1.0)
+    n = 3
+    out = CArray.double(4)
+    assert_raises(IndexError) do
+      CArray.jit_for(4) { |i|
+        w = CArray.double(n)
+        (0...4).each { |k| w[k] = a[i] }
+        out[i] = w[0]
+      }
+    end
+  end
+
+  def test_a_write_past_the_end_writes_nothing_and_raises
+    a = CArray.double(4).seq!(1.0)
+    n = 3
+    out = CArray.double(4)
+    witness = CArray.double(4)
+    assert_raises(IndexError) do
+      CArray.jit_for(4) { |i|
+        w = CArray.double(n)
+        w[0] = 11.0
+        w[n] = 99.0
+        witness[i] = w[0]
+        out[i] = w[0]
+      }
+    end
+    # Cell zero is where a refused write would have landed if the position
+    # were clamped rather than tested, so what it still holds is the
+    # evidence: 11.0, not the 99.0 the refused write carried.  The pass it
+    # was in runs to its end -- the report stops the loop at the head of the
+    # next one -- which is what put that value in the witness.
+    assert_equal(11.0, witness[0])
+  end
+
+  # ---------- a length that is no length ----------
+
+  def test_a_captured_length_of_zero_is_reported
+    a = CArray.double(4).seq!(1.0)
+    n = 0
+    out = CArray.double(4)
+    error = assert_raises(ArgumentError) do
+      CArray.jit_for(4) { |i| w = CArray.double(n); w[0] = a[i]; out[i] = w[0] }
+    end
+    assert_match(/at least one cell/, error.message)
+    assert_match(/`w`/, error.message)
+    assert_match(/0 cells/, error.message)
+  end
+
+  def test_a_negative_captured_length_is_reported
+    a = CArray.double(4).seq!(1.0)
+    n = -3
+    out = CArray.double(4)
+    error = assert_raises(ArgumentError) do
+      CArray.jit_for(4) { |i| w = CArray.double(n); w[0] = a[i]; out[i] = w[0] }
+    end
+    assert_match(/-3 cells/, error.message)
+  end
+
+  # A length whose bytes could not be counted in a `size_t` is reported
+  # rather than multiplied out: the multiplication into the allocation would
+  # wrap, and a small allocation answered for a huge one is the worst of the
+  # outcomes.  It is also the only size failure that can be provoked
+  # portably -- an allocator that reserves lazily says yes to almost
+  # anything, and the allocation that does fail reports through the same
+  # slot with its own message.
+  def test_a_length_too_large_to_count_in_bytes_is_reported
+    a = CArray.double(4).seq!(1.0)
+    n = 2**62
+    out = CArray.double(4)
+    error = assert_raises(ArgumentError) do
+      CArray.jit_for(4) { |i| w = CArray.double(n); w[0] = a[i]; out[i] = w[0] }
+    end
+    assert_match(/more cells than its bytes could be counted in/, error.message)
+  end
+
+  def test_the_shape_may_not_vary_from_cell_to_cell
+    arrays = { :a => "float64", :out => "float64" }
+    index = refuse(<<~RUBY, /loop index/, arrays: arrays)
+      proc { |i|
+        w = CArray.double(i + 2)
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/one allocation made before the first cell/, index.message)
+    refuse(<<~RUBY, /is a cell of an array/, arrays: arrays)
+      proc { |i|
+        w = CArray.double(a[i])
+        out[i] = w[0]
+      }
+    RUBY
+    refuse(<<~RUBY, /worked out inside the block/, arrays: arrays)
+      proc { |i|
+        m = 4
+        w = CArray.double(m)
+        out[i] = w[0]
+      }
+    RUBY
+  end
+
+  def test_a_captured_length_is_a_whole_number_of_cells
+    refuse(<<~RUBY, /a whole number of cells/, arrays: { :out => "float64" }, scalars: { :q => 3.5 })
+      proc { |i|
+        w = CArray.double(q)
+        out[i] = w[0]
+      }
+    RUBY
+  end
+
+  # ---------- the shadow, and the intrinsics, and a C function ----------
+
+  def test_an_allocated_array_carries_its_shadow
+    a = CArray.double(6).seq!(1.0)
+    a[2] = UNDEF
+    n = 200
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(n)
+      w[0] = a[i]
+      w[1] = 1.0
+      out[i] = w[0] + w[1]
+    }
+    assert_equal([false, false, true, false, false, false], out.is_masked.to_a)
+    [0, 1, 3, 4, 5].each { |k|
+      assert_bits_equal(a[k] + 1.0, out[k], "cell #{k}")
+    }
+  end
+
+  def test_the_shadow_of_an_allocated_array_is_allocated_with_it
+    kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, scalars: { :n => 8 }, masked: true)
+      proc { |i|
+        w = CArray.double(n)
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/uint8_t \*w__mask = NULL;/, kernel.c_source)
+    assert_match(/w__mask = malloc\(\(size_t\) w__cells\);/, kernel.c_source)
+    assert_match(/memset\(w__mask, 0, \(size_t\) w__cells\);/, kernel.c_source)
+    assert_match(/free\(w__mask\);/, kernel.c_source)
+  end
+
+  # `sum`, `min` and `max` take the length as an argument, so a length the
+  # kernel worked out serves as well as a number.  `sort` chooses its
+  # algorithm as the C is written, and a network is a fixed run of
+  # comparators -- so a length that is not a number sorts by the helper that
+  # takes one, which is the insertion sort.
+  def test_the_intrinsics_over_a_length_the_kernel_worked_out
+    a = CArray.double(4).seq!(1.0)
+    n = 20
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(n)
+      (0...n).each { |k| w[k] = a[i] * (n - k) }
+      sort(w)
+      out[i] = sum(w) * 1000 + min(w) * 10 + max(w)
+    }
+    reference = (0...4).map { |i|
+      cells = (0...n).map { |k| a[i] * (n - k) }.sort
+      cells.sum * 1000 + cells.first * 10 + cells.last
+    }
+    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+  end
+
+  def test_a_sort_over_such_a_length_is_the_insertion_sort
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 4 })
+      proc { |i|
+        w = CArray.double(n)
+        w[0] = 1.0
+        sort(w)
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/carray_jit_sort_float64\(w, w__extent0\);/, kernel.c_source)
+    refute_match(/carray_jit_sort_float64_\d/, kernel.c_source,
+                 "a network is chosen by a length that is a number")
+  end
+
+  def test_an_allocated_array_goes_to_a_pointer_with_no_length
+    total = CArray.jit_function("double heap_total3(const double *v)") { |v|
+      v[0] + v[1] + v[2]
+    }
+    a = CArray.double(4).seq!(1.0)
+    n = 300
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(n)
+      w[0] = a[i]; w[1] = 1.0; w[2] = 2.0
+      out[i] = total.call(w)
+    }
+    assert_equal((0...4).map { |k| a[k] + 3.0 }, out.to_a)
+  end
+
+  def test_a_declaration_with_a_length_takes_no_such_array
+    sized = CArray.jit_function("double heap_sized(const double v[3])") { |v|
+      v[0] + v[1] + v[2]
+    }
+    a = CArray.double(4).seq!(1.0)
+    n = 300
+    out = CArray.double(4)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(4) { |i|
+        w = CArray.double(n)
+        w[0] = a[i]
+        out[i] = sized.call(w)
+      }
+    end
+    assert_match(/worked out when the kernel runs/, error.message)
+    assert_match(/Declare the parameter without a length/, error.message)
+  end
+
+  # ---------- a body allocates nothing ----------
+
+  def test_a_function_body_takes_no_allocated_array
+    runtime = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double body_runtime(int64_t n)") { |n|
+        w = CArray.double(n)
+        w[0] = 1.0
+        w[0]
+      }
+    end
+    assert_match(/worked out when the kernel runs/, runtime.message)
+    assert_match(/once per cell/, runtime.message)
+    assert_match(/pass it in/, runtime.message)
+    big = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double body_big(double x)") { |x|
+        w = CArray.double(4096)
+        w[0] = x
+        w[0]
+      }
+    end
+    assert_match(/past the #{CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT}/,
+                 big.message)
+    assert_match(/once per cell/, big.message)
+  end
+
+  # ---------- across the entry points ----------
+
+  def test_an_allocated_array_in_every_entry_point
+    a = CArray.double(6).seq!(1.0)
+    n = 300
+
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(n)
+      w[0] = a[i]; w[1] = a[i] * 2.0
+      out[i] = w[0] + w[1]
+    }
+    assert_equal((0...6).map { |k| a[k] * 3.0 }, out.to_a, "jit_for")
+
+    each = CArray.double(6)
+    CArray.jit_each { w = CArray.double(n); w[0] = a; w[1] = a * 2.0; each = w[0] + w[1] }
+    assert_equal((0...6).map { |k| a[k] * 3.0 }, each.to_a, "jit_each")
+
+    mapped = CArray.jit_map { w = CArray.double(n); w[0] = a; w[1] = a * 2.0; w[0] + w[1] }
+    assert_equal((0...6).map { |k| a[k] * 3.0 }, mapped.to_a, "jit_map")
+
+    field = CArray.double(5, 5).seq!
+    stencilled = CArray.jit_stencil(field, border: :clamp) { |x|
+      w = CArray.double(n)
+      w[0] = x[0, 0]; w[1] = x[0, 1]
+      w[0] + w[1]
+    }
+    assert_equal(field[2, 2] + field[2, 3], stencilled[2, 2], "jit_stencil")
+
+    # The fifth is a body, which allocates nothing of its own: what it takes
+    # is the array the kernel allocated, as a pointer.
+    reader = CArray.jit_function("double heap_head(const double *v)") { |v| v[0] }
+    through = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(n)
+      w[0] = a[i] * 5.0
+      through[i] = reader.call(w)
+    }
+    assert_equal((0...6).map { |k| a[k] * 5.0 }, through.to_a, "jit_function")
+  end
+
+  # A sweep hands the kernel one chunk at a time, so the entry it allocates
+  # at is reached once per chunk -- which is still outside the cell loop,
+  # and is what the allocation being one per entry means there.
+  def test_a_swept_pass_allocates_per_chunk_and_answers_the_same
+    a = CArray.double(50_000).seq!(1.0)
+    n = 300
+    out = CArray.double(50_000)
+    CArray.jit_each { w = CArray.double(n); w[0] = a; w[1] = a * 2.0; out = w[0] + w[1] }
+    kernel = CArray::JIT.registry.values.last
+    assert(kernel.sweepable?, "a jit_each block with no mask sweeps")
+    assert_equal(3.0, out[0])
+    assert_equal(a[49_999] * 3.0, out[49_999])
   end
 
   # ---------- still refused, as in the first release ----------

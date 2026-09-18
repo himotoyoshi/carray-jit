@@ -256,7 +256,7 @@ class CArray
       def declare_array (declaration)
         scope = @scope_nodes.fetch(declaration.scope)
         entry = [declaration.name, declaration.binding,
-                 declaration.storage, declaration.shape]
+                 declaration.storage, declaration.shape, declaration.heap]
         scope.array_declarations << entry unless scope.array_declarations.include?(entry)
       end
 
@@ -302,7 +302,9 @@ class CArray
           declare(node)
         when LocalArrayDeclaration
           # A declaration has no value, so it has no type: what it says is
-          # what to put at the head of the block.
+          # what to put at the head of the block.  An extent the block wrote
+          # as an expression is an expression, and is typed as one.
+          node.children.each { |extent| walk(extent) }
           node.binding = bind_array(node)
           @assigned_in_while.delete(node.name)
           declare_array(node)
@@ -1002,7 +1004,20 @@ class CArray
           verify_storable(node.array, @element_types.fetch(node.array, nil),
                           node.expression, node.location)
         when LocalArrayDeclaration
-          # Nothing to check: no value is computed.
+          # No value is computed here.  What there can be is an extent the
+          # block wrote as an expression, and a length is a whole number of
+          # cells -- a Float or a Complex one is not a length at all.
+          node.shape.each_with_index do |extent, axis|
+            next if extent.is_a?(Integer)
+            verify(extent.node)
+            next if integer?(extent.node.type)
+            where = node.shape.size == 1 ? "" : " on axis #{axis}"
+            raise Unsupported.new(
+              "`#{extent.text}` is the length of `#{node.name}`#{where}, and " \
+              "a length is a whole number of cells; this is " \
+              "#{extent.node.type == :boolean ? 'a true or false' : "a #{extent.node.type}"}",
+              node.location)
+          end
         when LocalArrayAddress
           # Nothing to check: the declaration was matched against the shape
           # and the storage type as the block was read.

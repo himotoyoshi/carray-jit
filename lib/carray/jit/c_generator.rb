@@ -397,6 +397,9 @@ class CArray
         # Whether some body pasted into this file clears an array of its own.
         @pasted_clears_a_local_array = false
         @position_temporaries = {}.compare_by_identity
+        # The positions a write is being guarded by, by axis, while its body
+        # is emitted.
+        @guarded_axes = {}.compare_by_identity
         @origin = origin
         @block_source = block_source
         refuse_generated_indices
@@ -663,6 +666,10 @@ class CArray
         # `memset`, and only where a body clears an array of its own.  A
         # kernel that clears nothing generates what it always did.
         text << "#include <string.h>\n" if clears_a_local_array?
+        # malloc and free, for the arrays this kernel allocates.  libc, the
+        # same ground `memset` above stands on: it needs no GVL and touches
+        # no Ruby value, which is what kept `ALLOCV` out of here.
+        text << "#include <stdlib.h>\n" unless heap_arrays.empty?
         text << "\n"
         unless @address_functions.empty?
           text << "/* The C functions the block called.  They arrive as\n" \
@@ -1120,9 +1127,129 @@ class CArray
         statements = @analyzer.body.statements.map { |statement|
           emit_statement(statement, indent)
         }.join
-        "{\n" + declarations + loop_open +
+        "{\n" + declarations + heap_prologue + loop_open +
           local_declarations(@analyzer.body, indent) + statements +
-          loop_close + "}\n"
+          loop_close + heap_epilogue + "}\n"
+      end
+
+      # The arrays this kernel allocates, in the order the block declared
+      # them, as [C name, storage, shape].
+      #
+      # Gathered from every scope rather than from the one being emitted: the
+      # allocation is at the function's entry, outside the cell loop, so a
+      # pointer declared for an array the block made inside an inner loop
+      # still stands at the top of the function.  Two sibling loops that each
+      # write `w` are two bindings and so two pointers, which is what keeps
+      # them the two arrays Ruby says they are.
+      def heap_arrays
+        @heap_arrays ||= begin
+          found = []
+          walk = lambda do |node|
+            if node.respond_to?(:array_declarations) && node.array_declarations
+              node.array_declarations.each do |name, binding, storage, shape, heap|
+                next unless heap
+                entry = [local_c_name(name, binding), storage, shape]
+                found << entry unless found.include?(entry)
+              end
+            end
+            node.children.each { |child| walk.call(child) if child.is_a?(Node) }
+          end
+          walk.call(@analyzer.body)
+          found
+        end
+      end
+
+      # One allocation per array at the entry, before the loop: the cells,
+      # and the shadow beside them where the kernel carries masks.
+      #
+      # The lengths come first and stand in `const int64_t` of their own,
+      # because each is read three times over -- to check it, to size the
+      # allocation, and at every subscript on that axis -- and the expression
+      # behind it may be anything the block wrote.  A length that is not a
+      # whole number of cells above zero is reported rather than allocated,
+      # which is what the same shape written as a number is refused for as
+      # the block is read.  So is a length whose cells would not fit in a
+      # `size_t`: the multiplication into `malloc` would wrap, and a small
+      # allocation answered for a huge one is the worst of the outcomes.
+      def heap_prologue
+        return "" if heap_arrays.empty?
+        lines = +""
+        heap_arrays.each do |variable, storage, shape|
+          shape.each_with_index do |extent, axis|
+            next if extent.is_a?(Integer)
+            lines << "  const int64_t #{heap_extent_name(variable, axis)} = " \
+                     "#{emit(extent.node, :int64)};\n"
+          end
+          next if literal_shape?(shape)
+          lines << "  const int64_t #{heap_cells_name(variable)} = " \
+                   "#{heap_cells_product(variable, shape)};\n"
+        end
+        heap_arrays.each do |variable, storage, _shape|
+          lines << "  #{storage_c_type(storage)} *#{variable} = NULL;\n"
+          lines << "  uint8_t *#{local_mask_name(variable)} = NULL;\n" if @masked
+        end
+        tests = heap_arrays.flat_map { |variable, storage, shape|
+          cells = local_array_cells_text(variable, shape)
+          shape.each_with_index.filter_map { |extent, axis|
+            next if extent.is_a?(Integer)
+            "#{heap_extent_name(variable, axis)} < 1"
+          } + ["(uint64_t) #{cells} > " \
+               "(uint64_t) (SIZE_MAX / sizeof(#{storage_c_type(storage)}))"]
+        }
+        lines << "  if ( #{tests.join("\n         || ")} ) {\n" \
+                 "    if ( error ) *error = #{SHAPE_CODE};\n" \
+                 "    return;\n" \
+                 "  }\n"
+        heap_arrays.each do |variable, storage, shape|
+          cells = local_array_cells_text(variable, shape)
+          lines << "  #{variable} = malloc(sizeof(#{storage_c_type(storage)}) " \
+                   "* (size_t) #{cells});\n"
+          next unless @masked
+          lines << "  #{local_mask_name(variable)} = malloc((size_t) #{cells});\n"
+        end
+        held = heap_arrays.flat_map { |variable, _storage, _shape|
+          [variable] + (@masked ? [local_mask_name(variable)] : [])
+        }
+        lines << "  if ( #{held.map { |name| "!#{name}" }.join(' || ')} ) {\n"
+        held.each { |name| lines << "    free(#{name});\n" }
+        lines << "    if ( error ) *error = #{MEMORY_CODE};\n" \
+                 "    return;\n" \
+                 "  }\n\n"
+        lines
+      end
+
+      # Every way out of a kernel that allocated: the fall-through at the end
+      # of the loop, and the one `return` a `raise` emits, which stands
+      # inside it.  Counted rather than assumed -- a leak here is a leak per
+      # call, and the sweep calls once per chunk.
+      def heap_epilogue
+        heap_release("  ")
+      end
+
+      def heap_release (indent)
+        return "" if heap_arrays.empty?
+        heap_arrays.map { |variable, _storage, _shape|
+          "#{indent}free(#{variable});\n" +
+            (@masked ? "#{indent}free(#{local_mask_name(variable)});\n" : "")
+        }.join
+      end
+
+      def heap_extent_name (variable, axis)
+        "#{variable}__extent#{axis}"
+      end
+
+      def heap_cells_name (variable)
+        "#{variable}__cells"
+      end
+
+      def heap_cells_product (variable, shape)
+        shape.each_with_index.map { |extent, axis|
+          extent.is_a?(Integer) ? extent.to_s : heap_extent_name(variable, axis)
+        }.join(" * ")
+      end
+
+      def literal_shape? (shape)
+        shape.all? { |extent| extent.is_a?(Integer) }
       end
 
       # The locals a scope holds, declared at the head of its block with no
@@ -1146,7 +1273,11 @@ class CArray
       # rather than here: in Ruby a fresh array is made at that line each time
       # it runs, so a loop's body starts from cleared cells on every pass.
       def local_array_declarations (scope, indent)
-        scope.array_declarations.map { |name, binding, storage, shape|
+        scope.array_declarations.map { |name, binding, storage, shape, heap|
+          # One the kernel allocates is a pointer standing at the top of the
+          # function, declared and freed with the allocation (see
+          # #heap_prologue), so the scope it belongs to declares nothing.
+          next "" if heap
           # One flat run of cells, whatever the rank: the subscripts are
           # folded to a row-major offset with the strides baked in (see
           # #local_array_reference), and a flat array is also what a C
@@ -1306,6 +1437,14 @@ class CArray
 
       # 1 and 2 are the divisor that was not there and the subscript that ran
       # off its array.  A `raise` in the block takes a code from here up.
+      # What a kernel says when it could not start: a shape it worked out
+      # that is no shape, and an allocation that failed.  Negative, because
+      # the positive codes from RAISE_CODE_FLOOR up are a digest of a
+      # `raise` message and a fixed one among them could collide; nothing
+      # reaches for a negative code, so these two are the kernel's own.
+      SHAPE_CODE = -1
+      MEMORY_CODE = -2
+
       RAISE_CODE_FLOOR = 3
 
       # The code is taken from the message rather than counted off as messages
@@ -1357,7 +1496,8 @@ class CArray
         # The value is not the answer; the flag says so.
         leaving = @in_function && !@returns_nothing ? "return 0;" : "return;"
         "#{indent}if ( #{tests.join(' && ')} ) {\n" \
-        "#{indent}  #{report}\n" \
+        "#{indent}  #{report}\n" +
+        heap_release("#{indent}  ") +
         "#{indent}  #{leaving}\n" \
         "#{indent}}\n"
       end
@@ -1526,10 +1666,16 @@ class CArray
         return yield(indent) if positions.empty?
 
         lines = "#{indent}{\n"
-        positions.each do |temporary, node, _extent|
+        # Held by axis as well as by node: an axis whose length the kernel
+        # works out is tested here even where the position is an index, and
+        # an index is not a node the reference can look itself up by.
+        held = {}
+        positions.each_with_index do |(temporary, node, _extent), axis|
           lines << "#{indent}  const int64_t #{temporary} = #{emit(node, :int64)};\n"
           @position_temporaries[node] = temporary
+          held[positions_axis(write, axis)] = temporary
         end
+        @guarded_axes[write] = held
         test = positions.map { |temporary, _node, extent|
           "#{temporary} >= 0 && #{temporary} < #{extent}"
         }.join(" && ")
@@ -1540,7 +1686,19 @@ class CArray
         lines << "#{indent}  }\n"
         lines << "#{indent}}\n"
         positions.each { |_, node, _| @position_temporaries.delete(node) }
+        @guarded_axes.delete(write)
         lines
+      end
+
+      # Which axis the nth guarded position belongs to.
+      def positions_axis (write, nth)
+        guarded_axes_of(write).fetch(nth)
+      end
+
+      def guarded_axes_of (write)
+        write_subscripts(write).each_with_index.filter_map { |(index, offset), axis|
+          axis if guarded_axis?(write, index, offset, axis)
+        }
       end
 
       # [temporary, position, extent text] for each axis of a write that is
@@ -1548,10 +1706,40 @@ class CArray
       def scattered_positions (write)
         subscripts = write_subscripts(write)
         subscripts.each_with_index.filter_map { |(index, offset), axis|
-          next unless index.nil? && offset.is_a?(Node) &&
-                      !Analyzer.fixed_subscript?(offset)
-          [next_temporary("position"), offset, write_extent(write, axis)]
+          # An axis whose length the kernel works out has nothing that was
+          # settled as the block was read -- a number, an index, an index
+          # with an offset, all of them -- so every write onto one works its
+          # position out here and is tested before it lands.
+          next unless guarded_axis?(write, index, offset, axis)
+          position = if index.nil? && offset.is_a?(Node) then offset
+                     elsif index.nil? then IntegerLiteral.new(offset)
+                     elsif offset.is_a?(Node) then offset
+                     else index_position_node(index, offset)
+                     end
+          [next_temporary("position"), position, write_extent(write, axis)]
         }
+      end
+
+      # `k`, `k + 1`: the position an index and its offset stand for, as a
+      # node, so that a write onto an axis the kernel sized can work it out
+      # into a temporary and test it the way a scatter does.
+      def index_position_node (index, offset)
+        read = IndexVariable.new(index, 0)
+        read.type = :int64
+        return read if offset.zero?
+        built = BinaryOperation.new(offset.negative? ? :- : :+, read,
+                                    IntegerLiteral.new(offset.abs))
+        built.type = :int64
+        built
+      end
+
+      def sized_at_runtime? (write, axis)
+        write.respond_to?(:shape) && !write.shape.fetch(axis).is_a?(Integer)
+      end
+
+      def guarded_axis? (write, index, offset, axis)
+        return true if sized_at_runtime?(write, axis)
+        index.nil? && offset.is_a?(Node) && !Analyzer.fixed_subscript?(offset)
       end
 
       # The extent an axis of a write is tested against.  An operand's is a
@@ -1560,7 +1748,7 @@ class CArray
       def write_extent (write, axis)
         case write
         when LocalArrayWrite, LocalArrayMaskWrite
-          write.shape.fetch(axis).to_s
+          local_array_extent_text(write, axis)
         else extent_name(write.array, axis)
         end
       end
@@ -1868,15 +2056,25 @@ class CArray
       def intrinsic_reference (node)
         need(node.intrinsic, node.storage, nil)
         "#{intrinsic_helper_name(node.intrinsic, node.storage)}" \
-        "(#{local_c_name(node.name, node.binding)}, #{node.shape.first})"
+        "(#{local_c_name(node.name, node.binding)}, " \
+        "#{local_array_extent_text(node, 0)})"
       end
 
+      # A length the kernel works out cannot choose a network -- the choice
+      # is made as the C is written and a network is a fixed run of
+      # comparators -- so it sorts by the helper that takes its length as an
+      # argument, which is the insertion sort.
       def emit_intrinsic_statement (statement, indent)
         cells = statement.shape.first
         name = local_c_name(statement.name, statement.binding)
         # One cell is in order already, and a network of no comparators is
         # nothing to call.
         return "" if cells == 1
+        unless cells.is_a?(Integer)
+          need(:sort, statement.storage, nil)
+          return "#{indent}#{intrinsic_helper_name(:sort, statement.storage)}" \
+                 "(#{name}, #{local_array_extent_text(statement, 0)});\n"
+        end
         if SortingNetworks.covers?(cells)
           need(:sort, statement.storage, cells)
           "#{indent}#{intrinsic_helper_name(:sort, statement.storage)}" \
@@ -1914,6 +2112,17 @@ class CArray
       def emit_local_array_clearing (declaration, indent)
         return "" unless declaration.zeroed
         name = local_c_name(declaration.name, declaration.binding)
+        # `sizeof` answers for an array and not for a pointer, so one the
+        # kernel allocated is cleared by the count it was allocated with.
+        if declaration.heap
+          cells = local_array_cells_text(name, declaration.shape)
+          bytes = "sizeof(#{storage_c_type(declaration.storage)}) * " \
+                  "(size_t) #{cells}"
+          return "#{indent}memset(#{name}, 0, #{bytes});\n" +
+            (@masked ?
+               "#{indent}memset(#{local_mask_name(name)}, 0, " \
+               "(size_t) #{cells});\n" : "")
+        end
         "#{indent}memset(#{name}, 0, sizeof #{name});\n" +
           (@masked ?
              "#{indent}memset(#{local_mask_name(name)}, 0, " \
@@ -1968,25 +2177,76 @@ class CArray
         terms = node.subscripts.each_with_index.map { |(index, offset), axis|
           position = local_array_position(node, index, offset, axis,
                                           reporting: kind != :mask)
-          stride = node.shape[(axis + 1)..].inject(1, :*)
-          stride == 1 ? position : "(#{position}) * #{stride}"
+          stride = local_array_stride_text(node, axis)
+          stride == "1" ? position : "(#{position}) * #{stride}"
         }
         "#{name}[#{terms.join(' + ')}]"
+      end
+
+      # How long an axis of a local array is, as the C says it: the number
+      # the block wrote, or the name the kernel worked the length out into.
+      def local_array_extent_text (node, axis)
+        extent = node.shape.fetch(axis)
+        return extent.to_s if extent.is_a?(Integer)
+        heap_extent_name(local_c_name(node.name, node.binding), axis)
+      end
+
+      # And how many cells it has altogether, for the allocation and the
+      # clearing.
+      def local_array_cells_text (variable, shape)
+        return shape.inject(1, :*).to_s if literal_shape?(shape)
+        heap_cells_name(variable)
+      end
+
+      # How far one step along an axis moves: the cells of every axis inside
+      # it, which are numbers where the block wrote numbers and the lengths
+      # the kernel worked out where it did not.
+      def local_array_stride_text (node, axis)
+        inner = node.shape[(axis + 1)..]
+        return inner.inject(1, :*).to_s if literal_shape?(inner)
+        inner.each_with_index.map { |extent, offset|
+          extent.is_a?(Integer) ? extent.to_s :
+            heap_extent_name(local_c_name(node.name, node.binding),
+                             axis + 1 + offset)
+        }.join(" * ")
       end
 
       # An axis the analyzer settled carries an index and a literal offset,
       # and the C says so with nothing around it.  One it could not settle
       # carries the expression, and the check is here.
       def local_array_position (node, index, offset, axis, reporting: true)
+        settled = node.shape.fetch(axis).is_a?(Integer)
+        # The write around this has already worked the position out and
+        # tested it.
+        guarded = @guarded_axes[node]
+        return guarded.fetch(axis) if guarded&.key?(axis)
         if index.nil?
           return offset.to_s unless offset.is_a?(Node)
-          return emit(offset, :int64) if Analyzer.fixed_subscript?(offset)
+          # A position that is a number is settled against a length that is
+          # one.  Against a length the kernel works out it is not: 3 is
+          # inside an array of 4 cells and outside one of 2, so it is checked
+          # where the cell is reached like any other.
+          return emit(offset, :int64) if settled &&
+                                         Analyzer.fixed_subscript?(offset)
           # A write has already worked this position out and tested it.
           held = @position_temporaries[offset]
           return held if held
           @uses_index_check = true
           return "carray_jit_index(#{emit(offset, :int64)}, " \
-                 "#{node.shape.fetch(axis)}, " \
+                 "#{local_array_extent_text(node, axis)}, " \
+                 "#{reporting ? error_argument : '(int32_t *) 0'})"
+        end
+        # An index on an axis whose length the kernel works out was not
+        # settled either: (a) had no number to compare the loop's reach
+        # against, so the reach is tested here.
+        unless settled
+          @uses_index_check = true
+          position = if offset.zero? then index.to_s
+                     elsif offset.negative? then "#{index} - #{-offset}"
+                     else "#{index} + #{offset}"
+                     end
+          return "carray_jit_index(#{position}, " \
+                 "#{local_array_extent_text(node, axis)}, " \
                  "#{reporting ? error_argument : '(int32_t *) 0'})"
         end
         return index.to_s if offset.zero?

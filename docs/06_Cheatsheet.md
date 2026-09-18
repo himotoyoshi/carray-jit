@@ -85,10 +85,14 @@ An operator assignment is the assignment it stands for: `total += a[i]`,
 sums. Default is `CArray::JIT.reassociate` (`true`). Pass `false` for the
 serial order -- a compensated summation, or checking against the loop.
 
-A `CArray` the block makes is a C array on the stack -- in any block but a
-contraction's, of any number of axes, the shape written out, cleared at the
-line each pass unless it is `CArray.empty(:type, [n])`. Note `CArray.float`
-is float32 and `CArray.complex` is cmplx64. Where the kernel carries masks
+A `CArray` the block makes is a C array of the block's own -- in any block
+but a contraction's, of any number of axes, cleared at the line each pass
+unless it is `CArray.empty(:type, [n])`. Note `CArray.float` is float32 and
+`CArray.complex` is cmplx64. Up to 4 KiB it stands in the frame; past that,
+or where the shape is written over an integer the block captured
+(`CArray.double(n)`), the kernel allocates it at its entry and frees it at
+its exit -- and then every subscript is checked where the cell is reached,
+and a C function takes it only through a pointer with no length. Where the kernel carries masks
 each cell gets a mask byte beside it, so `w[k] = UNDEF` and `w[k] == UNDEF`
 are written as a captured array's are -- but `sum`, `min`, `max`, `sort` and
 a C function take no such array.

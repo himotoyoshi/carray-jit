@@ -105,7 +105,7 @@ m = CArray.double(3, 4)
 
 A column the kernel works out is checked where it is reached, per axis as well, so a write past one axis raises rather than landing in the next row.
 
-The limits count cells rather than axes: `CArray.double(32, 32)` is 8 KiB and is refused for the 4 KiB an array is held to.
+The size counts cells rather than axes: `CArray.double(32, 32)` is 8 KiB, past what a frame holds, so it is allocated at the kernel's entry instead (see "Larger, and lengths the kernel works out").
 
 To a C function a local array goes as what it is -- one flat run of cells, row after row -- so a `double[3][4]` is handed to `const double a[12]`, and the length is matched over every cell.
 
@@ -151,9 +151,36 @@ A `jit_function` body takes one too, and hands one on to another function. A con
 
 In the whole-array spellings a name the block assigns may be an array where the block was written -- that is what `out = a + b` rests on. A name the block makes an array *under* is refused there: the one line would mean a declaration to this compiler and a write to that array's cell to a reader, and the two are different things. Rename one of them.
 
-**They are on the stack, so they are held to a size.** One array is held to 4 KiB and one kernel's arrays together to 16 KiB. Both numbers are provisional -- what a Ruby thread's stack actually is has not been measured -- and what the total does not count is a pasted `jit_function`'s own arrays, recursion, and whatever a future thread pool gives its threads. For anything larger, pass a captured array of workspace: it is on the heap and has no such limit.
+**A size decides where the array lives, not whether it is allowed.** One array up to 4 KiB stands in the frame, and one kernel's arrays up to 16 KiB together; past either the array is allocated at the kernel's entry and freed at its exit. Both numbers are provisional -- what a Ruby thread's stack actually is has not been measured -- and what the total does not count is a pasted `jit_function`'s own arrays, recursion, and whatever a future thread pool gives its threads.
 
 What a local array buys over that captured array is the memory. A 3x3 median filter over a 2000x2000 image needs nine doubles at a time; a row of workspace per cell is `work[2000, 2000, 9]`, which is 288 MB to hold 72 bytes in use. And `jit_stencil` cannot use one at all, its block having no index to pick a row by.
+
+#### Larger, and lengths the kernel works out
+
+Two kinds of local array do not stand in the frame: one whose cells come to more than a frame's share, and one whose length the block wrote as an expression over the integers it captured. Both are **allocated once at the kernel's entry and freed at its exit** -- outside the cell loop, so a constructor written inside the loop is still one allocation.
+
+```ruby
+# n is an Integer the block closed over; 4096 doubles is 32 KiB
+CArray.jit_for(rows) { |i|
+  w = CArray.double(n)          # allocated at the entry, freed at the exit
+  big = CArray.double(4096)     # the same, for its size alone
+  ...
+}
+```
+
+Nothing changes in how a cell is reached, and nothing changes for an array that does fit: a kernel whose arrays all stand in the frame emits what it emitted before.
+
+Three things follow from a length the kernel works out.
+
+**Every subscript on such an axis is checked where the cell is reached.** The check that reads a loop's range has no number to compare it against -- and neither has a position written as a number, since 3 is inside an array of 4 cells and outside one of 2. Measured at 0.14 ns a cell against the same array at a length written out, which is what the check costs; the allocation itself did not rise above the noise of one call.
+
+**The same block at two lengths is one kernel.** The length travels as an argument rather than standing in the C, so `n = 100` and `n = 200` share the compiled object and the second call compiles nothing.
+
+**A C function takes it only where the declaration names no length.** `const double *v` promises nothing about how many cells there are and takes one; `const double v[3]` is matched against the shape as the block is read, and a length that is not there yet cannot be matched -- so that declaration is refused, naming the pointer form as the spelling to use.
+
+A length the kernel works out has to be a length: an extent that comes to zero or less is reported as `ArgumentError` when the kernel runs, naming the array and what its shape came to, and one whose bytes could not be counted in a `size_t` is reported the same way rather than multiplied out. An allocation the system refuses is `NoMemoryError`, with the shapes and the bytes asked for. The shape may read only the integers the block captured: a loop index, a cell of an array or a local worked out inside the block would be a length that changed from cell to cell, and the array is one allocation made before the first cell.
+
+A `jit_function` body allocates nothing. It is called once per cell, so an allocation in it would be one per cell; a body that wants a larger workspace, or one sized when the kernel runs, takes it as a pointer parameter from the kernel that calls it.
 
 #### Masks in a local array
 
@@ -181,7 +208,7 @@ The zeroed spellings clear the shadow with the cells, so a cell starts every pas
 
 Two things a local array does not do under masks. **The intrinsics refuse it**: what `sum`, `min`, `max` or `sort` should do with a missing cell is not decided -- pass over it, gather it at the end as `sort` gathers NaN, or count it where a median counts -- so the refusal says that rather than choosing. And **a C function cannot take one**: a signature says what a pointer points at, and a mask travels in no C declaration there is a way to write. Either way the answer is to decide it in the kernel, or to copy the cells the callee should see into a captured array.
 
-The shadow counts against the size a local array is held to, being on the same stack: an array of 512 doubles is 4 KiB of cells and fits on its own, and 4.5 KiB once it carries masks, which does not.
+The shadow counts towards where the array goes, being on the same stack: an array of 512 doubles is 4 KiB of cells and stands in the frame, and 4.5 KiB once it carries masks, which is past a frame's share -- so under masks that array is allocated at the entry, its shadow with it.
 
 `border: :mask` does **not** make a masked kernel -- the frame is marked before the loop runs and never reached by it -- so a stencil with that border pays for no shadow. Nor does a compiled function's body ever carry one: a function is handed numbers and pointers, and a mask travels in neither, so `w[k] = UNDEF` in a body is refused.
 
@@ -1003,7 +1030,7 @@ Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symb
 - **Handing a pointer to a C function is C's bargain.** A declaration that carries no length -- `const double *x`, `double x[]` -- gives this compiler nothing to check an array against, and a function that keeps the pointer past the call keeps it past whatever the array was. That is the same arrangement calling the same function from C would be, for a local array and a captured one alike; what differs is only which memory is involved.
 - **A local array's subscript counts from the start.** CArray's `w[-1]` is the last cell; a kernel has no such reading, so a literal negative subscript is refused by name and one the kernel works out raises `IndexError`. This is the difference the captured arrays already have. Write `w[n - 1]`.
 - **`CArray.empty` leaves its cells as the stack left them.** Reading one before writing it is out of contract, the way reading under a mask is: the value is whatever was there. What it saves is the clearing, which for a 256-cell array inside a per-cell loop is 2 KiB a cell.
-- **The stack limits are per function, and a chain of them is not counted.** One local array is held to 4 KiB and the arrays of one kernel body or one function body to 16 KiB together. A pasted function called from a kernel is a second frame, and a chain of three such functions can therefore stand 48 KiB deep while each of them is inside its own limit -- counting along the chain was considered and dropped, since the depth is not knowable where recursion is in the subset at all. What that costs is the bargain a deep recursion already takes: too deep is a SIGSEGV rather than a `SystemStackError`, and a body carrying arrays reaches it sooner. Both numbers are provisional, and neither counts a future thread pool's stacks.
+- **The stack limits are per function, and a chain of them is not counted.** One local array up to 4 KiB stands in a frame, and the arrays of one kernel body or one function body up to 16 KiB together; past either, a kernel allocates the array at its entry, while a function body -- which is called once per cell -- refuses it and asks the calling kernel for a pointer instead. A pasted function called from a kernel is a second frame, and a chain of three such functions can therefore stand 48 KiB deep while each of them is inside its own limit -- counting along the chain was considered and dropped, since the depth is not knowable where recursion is in the subset at all. What that costs is the bargain a deep recursion already takes: too deep is a SIGSEGV rather than a `SystemStackError`, and a body carrying arrays reaches it sooner. Both numbers are provisional, and neither counts a future thread pool's stacks.
 - **Storing a real number into an integer array is C's conversion.** A value past the type's range, or a NaN, is undefined behaviour rather than a number -- and the same is true of a captured integer array, so a kernel brings no new hazard here. Round and clamp before storing where the value may leave the range.
 - **A block's source must be recoverable.** Blocks defined in `eval` or in a console have no file to read back; pass `source:` there, or set `RubyVM.keep_script_lines = true` before defining them. This also ties the gem to CRuby, which CArray requires anyway.
 - **Nothing existing is replaced.** `jit_for` is a new method, not a faster `each_index`: the two differ in what they reject, and a caller should be able to choose.

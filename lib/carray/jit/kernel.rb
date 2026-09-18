@@ -78,6 +78,15 @@ class CArray
         # writes into the error slot.  The message does not travel: C has
         # nothing to carry it in, and it was known when this was compiled.
         @raise_messages = generator.raise_messages
+        # The arrays this kernel allocates at its entry, as
+        # [name, storage, shape] -- so that a shape it could not use, or an
+        # allocation that failed, can be named with the lengths it came to on
+        # this call.  The shapes are worked out here as they are there: from
+        # the same expressions over the same captured integers.
+        @heap_arrays = analyzer.local_array_declarations.filter_map { |entry|
+          _scope, name, storage, shape, heap = entry
+          [name, storage, shape] if heap
+        }
         # Kept so the sweep entry point can be built from it if one is ever
         # asked for.  Compiling it eagerly would pay for a road most kernels
         # never take.
@@ -165,7 +174,7 @@ class CArray
           array[] = buffer
         end
 
-        report(error)
+        report(error, scalar_values)
       end
 
       # @private
@@ -216,7 +225,7 @@ class CArray
           array[] = item
         end
 
-        report(error)
+        report(error, scalar_values)
       end
 
       # The wrapper CArray's sweep calls, for the same reason #c_source is
@@ -239,10 +248,12 @@ class CArray
       # back.  C cannot raise, so a failure is a code in a slot and a loop
       # that stops; this is where it becomes the exception the same body run
       # in Ruby would have raised.
-      def report (error)
+      def report (error, scalars = {})
         code = error.unpack1("l")
         case code
         when 0 then nil
+        when CGenerator::SHAPE_CODE then raise_a_bad_shape(scalars)
+        when CGenerator::MEMORY_CODE then raise_out_of_memory(scalars)
         when 1 then raise ZeroDivisionError, "divided by 0"
         when 2 then raise IndexError, "index out of range"
         when 3 then raise ArgumentError,
@@ -265,6 +276,53 @@ class CArray
                        "was compiled to report" unless message
           raise RuntimeError, message
         end
+      end
+
+      # A length the kernel worked out that is no length: zero cells, a
+      # negative count, or so many that the bytes would not be a `size_t`.
+      # The kernel reports which of its arrays it was by reporting at all --
+      # it stops before the first cell -- and the lengths are worked out
+      # again here, where there is a message to put them in.
+      def raise_a_bad_shape (scalars)
+        offending = @heap_arrays.filter_map { |name, storage, shape|
+          lengths = shape_lengths(shape, scalars)
+          next unless lengths&.any? { |length| length < 1 }
+          "`#{name}` (#{storage}) asks for " \
+          "#{lengths.join(' x ')} #{lengths.size == 1 ? 'cells' : 'cells per axis'}"
+        }
+        raise ArgumentError,
+              "a local array holds at least one cell: " \
+              "#{offending.join('; ')}" unless offending.empty?
+        raise ArgumentError,
+              "a local array of this kernel asks for more cells than its " \
+              "bytes could be counted in"
+      end
+
+      def raise_out_of_memory (scalars)
+        asked = @heap_arrays.map { |name, storage, shape|
+          lengths = shape_lengths(shape, scalars)
+          cells = lengths&.inject(1, :*)
+          bytes = cells && cells * LOCAL_ARRAY_STORAGE_BYTES.fetch(storage, 1)
+          "`#{name}` (#{storage}, #{lengths ? lengths.join(' x ') : 'shape'}" +
+            (bytes ? ", #{bytes} bytes" : "") + ")"
+        }
+        raise NoMemoryError,
+              "a kernel could not allocate the local arrays it works in: " \
+              "#{asked.join(', ')}"
+      end
+
+      # @private
+      LOCAL_ARRAY_STORAGE_BYTES = Analyzer::LOCAL_ARRAY_STORAGE_BYTES
+
+      # The shape as numbers, or nil where one of its axes cannot be worked
+      # out here -- which is not a failure worth a second exception, the one
+      # being raised having happened already.
+      def shape_lengths (shape, scalars)
+        shape.map { |extent|
+          extent.is_a?(Integer) ? extent : evaluate(extent.node, scalars)
+        }
+      rescue StandardError, Unsupported
+        nil
       end
 
       def slab_pointer

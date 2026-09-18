@@ -45,14 +45,16 @@ class CArray
         "boolean" => 1,
       }.freeze
 
-      # A local array is on the stack, so there is a size past which it stops
-      # being a good idea and starts being a crash a long way from here.
+      # How much of a local array a stack frame is asked to hold.  Past
+      # either number the array is allocated at the kernel's entry instead --
+      # so these say where the array goes rather than whether it is allowed,
+      # and nothing is refused for its size.
       #
-      # Both numbers are provisional: what a Ruby thread's stack actually is
-      # on each platform has not been measured, and until it has, these are a
-      # guess with room under it.  They are in one place so that measuring
-      # moves one number rather than several.  What the total does not count
-      # is in docs: a pasted function's own arrays, recursion, and whatever a
+      # Both are provisional: what a Ruby thread's stack actually is on each
+      # platform has not been measured, and until it has, these are a guess
+      # with room under it.  They are in one place so that measuring moves
+      # one number rather than several.  What the total does not count is in
+      # docs: a pasted function's own arrays, recursion, and whatever a
       # future thread pool gives its threads.
       LOCAL_ARRAY_BYTE_LIMIT = 4 * 1024
       LOCAL_ARRAY_TOTAL_BYTE_LIMIT = 16 * 1024
@@ -1717,6 +1719,26 @@ class CArray
         # The cells over every axis, because that is what the callee is handed:
         # a local array is packed row-major, so `double[3][4]` is the twelve
         # cells `const double a[12]` asks for.
+        #
+        # A declaration that names a length can only be held to a shape that
+        # is numbers: the two are matched as the block is read, and a length
+        # the kernel works out is not there yet.  A pointer with no length is
+        # the C that says "however many you have", and takes one.
+        unless literal_shape?(shape)
+          if parameter.sized?
+            raise Unsupported.new(
+              "`#{c_function}` takes `#{parameter.text}` there, which reads " \
+              "#{parameter.array} cells, and the shape of `#{name}` is " \
+              "worked out when the kernel runs -- so the two cannot be " \
+              "matched here, and the function checks no subscript of its " \
+              "own. Declare the parameter without a length " \
+              "(`#{parameter.element.text} *`), which promises nothing about " \
+              "how many cells there are, or give `#{name}` a shape written " \
+              "out",
+              argument.location)
+          end
+          return LocalArrayAddress.new(name, storage, shape, argument.location)
+        end
         cells = shape.inject(1, :*)
         if parameter.sized? && cells < parameter.array
           shaped = shape.size == 1 ? "" :
@@ -1987,9 +2009,12 @@ class CArray
         end
       end
 
-      # The shape is written out, the way a window's offsets are: the lengths
-      # are what the C declares and what every subscript is checked against,
-      # and a length that is not known until the kernel runs could be neither.
+      # The shape, one entry an axis: an Integer where the block wrote a
+      # number, and a LocalArrayExtent where it wrote an expression over the
+      # integers it captured.  A number is what the C declares and what a
+      # subscript is checked against as the block is read; an expression is
+      # worked out once at the kernel's entry, and every check against it
+      # happens where the cell is reached.
       def read_local_array_shape (node, arguments)
         if arguments.empty?
           raise Unsupported.new(
@@ -1999,15 +2024,7 @@ class CArray
         end
         arguments.map { |argument|
           extent = literal_integer(argument)
-          unless extent
-            raise Unsupported.new(
-              "the shape of a local array is written out -- an integer, or " \
-              "integers joined by `+`, `-` and `*` -- and " \
-              "`#{argument.slice}` is not. A length the call decides has no " \
-              "C array to declare and no bound to check against; pass a " \
-              "captured array of workspace instead",
-              node.location)
-          end
+          next captured_extent(node, argument) unless extent
           unless extent.positive?
             raise Unsupported.new(
               "a local array holds at least one cell, and `#{argument.slice}` " \
@@ -2015,6 +2032,48 @@ class CArray
           end
           extent
         }
+      end
+
+      # A length the kernel works out at its entry, from the integers it
+      # captured.
+      #
+      # It may read nothing that varies from cell to cell: the array is one
+      # allocation for the whole pass, made before the first cell, so an
+      # extent over a loop index or an array's cell is a length that would
+      # have to change underneath it.  That is what is refused here, and the
+      # message says which of the two was written.
+      def captured_extent (node, argument)
+        built = build(argument)
+        varies = extent_varies_by_cell(built)
+        if varies
+          raise Unsupported.new(
+            "`#{argument.slice}` is the shape of a local array, and " \
+            "#{varies} -- the array is one allocation made before the first " \
+            "cell, so its length cannot change from cell to cell. Take the " \
+            "widest length the pass needs, or pass a captured array of " \
+            "workspace",
+            node.location)
+        end
+        LocalArrayExtent.new(argument.slice, built)
+      end
+
+      # What in an extent expression is not settled before the loop runs, in
+      # the words it was written in, or nil where everything in it is.
+      def extent_varies_by_cell (node)
+        case node
+        when IntegerLiteral, CaptureRead then nil
+        when UnaryMinus then extent_varies_by_cell(node.operand)
+        when BinaryOperation
+          unless [:+, :-, :*].include?(node.operator)
+            return "`#{node.operator}` is not one of `+`, `-` and `*`"
+          end
+          extent_varies_by_cell(node.left) || extent_varies_by_cell(node.right)
+        when IndexVariable then "`#{node.name}` is a loop index"
+        when LocalRead then "`#{node.name}` is worked out inside the block"
+        when ElementRead then "`#{node.array}` is a cell of an array"
+        when LocalArrayRead then "`#{node.name}` is a cell of an array"
+        else "it is not an integer expression over the captured integers"
+        end
       end
 
       # `CArray.zeros(4)`, `CArray.empty(4)`, `CArray.ones(4)`: the
@@ -2084,58 +2143,81 @@ class CArray
             "name of its own",
             location)
         end
-        verify_local_array_fits(name, storage, shape, location)
+        heap = heap_array?(storage, shape)
+        refuse_a_heap_array_in_a_body(name, storage, shape, location) if heap
         @local_array_names << name unless @local_array_names.include?(name)
         @local_arrays[name] = [storage, shape]
         scope = [@scopes.size - 1 - depth, 0].max
         @scopes[scope] << name unless @scopes[scope].include?(name)
-        entry = [scope, name, storage, shape]
+        entry = [scope, name, storage, shape, heap]
         @local_array_declarations << entry unless @local_array_declarations.include?(entry)
         @clears_a_local_array ||= zeroed
-        verify_local_arrays_fit_together(name, location)
-        LocalArrayDeclaration.new(name, storage, shape, zeroed, location, scope)
+        LocalArrayDeclaration.new(name, storage, shape, zeroed, location, scope,
+                                  heap)
+      end
+
+      # Where the array goes.  The stack while it is small enough to be a
+      # frame's business, and the heap otherwise -- which is a placement and
+      # not a refusal: nothing is turned away for its size any more.
+      #
+      # Three ways onto the heap: a length the kernel works out, an array
+      # larger than one frame should hold, and an array that fits on its own
+      # but not beside the ones this kernel already has.
+      def heap_array? (storage, shape)
+        return true unless literal_shape?(shape)
+        bytes = local_array_bytes(storage, shape)
+        return true if bytes > LOCAL_ARRAY_BYTE_LIMIT
+        bytes + stack_array_bytes > LOCAL_ARRAY_TOTAL_BYTE_LIMIT
+      end
+
+      def literal_shape? (shape)
+        shape.all? { |extent| extent.is_a?(Integer) }
+      end
+
+      # What the arrays declared so far take on the stack.  Two sibling
+      # loops that each declare `w` are one entry: their blocks do not
+      # overlap, so neither do their frames.
+      def stack_array_bytes
+        @local_array_declarations.sum { |_scope, _name, storage, shape, heap|
+          heap ? 0 : local_array_bytes(storage, shape)
+        }
+      end
+
+      # A compiled function's body is called once per cell, so an allocation
+      # in it would be one per cell -- and the body has no entry of its own
+      # outside the kernel's loop to make it at instead.
+      def refuse_a_heap_array_in_a_body (name, storage, shape, location)
+        return unless @function
+        reason =
+          if literal_shape?(shape)
+            "`#{name}` asks for " \
+            "#{local_array_bytes_phrase(storage, shape)}, which is past the " \
+            "#{LOCAL_ARRAY_BYTE_LIMIT} a frame here holds"
+          else
+            "the shape of `#{name}` is worked out when the kernel runs"
+          end
+        raise Unsupported.new(
+          "#{reason}, so `#{name}` would have to be allocated -- and a " \
+          "function's body is called once per cell, which would be one " \
+          "allocation per cell. Make the array in the kernel that calls " \
+          "this and pass it in, as a pointer parameter",
+          location)
       end
 
       # A shadow byte a cell where the kernel carries masks: it is on the
       # same stack as the cells, so it is counted with them.
       def local_array_bytes (storage, shape)
-        cells = shape.inject(1, :*)
+        cells = shape.inject(1) { |product, extent| product * extent }
         (LOCAL_ARRAY_STORAGE_BYTES.fetch(storage) + (@masked ? 1 : 0)) * cells
       end
 
       # How the refusal accounts for a size the block did not write out.
       def local_array_bytes_phrase (storage, shape)
-        cells = shape.inject(1, :*)
+        cells = shape.inject(1) { |product, extent| product * extent }
         values = LOCAL_ARRAY_STORAGE_BYTES.fetch(storage) * cells
         return "#{values} bytes of #{storage}" unless @masked
         "#{values + cells} bytes -- #{values} of #{storage} and #{cells} of " \
         "the mask beside it, a byte a cell, since this kernel carries masks"
-      end
-
-      def verify_local_array_fits (name, storage, shape, location)
-        bytes = local_array_bytes(storage, shape)
-        return if bytes <= LOCAL_ARRAY_BYTE_LIMIT
-        raise Unsupported.new(
-          "`#{name}` asks for #{local_array_bytes_phrase(storage, shape)} " \
-          "on the stack, and one local array is held to " \
-          "#{LOCAL_ARRAY_BYTE_LIMIT}; pass a captured array of workspace, " \
-          "which is on the heap and has no such limit",
-          location)
-      end
-
-      def verify_local_arrays_fit_together (name, location)
-        total = @local_array_declarations.sum { |_scope, _name, storage, shape|
-          local_array_bytes(storage, shape)
-        }
-        return if total <= LOCAL_ARRAY_TOTAL_BYTE_LIMIT
-        raise Unsupported.new(
-          "the local arrays of this kernel come to #{total} bytes of stack " \
-          "with `#{name}`" +
-          (@masked ? ", the mask beside each of their cells counted in" : "") +
-          ", and one kernel is held to " \
-          "#{LOCAL_ARRAY_TOTAL_BYTE_LIMIT}; pass a captured array of " \
-          "workspace for the larger ones",
-          location)
       end
 
       # A name is in sight where some scope still standing holds it.  The
@@ -2231,6 +2313,11 @@ class CArray
       # composing them produced "is outside and that axis has 4 cells".
       def local_array_cells_phrase (shape, axis)
         extent = shape[axis]
+        unless extent.is_a?(Integer)
+          length = "a length of `#{extent}`, which the kernel works out"
+          return shape.size == 1 ? "a local array of #{length}"
+                                 : "that axis's #{length}"
+        end
         cells = "#{extent} #{extent == 1 ? 'cell' : 'cells'}"
         run = extent == 1 ? "only cell is 0" : "cells are 0 to #{extent - 1}"
         shape.size == 1 ? "a local array of #{cells}, whose #{run}"
@@ -2244,6 +2331,11 @@ class CArray
       # A literal position is (a) as well, its range being itself.
       def local_array_subscript (name, shape, axis, argument, location)
         extent = shape[axis]
+        # An axis whose length the kernel works out has nothing for (a) to
+        # compare against: a literal position included, since 3 is inside an
+        # array of 4 cells and outside one of 2.  So every position on such
+        # an axis is checked where the cell is reached.
+        return [nil, build(argument)] unless extent.is_a?(Integer)
         if (index = index_name(argument)) && index_in_scope?(index)
           settled = checked_index_subscript(name, shape, axis, index, 0,
                                             argument, location)

@@ -39,6 +39,25 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a local array may be larger than a stack frame should hold, and its
+  shape may be written over an integer the block captured --
+  `CArray.double(n)`, which was refused. Either way the kernel allocates the
+  array once at its entry and frees it at its exit, so a constructor written
+  inside the cell loop is still one allocation; 4 KiB for one array and
+  16 KiB for one kernel's arrays together now say where an array lives rather
+  than whether it is allowed, and nothing is refused for its size. A kernel
+  whose arrays all fit in the frame emits the C it emitted before. Where the
+  length is one the kernel works out, every subscript on that axis is checked
+  where the cell is reached rather than as the block is read, and a C
+  function takes the array only through a pointer that declares no length
+  (`const double *v`, not `const double v[3]`). The same block at two lengths
+  is one compiled kernel: the length travels as an argument and is not in the
+  C. A shape that comes to zero or less raises `ArgumentError` when the
+  kernel runs, and an allocation the system refuses raises `NoMemoryError`,
+  both naming the array and what its shape came to. A `jit_function` body
+  allocates nothing -- it is called once per cell -- and refuses such an
+  array, naming the pointer parameter to take it through instead.
+
 - New: a kernel that carries masks takes a local array, which it refused
   before. Every local array of such a kernel is declared with a shadow of one
   byte a cell beside its cells, and a cell carries a mask the way a plain
