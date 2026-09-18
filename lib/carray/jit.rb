@@ -342,6 +342,67 @@ class CArray
     JIT.function(prototype, &block)
   end
 
+  # Gives every cell of `self` the block's value at its indices, and returns
+  # `self`.
+  #
+  # The block takes one parameter per axis, as a constructor block does, and
+  # its value is what the cell at those indices gets:
+  #
+  #   CArray.int32(1000, 1000).jit_init { |i, j| (i + j) % 2 }
+  #
+  # That is what `CArray.int32(n, n) { |i, j| ... }` says, without the Ruby
+  # call per cell: the constructor form is `map_index!`, which leaves C for
+  # every element and comes back, and this one compiles the body and runs the
+  # whole loop as C.
+  #
+  # It is the only member of the family that is an instance method, because
+  # the array being written is the receiver.  {CArray.jit_for} runs the same
+  # loop and has to be given both the index space and the array to write into
+  # -- `CArray.jit_for(n, n) { |i, j| z[i, j] = ... }` -- where here the
+  # extents are the receiver's shape and the target is the receiver, so
+  # neither is said twice.
+  #
+  # Reach for it when the values are a formula over the indices that will not
+  # go through whole-array arithmetic.  Where it will, that needs no compiler
+  # and is faster still: a checkerboard is `(i[nil, :_] + i[:_, nil]) % 2`
+  # over an index vector, and a sequence or a random fill has `seq!` and
+  # `random!` already.  What is left for this method is the formula that
+  # cannot be said that way -- a branch per cell, a value looked up, a
+  # recurrence along an axis.
+  #
+  # A block outside the compilable subset raises CArray::JIT::Unsupported, as
+  # every other entry point here does.  Nobody writes `jit_init` except to
+  # have the compiled loop, so quietly running the slow one would answer a
+  # question that was not asked -- write the constructor block when the slow
+  # one is what is wanted.
+  #
+  # The block is read and compiled, never called, so it is not yielded to.
+  #
+  # @param reassociate [Boolean, nil] as {CArray.jit_for}; `nil` defers to
+  #   {CArray::JIT.reassociate}.
+  # @return [CArray] `self`
+  # @raise [CArray::JIT::Unsupported] when the block falls outside the
+  #   recognized subset, or names a number of indices other than `ndim`.
+  def jit_init (reassociate: nil, &block)
+    unless block
+      raise JIT::Unsupported, "jit_init needs a block"
+    end
+    if block.arity.zero?
+      raise JIT::Unsupported,
+            "jit_init's block takes the indices of the cell it computes, one " \
+            "per axis, as a constructor block does; a block that names none " \
+            "computes from other arrays and belongs to jit_each"
+    end
+    unless block.arity == ndim
+      raise JIT::Unsupported,
+            "this array has #{ndim} #{ndim == 1 ? 'axis' : 'axes'} and the " \
+            "block names #{block.arity} " \
+            "#{block.arity == 1 ? 'index' : 'indices'}; jit_init fills every " \
+            "cell, so there is one index per axis"
+    end
+    JIT.run(dim, block, reassociate, into: self)
+  end
+
   # @!endgroup
 
   # The compiler behind `CArray.jit_*`: it reads a block, generates C for it,
@@ -788,6 +849,14 @@ class CArray
 
       # @private
       MAP_RESULT = :__map_result
+
+      # The array `jit_init` writes into is the receiver, which the block does
+      # not close over -- it is `self` there, and `self` is not a capture.  So
+      # it joins the operands under a name this compiler made up, the way a
+      # generator's state does, and the block's value is written to it at the
+      # cell the loop is on.
+      # @private
+      INIT_TARGET = :__init_target
 
       # Whether CArray's sweep can run this pass, decided before there is a
       # kernel -- because the answer changes what is compiled.
@@ -1284,7 +1353,11 @@ class CArray
       end
 
       # @private
-      def run (extents, block, reassociate = nil)
+      # `into` turns the block's value into a write: with it, the last
+      # statement is what the cell of `into` gets, as jit_map's is what the
+      # cell of its own result gets.  Without it the block writes the arrays
+      # it names, which is jit_for.
+      def run (extents, block, reassociate = nil, into: nil)
         node, source, origin = read_block(block)
         names = capture_names(source, node)
         arrays, scalars, c_functions, randoms =
@@ -1293,6 +1366,7 @@ class CArray
         # name this compiler made up.  `jit_for` lines nothing up, so it can
         # simply join the rest.
         arrays = arrays.merge(random_states(randoms))
+        arrays = arrays.merge(INIT_TARGET => into) if into
 
         # A plain CArray carries no mask; one exists only once a cell has
         # actually been marked.  So masks are touched at all only when some
@@ -1321,6 +1395,8 @@ class CArray
                          masked: arrays.each_value.any? { |array| array.has_mask? },
                          steps: steps,
                          cell_names: cell_names(arrays),
+                         map: into ? true : false,
+                         result: into ? INIT_TARGET : nil,
                          reassociate: reassociate.nil? ? JIT.reassociate : reassociate)
         # The kernel decides, not the caller: mentioning UNDEF makes it a
         # masked kernel even when no array carries a mask yet.
@@ -1338,7 +1414,7 @@ class CArray
                 "given"
         end
         kernel.call(arrays, scalars, pairs.map(&:first), c_functions)
-        kernel
+        into || kernel
       end
 
       # Compiles for one set of array data types and one set of scalar types,
