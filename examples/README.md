@@ -26,6 +26,17 @@ Applications
 | [relaxation.rb](applications/relaxation.rb) | steady heat on a plate: a stencil sweep with the boundary held |
 | [partial_sums.rb](applications/partial_sums.rb) | nine series in one pass, and where the order of a sum is a choice |
 | [sieve.rb](applications/sieve.rb) | Eratosthenes: an inner loop the data decides the length of |
+| [collatz.rb](applications/collatz.rb) | how long each number takes to fall to 1 -- a `while` only the cell can end, and a local typed from the far end of the body |
+| [dithering.rb](applications/dithering.rb) | Floyd-Steinberg: a pixel writes the cells the walk is about to read, so the order is the algorithm |
+| [lookup.rb](applications/lookup.rb) | half a million queries against an uneven grid: a binary search per cell, against the same answer as index arrays |
+| [random_walk.rb](applications/random_walk.rb) | gambler's ruin from `CArray::Rng`, drawn inside the kernel, against the exact answer |
+| [group_stats.rb](applications/group_stats.rb) | per-label aggregates that are not sums: one walk against a pass per label |
+| [wet_bulb.rb](applications/wet_bulb.rb) | a derived field on a weather grid, where every cell solves its own equation |
+| [alarm.rb](applications/alarm.rb) | an alarm with hysteresis: a state machine carried in `CScalar`s, which no array expression composes |
+| [parcel_ascent.rb](applications/parcel_ascent.rb) | lifting a parcel up a sounding for CAPE and CIN: the equation changes at a level each column picks for itself |
+| [van_der_pol.rb](applications/van_der_pol.rb) | an adaptive integrator where the step, the retry and the count belong to the trajectory |
+| [median_filter.rb](applications/median_filter.rb) | despiking with a median of nine, three ways, and where a cell's scratch belongs |
+| [point_in_polygon.rb](applications/point_in_polygon.rb) | a million points against 200 edges, with the crossing count in a register instead of 1.5 GB |
 | [recursion.rb](applications/recursion.rb) | fib, tak, tarai and ackermann as `jit_function`s that call themselves |
 | [quicksort.rb](applications/quicksort.rb) | the textbook partition as a compiled C function, recursing through a pointer |
 | [kepler.rb](applications/kepler.rb) | Newton's method where the passes are the cell's business, not the program's |
