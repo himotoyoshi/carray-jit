@@ -184,14 +184,16 @@ tier_for (CArray *ca)
   return TIER_XFER;
 }
 
-static VALUE
-basis_for (open_state *state, int index)
+/* Attaches or transfers one array and answers where its first cell is,
+   filling `strides` with how far apart the rest are.  This is everything a
+   basis says that a kernel actually reads; the hash around it is for the
+   callers that want to look. */
+static char *
+acquire_basis (open_state *state, int index, ca_size_t *strides)
 {
   CArray   *ca = state->carrays[index];
-  ca_size_t strides[CA_RANK_MAX];
   ca_size_t base = 0;
   char     *pointer;
-  VALUE     result;
 
   switch ( state->tier[index] ) {
   case TIER_ENTITY: {
@@ -261,6 +263,17 @@ basis_for (open_state *state, int index)
     break;
   }
   }
+
+  return pointer;
+}
+
+static VALUE
+basis_for (open_state *state, int index)
+{
+  CArray   *ca = state->carrays[index];
+  ca_size_t strides[CA_RANK_MAX];
+  char     *pointer = acquire_basis(state, index, strides);
+  VALUE     result;
 
   result = rb_hash_new();
   rb_hash_aset(result, ID2SYM(rb_intern("tier")), INT2NUM(state->tier[index]));
@@ -343,18 +356,94 @@ open_ensure (VALUE argument)
   return Qnil;
 }
 
+/* What a kernel is handed, rather than what a reader wants to see.
+ *
+ * The hash form above exists so that a caller can ask an array how it was
+ * opened.  A kernel never asks: it packs the pointers and the strides into
+ * four buffers and passes their addresses to the C.  Building a Hash and an
+ * Array per array so that Ruby can immediately pack them back into bytes is
+ * a round trip through the object heap that nothing looks at, and it cost
+ * more than the opening did.  So this writes the four buffers directly.
+ *
+ * `rank` is what an array with no mask contributes to the mask strides: the
+ * kernel's own rank, since the slot has to be there and there is no mask
+ * shape to take it from.
+ */
+typedef struct {
+  open_state *state;
+  int         rank;
+} packed_request;
+
+static VALUE
+packed_body (VALUE argument)
+{
+  packed_request *request = (packed_request *) argument;
+  open_state     *state   = request->state;
+  int             count   = state->count;
+  int             i;
+  long            stride_slots = 0, mask_stride_slots = 0;
+  VALUE           pointers, strides, mask_pointers, mask_strides;
+  uint64_t       *pointer_slot, *mask_pointer_slot;
+  int64_t        *stride_slot, *mask_stride_slot;
+
+  for ( i = 0; i < count; i++ ) {
+    stride_slots += state->carrays[i]->ndim;
+    mask_stride_slots += state->carrays[count + i]
+                       ? state->carrays[count + i]->ndim : request->rank;
+  }
+
+  pointers      = rb_str_new(NULL, (long) (count * sizeof(uint64_t)));
+  mask_pointers = rb_str_new(NULL, (long) (count * sizeof(uint64_t)));
+  strides       = rb_str_new(NULL, stride_slots * (long) sizeof(int64_t));
+  mask_strides  = rb_str_new(NULL, mask_stride_slots * (long) sizeof(int64_t));
+
+  pointer_slot      = (uint64_t *) RSTRING_PTR(pointers);
+  mask_pointer_slot = (uint64_t *) RSTRING_PTR(mask_pointers);
+  stride_slot       = (int64_t *)  RSTRING_PTR(strides);
+  mask_stride_slot  = (int64_t *)  RSTRING_PTR(mask_strides);
+
+  for ( i = 0; i < count; i++ ) {
+    CArray   *ca = state->carrays[i];
+    ca_size_t own[CA_RANK_MAX];
+    char     *pointer = acquire_basis(state, i, own);
+    int8_t    k;
+
+    *pointer_slot++ = (uint64_t)(uintptr_t) pointer;
+    for ( k = 0; k < ca->ndim; k++ ) *stride_slot++ = (int64_t) own[k];
+
+    if ( state->carrays[count + i] ) {
+      CArray   *mask = state->carrays[count + i];
+      ca_size_t mask_own[CA_RANK_MAX];
+      char     *mask_pointer = acquire_basis(state, count + i, mask_own);
+      *mask_pointer_slot++ = (uint64_t)(uintptr_t) mask_pointer;
+      for ( k = 0; k < mask->ndim; k++ ) *mask_stride_slot++ = (int64_t) mask_own[k];
+    } else {
+      *mask_pointer_slot++ = 0;
+      for ( k = 0; k < request->rank; k++ ) *mask_stride_slot++ = 0;
+    }
+  }
+
+  return rb_yield_values(4, pointers, strides, mask_pointers, mask_strides);
+}
+
 /*
- * Opens every array, yields one basis hash per array, and closes them all
- * on the way out -- including when the block raises.
+ * Opens every array, yields what it opened, and closes them all on the way
+ * out -- including when the block raises.
+ *
+ * With four arguments the block is handed one basis hash per array, which is
+ * the form to read an array's opening in.  Given a fifth -- the kernel's rank
+ * -- it is handed the four packed buffers a kernel passes to the C instead:
+ * pointers, strides, mask pointers, mask strides.
  */
 static VALUE
 access_open (int argc, VALUE *argv, VALUE module)
 {
-  VALUE arrays, writable_flags, box_start, box_count;
+  VALUE arrays, writable_flags, box_start, box_count, packed_rank;
   open_state state;
   int i;
 
-  rb_scan_args(argc, argv, "22", &arrays, &writable_flags, &box_start, &box_count);
+  rb_scan_args(argc, argv, "23", &arrays, &writable_flags, &box_start,
+               &box_count, &packed_rank);
   Check_Type(arrays, T_ARRAY);
   Check_Type(writable_flags, T_ARRAY);
   if ( NIL_P(box_start) != NIL_P(box_count) ) {
@@ -417,7 +506,14 @@ access_open (int argc, VALUE *argv, VALUE module)
     }
   }
 
-  return rb_ensure(open_body, (VALUE) &state, open_ensure, (VALUE) &state);
+  if ( NIL_P(packed_rank) ) {
+    return rb_ensure(open_body, (VALUE) &state, open_ensure, (VALUE) &state);
+  } else {
+    packed_request request;
+    request.state = &state;
+    request.rank  = NUM2INT(packed_rank);
+    return rb_ensure(packed_body, (VALUE) &request, open_ensure, (VALUE) &state);
+  }
 }
 
 /* Reports how an array would be opened, without opening it. */

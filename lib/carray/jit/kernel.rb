@@ -166,13 +166,11 @@ class CArray
         }.pack("Q*")
 
         box = plan[:box]
-        Access.open(arrays, writable, box[0], box[1]) do |bases|
-          pointers = bases.map { |basis| basis[:pointer] }.pack("Q*")
-          strides = bases.flat_map { |basis| basis[:strides] }.pack("q*")
-          mask_pointers = bases.map { |basis| basis[:mask_pointer] || 0 }.pack("Q*")
-          mask_strides = bases.flat_map { |basis|
-            basis[:mask_strides] || Array.new(@rank, 0)
-          }.pack("q*")
+        # Opened for a kernel rather than for a reader: the four buffers come
+        # back packed, instead of a hash and two arrays per operand that this
+        # would pack back into bytes and throw away.
+        Access.open(arrays, writable, box[0], box[1], @rank) do
+                   |pointers, strides, mask_pointers, mask_strides|
           entry = border ? border_function : @function
           entry.call(buffer(pointers), buffer(strides), buffer(packed_bounds),
                          buffer(reals), buffer(integers), buffer(functions),
