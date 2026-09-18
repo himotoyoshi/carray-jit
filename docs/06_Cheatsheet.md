@@ -18,6 +18,7 @@ installed. Every example here runs as written.
 | Call a C function someone else compiled | `CArray.jit_extern` |
 | Compile a C function of your own | `CArray.jit_function` |
 | Draw random numbers inside a kernel | `CArray::Rng` + `r.random` |
+| Bring a scalar in from outside, or accumulate into one | `CScalar` -- `s[]` is the value |
 
 The dividing line among the first four is **what reaches what**. Element-wise
 work reaches no neighbour, so it names no index and needs no extent. A cell
@@ -123,6 +124,31 @@ median = CArray.jit_for(rows) { |i|
   out[i] = w[4]
 }
 ```
+
+## A scalar from outside
+
+```ruby
+gain  = CScalar.double() { 2.0 }
+total = CScalar.int()
+
+CArray.jit_each { out = signal * gain }         # read at every cell
+CArray.jit_for(a.size) { |i| total[] += a[i] }  # and written like any cell
+```
+
+A captured Numeric has no data type of its own, so a local seeded from one has
+none either; a `CScalar` is a value with a type, which is what makes it the way
+to hand a kernel a scalar and the way to take one back out. `s[]` is the value
+and `s[] = ...` puts one back -- in an indexed kernel a bare `s` says the same,
+there being no axis to walk and so no index to write.
+
+Every iteration writing the one cell it has is what makes it an accumulator,
+and what is left is what the same Ruby loop leaves. `CScalar.int()` is that one
+cell zero-filled, as `CArray.int(1)` is; write `CScalar.int() { 0 }` where the
+starting value is part of what the code says.
+
+See [CScalar](02_KernelShapes.md#a-cscalar-is-a-value-with-a-home) for how the
+two routes reach it -- `jit_each` stretches it at a stride of zero, `jit_for`
+reads it where it lies.
 
 ## Windows
 
