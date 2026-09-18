@@ -71,6 +71,17 @@ class CArray
           end
         end
 
+        # Which captured scalars decide where the kernel reaches, rather than
+        # what it computes.  A pinned subscript, an offset and an inner loop's
+        # range are worked out here, in Ruby, before the first cell; every
+        # other captured number is packed into a buffer and read by the C.  So
+        # these are the ones a prepared call has to be keyed on -- and a
+        # coefficient or a clock that changes every step is not one of them,
+        # which is what keeps a time-stepping caller on the prepared path.
+        @shape_scalar_names = shape_scalar_names
+        # Calls prepared earlier, most recently used first.
+        @plans = []
+
         @masked = generator.masked
         @window_reach = analyzer.window_reach
         @window_reaches = analyzer.window_reaches
@@ -128,14 +139,15 @@ class CArray
       def call (array_values, scalar_values, bounds, c_function_values = {},
                 border: false)
         arrays = @arrays.map { |name| array_values.fetch(name) }
-        ranges = index_ranges(bounds, scalar_values)
-        verify(arrays, bounds, ranges, scalar_values, reach: !border)
+        plan = prepared_call(arrays, array_values, bounds, scalar_values, border)
 
-        writable = @arrays.map { |name| @written_arrays.include?(name) }
+        writable = plan[:writable]
         error = [0].pack("l")
-        packed_bounds = bounds.flatten.pack("q*")
+        packed_bounds = plan[:bounds]
         reals = packed_reals(scalar_values)
-        integers = packed_integers(scalar_values, array_values)
+        # The captured integers change from call to call and are packed here;
+        # the extents behind them are the arrays' own and travel in the plan.
+        integers = packed_scalar_integers(scalar_values) + plan[:extents]
         functions = @c_function_names.map { |name|
           c_function_values.fetch(name).pointer.to_i
         }.pack("Q*")
@@ -153,7 +165,7 @@ class CArray
           }
         }.pack("Q*")
 
-        box = region_box(ranges, scalar_values, array_values)
+        box = plan[:box]
         Access.open(arrays, writable, box[0], box[1]) do |bases|
           pointers = bases.map { |basis| basis[:pointer] }.pack("Q*")
           strides = bases.flat_map { |basis| basis[:strides] }.pack("q*")
@@ -176,6 +188,14 @@ class CArray
 
         report(error, scalar_values)
       end
+
+      # How many prepared calls one kernel keeps.  A stencil asks under its
+      # interior's bounds and one pair per axis of frame, so a two-dimensional
+      # one needs five before it repeats; a caller alternating between two
+      # model states needs two of whatever it was already using.  Past this
+      # the oldest goes and the call prepares itself again, which is what
+      # every call did before.
+      PLAN_LIMIT = 8
 
       # @private
       SLAB_NAME = "carray_jit_slab"
@@ -243,6 +263,112 @@ class CArray
       end
 
       private
+
+      # The parts of a call that the operands' shapes, the bounds and the
+      # kernel's own scalars decide, rather than the data or the views.
+      #
+      # Everything here answers the same for two calls whose key agrees, so it
+      # is worked out once and kept: the bounds check, the box the xfer tier
+      # transfers, the extents the kernel is handed, and which operands it
+      # writes.  What is deliberately *not* here is anything read off a view:
+      # two arrays of one shape and one type can be laid out differently, and
+      # a stride read from the one is not a stride into the other.  Those come
+      # from Access.open on every call, as they always did.
+      #
+      # Nor is the refusal of a masked array handed whole to a C function
+      # (#address_buffer): a mask is runtime state that leaves the shape and
+      # the type alone, so no key here would notice one appearing.  It is
+      # asked on every call, which costs a predicate and keeps the refusal.
+      def prepared_call (arrays, array_values, bounds, scalars, border)
+        key = plan_key(arrays, bounds, scalars, border)
+        if key
+          found = @plans.assoc(key)
+          if found
+            unless @plans.first.equal?(found)
+              @plans.unshift(@plans.delete(found))
+            end
+            return found[1]
+          end
+        end
+        ranges = index_ranges(bounds, scalars)
+        verify(arrays, bounds, ranges, scalars, reach: !border)
+        plan = {
+          :writable => @arrays.map { |name| @written_arrays.include?(name) },
+          :bounds   => bounds.flatten.pack("q*"),
+          :extents  => packed_extents(array_values),
+          :box      => region_box(ranges, scalars, array_values),
+        }
+        freeze_throughout(plan)
+        if key
+          @plans.unshift([key, plan])
+          @plans.pop if @plans.size > PLAN_LIMIT
+        end
+        plan
+      end
+
+      # What two calls have to agree on for one to be prepared like the other.
+      #
+      # Shapes and types, because that is all `verify` and `region_box` and
+      # the extents read of an array; the bounds and the border, because they
+      # are what the check is against; and the scalars that decide where the
+      # kernel reaches, but not the ones it merely computes with.
+      #
+      # No identity: two arrays of one shape and type prepare the same way, so
+      # keying on which object it was would only make a caller that rebuilds
+      # its fields every step miss every time -- and would have this kernel,
+      # which lives as long as the process, hold their memory.
+      #
+      # nil where an operand is not a CArray at all, so that the call falls
+      # through to `verify` and is refused by name rather than by whatever
+      # the next method call happens to raise.
+      def plan_key (arrays, bounds, scalars, border)
+        shapes = []
+        arrays.each do |array|
+          return nil unless array.is_a?(CArray)
+          shapes << array.data_type << array.dim
+        end
+        [shapes, bounds, border,
+         @shape_scalar_names.map { |name| scalars[name] }]
+      end
+
+      # A kernel is shared, and Fiddle lets go of the GVL for the call, so two
+      # threads can be reading one plan while a third prepares another.  That
+      # is sound only while nothing in a plan is written after it is published
+      # -- and a box is arrays inside an array, so freezing the top of it
+      # would leave the parts a later edit could still reach.
+      def freeze_throughout (value)
+        case value
+        when Hash  then value.each_value { |item| freeze_throughout(item) }
+        when Array then value.each { |item| freeze_throughout(item) }
+        end
+        value.freeze
+      end
+
+      # The captured scalars a pinned subscript, an offset or an inner loop's
+      # range is worked out from.
+      def shape_scalar_names
+        names = []
+        @axis_uses.each_value do |uses|
+          uses.each do |walkers, pinned|
+            pinned.each { |node| collect_captures(node, names) }
+            walkers.each { |walker| walker[1].each { |node|
+              collect_captures(node, names)
+            } }
+          end
+        end
+        @inner_ranges.each_value do |from, to, _step|
+          collect_captures(from, names)
+          collect_captures(to, names)
+        end
+        names.uniq.freeze
+      end
+
+      def collect_captures (node, names)
+        return names unless node.is_a?(Node)
+        names << node.name if node.is_a?(CaptureRead)
+        node.children.each { |child| collect_captures(child, names) }
+        names
+      end
 
       # What the cell that stopped said, raised now that Ruby has control
       # back.  C cannot raise, so a failure is a code in a slot and a loop
@@ -363,13 +489,24 @@ class CArray
       # One method because both loops pack it, and the same buffer packed in
       # two places is what `packed_reals` is one method about.
       def packed_integers (scalar_values, array_values)
+        packed_scalar_integers(scalar_values) + packed_extents(array_values)
+      end
+
+      # The captured half, which is different every time a caller steps a
+      # counter, and the arrays' half, which is the shape and travels in the
+      # plan.  Two methods because `#call` packs the first and takes the
+      # second from what it prepared earlier; `#sweep` still wants both.
+      def packed_scalar_integers (scalar_values)
         @integers.map { |name| Integer(scalar_values.fetch(name)) }.pack("q*") +
           @unsigned_integers.map { |name|
             Integer(scalar_values.fetch(name))
-          }.pack("Q*") +
-          @extent_slots.map { |name, axis|
-            array_values.fetch(name).dim[axis]
-          }.pack("q*")
+          }.pack("Q*")
+      end
+
+      def packed_extents (array_values)
+        @extent_slots.map { |name, axis|
+          array_values.fetch(name).dim[axis]
+        }.pack("q*")
       end
 
       def address_buffer (name, array)
