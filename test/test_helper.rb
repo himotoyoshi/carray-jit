@@ -44,16 +44,22 @@ module KernelCompilation
 
   # Compiles from source text rather than a block, so a test can pin the
   # generated C or exercise a rejection without a live array.
-  def compile_kernel (source, arrays: { :a => "float64" }, scalars: {})
+  # `masked` is what the caller would have decided from the operands it was
+  # about to hand over: a kernel over an array that carries a mask carries
+  # masks itself, and what it emits differs from the first cell onwards.
+  def compile_kernel (source, arrays: { :a => "float64" }, scalars: {},
+                      masked: false)
     CArray::JIT.compile(source,
                         array_names: arrays.keys,
                         storage_types: arrays,
-                        scalar_values: scalars)
+                        scalar_values: scalars,
+                        masked: masked)
   end
 
-  def refuse (source, pattern, arrays: { :a => "float64" }, scalars: {})
+  def refuse (source, pattern, arrays: { :a => "float64" }, scalars: {},
+              masked: false)
     error = assert_raises(CArray::JIT::Unsupported) do
-      compile_kernel(source, arrays: arrays, scalars: scalars)
+      compile_kernel(source, arrays: arrays, scalars: scalars, masked: masked)
     end
     assert_match(pattern, error.message)
     error

@@ -39,6 +39,22 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a kernel that carries masks takes a local array, which it refused
+  before. Every local array of such a kernel is declared with a shadow of one
+  byte a cell beside its cells, and a cell carries a mask the way a plain
+  local does: what the expression written into it carried. So a window copied
+  into a workspace keeps its holes. `w[k] = UNDEF` marks a cell and
+  `w[k] == UNDEF` asks about one; the zeroed spellings clear the shadow with
+  the cells, so a cell starts every pass present, while `CArray.empty` leaves
+  both unspecified. The shadow counts against the 4 KiB an array is held to
+  and the 16 KiB a kernel is, so an array that fits by its cells alone may
+  not fit once it carries masks. Two things still refuse such an array:
+  `sum`, `min`, `max` and `sort`, because what they should do with a missing
+  cell is not decided, and a C function, because a mask travels in no C
+  declaration -- both say so where they used to be refused for having no mask
+  at all. A kernel that carries no masks emits what it emitted before, and a
+  compiled function's body carries none at all.
+
 - Change: `min(w)` and `max(w)` over a floating local array answer `NaN` when
   every cell is `NaN`, where they answered `Infinity` and `-Infinity`. This
   follows CArray 3.0.2, which made the same change to its own `min` and `max`;

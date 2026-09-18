@@ -737,38 +737,31 @@ class TestLocalArrays < Minitest::Test
     RUBY
   end
 
-  # The two reasons a kernel carries masks are told apart, because what to do
-  # about them differs: one has a fill to choose, the other has a question to
-  # take out of the kernel.
-  def test_a_masked_operand_and_a_local_array_do_not_meet
+  # A masked operand and a local array meet: the array carries a shadow byte
+  # a cell, so what was read as missing is written back as missing.
+  def test_a_masked_operand_and_a_local_array_meet
     a = CArray.double(4).seq!(1.0)
     a[2] = UNDEF
     out = CArray.double(4)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_for(4) { |i|
-        w = CArray.double(2)
-        w[0] = a[i]
-        out[i] = w[0]
-      }
-    end
-    assert_match(/`w` is a local array/, error.message)
-    assert_match(/carries a mask/, error.message)
-    assert_match(/strip_mask/, error.message)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(2)
+      w[0] = a[i]
+      out[i] = w[0]
+    }
+    assert_equal([false, false, true, false], out.is_masked.to_a)
+    [0, 1, 3].each { |k| assert_bits_equal(a[k], out[k], "cell #{k}") }
   end
 
-  def test_a_block_that_asks_about_undef_and_a_local_array_do_not_meet
+  def test_a_block_that_asks_about_undef_and_a_local_array_meet
     a = CArray.double(4).seq!(1.0)
+    a[2] = UNDEF
     out = CArray.double(4)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_for(4) { |i|
-        w = CArray.double(2)
-        w[0] = a[i] == UNDEF ? 0.0 : a[i]
-        out[i] = w[0]
-      }
-    end
-    assert_match(/`w` is a local array/, error.message)
-    assert_match(/asks about\s+UNDEF/, error.message)
-    refute_match(/strip_mask/, error.message)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(2)
+      w[0] = a[i] == UNDEF ? 0.0 : a[i]
+      out[i] = w[0]
+    }
+    assert_equal([1.0, 2.0, 0.0, 4.0], out.to_a)
   end
 
   def test_a_masked_operand_with_the_mask_stripped_is_taken
@@ -785,14 +778,26 @@ class TestLocalArrays < Minitest::Test
     assert_equal([2.0, 4.0, 0.0, 8.0], out.to_a)
   end
 
-  def test_a_local_array_carries_no_mask
-    refuse(<<~RUBY, /carries no mask/, arrays: { :out => "float64" })
-      proc { |i|
+  # In a compiled function's body there is no mask at all -- a signature
+  # carries numbers and pointers -- so a local array there has no shadow to
+  # mark or to ask about.
+  def test_a_local_array_in_a_function_body_has_no_mask
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double marks(double x)") { |x|
         w = CArray.double(4)
         w[0] = UNDEF
-        out[i] = w[0]
+        w[0]
       }
-    RUBY
+    end
+    assert_match(/nothing there carries masks/, error.message)
+    asked = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double asks(double x)") { |x|
+        w = CArray.double(4)
+        w[0] = x
+        w[0] == UNDEF ? 1.0 : 2.0
+      }
+    end
+    assert_match(/no shadow beside these cells/, asked.message)
   end
 
   # ---------- the room it takes ----------
@@ -1186,40 +1191,368 @@ class TestLocalArrays < Minitest::Test
 
   # ---------- masks ----------
 
-  def test_a_masked_operand_and_a_local_array_do_not_meet_in_a_jit_each_block
+  # A kernel that carries masks gives every local array a shadow of one byte
+  # per cell, and a cell of it carries what the expression written into it
+  # carried.  So a window copied into an array of workspace keeps its holes,
+  # and reading a cell back is reading what it was made of.
+  #
+  # The reference is the same loop written out in Ruby, with the mask read
+  # off `is_masked` -- a Ruby loop cannot compute with UNDEF, so what it
+  # writes by hand is which cells are missing and what the rest hold.
+
+  def test_a_masked_window_copied_into_a_local_array_keeps_its_holes
+    a = CArray.double(8).seq!(1.0)
+    a[2] = UNDEF
+    a[5] = UNDEF
+    out = CArray.double(8)
+    CArray.jit_for(1...7) { |i|
+      w = CArray.double(3)
+      w[0] = a[i - 1]
+      w[1] = a[i]
+      w[2] = a[i + 1]
+      out[i] = w[0] + w[1] + w[2]
+    }
+    gone = a.is_masked.to_a
+    (1...7).each do |i|
+      window = [i - 1, i, i + 1]
+      if window.any? { |k| gone[k] }
+        assert_equal(UNDEF, out[i], "cell #{i}")
+      else
+        assert_bits_equal(window.sum { |k| a[k] }, out[i], "cell #{i}")
+      end
+    end
+  end
+
+  def test_a_masked_operand_and_a_local_array_meet_in_a_jit_each_block
+    a = CArray.double(6).seq!(1.0)
+    a[2] = UNDEF
+    out = CArray.double(6)
+    CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a * 2.0; out = w[0] + w[1] }
+    assert_equal([false, false, true, false, false, false], out.is_masked.to_a)
+    [0, 1, 3, 4, 5].each { |k|
+      assert_bits_equal(a[k] + a[k] * 2.0, out[k], "cell #{k}")
+    }
+  end
+
+  def test_a_block_that_asks_about_undef_and_a_local_array_meet_in_a_map
+    a = CArray.double(6).seq!(1.0)
+    a[2] = UNDEF
+    out = CArray.jit_map { w = CArray.double(2); w[0] = (a == UNDEF ? -1.0 : a); w[0] * 10.0 }
+    # The question is answered rather than carried: a cell asked about UNDEF
+    # is a cell whose value is known, so nothing here is missing.
+    assert_equal([10.0, 20.0, -10.0, 40.0, 50.0, 60.0], out.to_a)
+  end
+
+  def test_a_masked_operand_and_a_local_array_meet_in_a_stencil
+    image = CArray.double(6, 6).seq!
+    image[2, 2] = UNDEF
+    out = CArray.jit_stencil(image, border: :clamp) { |a|
+      w = CArray.double(2)
+      w[0] = a[0, 0]
+      w[1] = a[0, 1]
+      w[0] + w[1]
+    }
+    gone = image.is_masked.to_a
+    6.times { |row| 6.times { |column|
+      neighbour = [column + 1, 5].min
+      if gone[row][column] || gone[row][neighbour]
+        assert_equal(UNDEF, out[row, column], "cell #{row},#{column}")
+      else
+        assert_bits_equal(image[row, column] + image[row, neighbour],
+                          out[row, column], "cell #{row},#{column}")
+      end
+    } }
+  end
+
+  def test_a_local_array_in_a_function_body_called_from_a_masked_kernel
+    scale = CArray.jit_function("double scale(double x)") { |x|
+      w = CArray.double(3)
+      (0...3).each { |k| w[k] = x + k }
+      w[0] + w[1] + w[2]
+    }
+    a = CArray.double(5).seq!(1.0)
+    a[3] = UNDEF
+    out = CArray.double(5)
+    CArray.jit_for(5) { |i| out[i] = scale.call(a[i]) }
+    assert_equal([false, false, false, true, false], out.is_masked.to_a)
+    [0, 1, 2, 4].each { |k|
+      assert_bits_equal(a[k] * 3 + 3, out[k], "cell #{k}")
+    }
+  end
+
+  # ---------- UNDEF written into a local array, and asked about ----------
+
+  def test_undef_written_into_a_cell_of_a_local_array_comes_back_out
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(2)
+      if a[i] > 3.0
+        w[0] = UNDEF
+      else
+        w[0] = a[i]
+      end
+      w[1] = 100.0
+      out[i] = w[0] + w[1]
+    }
+    assert_equal([false, false, false, true, true, true], out.is_masked.to_a)
+    assert_equal([101.0, 102.0, 103.0], (0...3).map { |k| out[k] })
+  end
+
+  def test_a_cell_of_a_local_array_can_be_asked_about
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(2)
+      if a[i] > 3.0
+        w[0] = UNDEF
+      else
+        w[0] = a[i]
+      end
+      w[1] = w[0] == UNDEF ? -1.0 : w[0] * 2.0
+      out[i] = w[1]
+    }
+    assert_equal([2.0, 4.0, 6.0, -1.0, -1.0, -1.0], out.to_a)
+    refute(out.has_mask? && out.is_masked.max == 1,
+           "the question is answered, so nothing is carried out")
+  end
+
+  def test_a_cell_of_a_local_array_can_be_asked_the_other_way_round
+    a = CArray.double(4).seq!(1.0)
+    a[1] = UNDEF
+    out = CArray.double(4)
+    CArray.jit_for(4) { |i|
+      w = CArray.double(1)
+      w[0] = a[i]
+      out[i] = w[0] != UNDEF ? 1.0 : 0.0
+    }
+    assert_equal([1.0, 0.0, 1.0, 1.0], out.to_a)
+  end
+
+  # A cell written on one arm of a branch and not the other holds, after the
+  # branch, what the arm that ran put there -- the mask byte with it, since
+  # the two are written together.
+  def test_one_arm_of_a_branch_marks_the_cell_and_the_other_does_not
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(1)
+      if a[i] % 2.0 == 0.0
+        w[0] = UNDEF
+      else
+        w[0] = a[i] * 10.0
+      end
+      out[i] = w[0]
+    }
+    assert_equal([false, true, false, true, false, true], out.is_masked.to_a)
+    assert_equal([10.0, 30.0, 50.0], [0, 2, 4].map { |k| out[k] })
+  end
+
+  # The zeroed spellings clear the shadow as well as the cells, so a cell of
+  # the array starts every pass present rather than holding what the pass
+  # before left there.
+  def test_the_zeroed_spelling_clears_the_shadow_at_every_cell
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(2)
+      if a[i] == 1.0
+        w[0] = UNDEF
+      end
+      out[i] = w[0]
+    }
+    assert_equal([true, false, false, false, false, false], out.is_masked.to_a)
+    assert_equal([0.0] * 5, (1...6).map { |k| out[k] })
+  end
+
+  def test_the_zeroed_spelling_clears_the_shadow_in_the_c
+    kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
+      proc { |i|
+        w = CArray.double(3)
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/uint8_t w__mask\[3\];/, kernel.c_source)
+    assert_match(/memset\(w__mask, 0, sizeof w__mask\);/, kernel.c_source)
+  end
+
+  def test_the_empty_spelling_leaves_the_shadow_unspecified
+    kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
+      proc { |i|
+        w = CArray.empty(:float64, [3])
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/uint8_t w__mask\[3\];/, kernel.c_source)
+    refute_match(/memset\(w__mask/, kernel.c_source)
+  end
+
+  # A kernel that carries no masks declares no shadow: what it emits is what
+  # it emitted before there was one to declare.
+  def test_an_unmasked_kernel_declares_no_shadow
+    kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" })
+      proc { |i|
+        w = CArray.double(3)
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    RUBY
+    refute_match(/__mask/, kernel.c_source)
+  end
+
+  # A position only the running kernel knows is checked where it is reached,
+  # and the shadow beside the cell is at that same position.  The mask is
+  # asked first -- before it is known whether the cell being written is
+  # missing -- so that read reports nothing, and the read of the value asks
+  # the same question a moment later with that known.  One report per cell,
+  # which is the rule a captured array's mask read already keeps.
+  def test_a_computed_subscript_reports_once_under_masks
+    kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :idx => "int64", :out => "float64" }, masked: true)
+      proc { |i|
+        w = CArray.double(3)
+        w[idx[i]] = a[i]
+        out[i] = w[idx[i]]
+      }
+    RUBY
+    assert_match(/w__mask\[carray_jit_index\(.*, 3, \(int32_t \*\) 0\)\]/,
+                 kernel.c_source)
+    assert_match(/w\[carray_jit_index\(.*, 3, \(masked__\d+ \? \(int32_t \*\) 0 : error\)\)\]/,
+                 kernel.c_source)
+    # The write worked its position out and tested it, so both the cell and
+    # the byte beside it are reached through that one temporary.
+    assert_match(/w\[position__\d+\] = /, kernel.c_source)
+    assert_match(/w__mask\[position__\d+\] = /, kernel.c_source)
+  end
+
+  def test_a_computed_subscript_out_of_range_under_masks_raises
+    a = CArray.double(4).seq!(1.0)
+    a[1] = UNDEF
+    where = CArray.int64(4).seq!
+    out = CArray.double(4)
+    assert_raises(IndexError) do
+      CArray.jit_for(4) { |i|
+        w = CArray.double(3)
+        w[where[i]] = a[i]
+        out[i] = w[0]
+      }
+    end
+  end
+
+  # ---------- the intrinsics and a C function, under masks ----------
+
+  # What `sum` or `sort` should do with a missing cell is not decided -- skip
+  # it, gather it at the end, count it in the middle of a median -- so the
+  # four are refused over an array that carries one rather than given a
+  # meaning here.
+  def test_an_intrinsic_over_a_local_array_is_refused_under_masks
     a = CArray.double(6).seq!(1.0)
     a[2] = UNDEF
     out = CArray.double(6)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
+      CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a; out = sum(w) }
     end
-    assert_match(/`w` is a local array/, error.message)
-    assert_match(/carries a mask/, error.message)
-    assert_match(/strip_mask/, error.message)
+    assert_match(/`sum`/, error.message)
+    assert_match(/carries masks/, error.message)
+    assert_match(/not decided|no meaning/, error.message)
   end
 
-  def test_a_block_that_asks_about_undef_and_a_local_array_do_not_meet_in_a_map
+  def test_an_intrinsic_over_a_local_array_is_taken_without_masks
     a = CArray.double(6).seq!(1.0)
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_map { w = CArray.double(2); w[0] = (a == UNDEF ? 0.0 : a); w[0] }
-    end
-    assert_match(/`w` is a local array/, error.message)
-    assert_match(/asks about\s+UNDEF/, error.message)
-    refute_match(/strip_mask/, error.message)
+    out = CArray.double(6)
+    CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a * 2.0; out = sum(w) }
+    assert_equal((0...6).map { |k| a[k] * 3.0 }, out.to_a)
   end
 
-  def test_a_masked_operand_and_a_local_array_do_not_meet_in_a_stencil
-    image = CArray.double(6, 6).seq!
-    image[2, 2] = UNDEF
+  def test_a_local_array_handed_to_a_c_function_is_refused_under_masks
+    total3 = CArray.jit_function("double total3(const double *v)") { |v|
+      v[0] + v[1] + v[2]
+    }
+    a = CArray.double(6).seq!(1.0)
+    a[2] = UNDEF
+    out = CArray.double(6)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_stencil(image, border: :clamp) { |a|
-        w = CArray.double(2)
-        w[0] = a[0, 0]
-        w[0]
+      CArray.jit_for(6) { |i|
+        w = CArray.double(3)
+        w[0] = a[i]; w[1] = 1.0; w[2] = 2.0
+        out[i] = total3.call(w)
       }
     end
-    assert_match(/`w` is a local array/, error.message)
-    assert_match(/carries a mask/, error.message)
+    assert_match(/`w`/, error.message)
+    assert_match(/carries masks/, error.message)
+    assert_match(/no way to hand|nothing in C/, error.message)
+  end
+
+  def test_a_local_array_handed_to_a_c_function_is_taken_without_masks
+    total3 = CArray.jit_function("double total3(const double *v)") { |v|
+      v[0] + v[1] + v[2]
+    }
+    a = CArray.double(6).seq!(1.0)
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i|
+      w = CArray.double(3)
+      w[0] = a[i]; w[1] = 1.0; w[2] = 2.0
+      out[i] = total3.call(w)
+    }
+    assert_equal((0...6).map { |k| a[k] + 3.0 }, out.to_a)
+  end
+
+  # ---------- the room the shadow takes ----------
+
+  # The shadow is a byte a cell, and it is on the same stack, so it is
+  # counted against the same limit: an array that fits by its cells alone
+  # does not fit once it carries masks.
+  def test_the_shadow_is_counted_against_the_limit
+    cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
+    unmasked = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" })
+      proc { |i|
+        w = CArray.double(#{cells})
+        w[0] = a[i]
+        out[i] = w[0]
+      }
+    RUBY
+    assert_match(/double w\[#{cells}\];/, unmasked.c_source)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
+        proc { |i|
+          w = CArray.double(#{cells})
+          w[0] = a[i]
+          out[i] = w[0]
+        }
+      RUBY
+    end
+    assert_match(/#{CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT}/, error.message)
+    assert_match(/mask/, error.message)
+  end
+
+  def test_the_shadow_is_counted_against_the_limit_for_the_kernel
+    # Small enough that each array fits on its own either way -- what is
+    # being measured is the total -- and enough of them that the shadows are
+    # what puts it over.
+    each = 400
+    count = CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT / (8 * each)
+    body = (0...count).map { |n|
+      "  w#{n} = CArray.double(#{each})\n  w#{n}[0] = a[i]\n"
+    }.join
+    arrays = { :a => "float64", :out => "float64" }
+    taken = compile_kernel(<<~RUBY, arrays: arrays)
+      proc { |i|
+      #{body}
+        out[i] = w0[0]
+      }
+    RUBY
+    assert_match(/double w0\[#{each}\];/, taken.c_source)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      compile_kernel(<<~RUBY, arrays: arrays, masked: true)
+        proc { |i|
+        #{body}
+          out[i] = w0[0]
+        }
+      RUBY
+    end
+    assert_match(/#{CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT}/,
+                 error.message)
   end
 
   # `border: :mask` is not a masked kernel: the frame is marked before the

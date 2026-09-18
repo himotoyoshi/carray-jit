@@ -85,10 +85,13 @@ An operator assignment is the assignment it stands for: `total += a[i]`,
 sums. Default is `CArray::JIT.reassociate` (`true`). Pass `false` for the
 serial order -- a compensated summation, or checking against the loop.
 
-A `CArray` the block makes is a C array on the stack -- `jit_for` only, one
-axis, the length written out, cleared at the line each pass unless it is
-`CArray.empty(:type, [n])`. Note `CArray.float` is float32 and
-`CArray.complex` is cmplx64.
+A `CArray` the block makes is a C array on the stack -- in any block but a
+contraction's, of any number of axes, the shape written out, cleared at the
+line each pass unless it is `CArray.empty(:type, [n])`. Note `CArray.float`
+is float32 and `CArray.complex` is cmplx64. Where the kernel carries masks
+each cell gets a mask byte beside it, so `w[k] = UNDEF` and `w[k] == UNDEF`
+are written as a captured array's are -- but `sum`, `min`, `max`, `sort` and
+a C function take no such array.
 
 ```ruby
 CArray.jit_for(rows) { |i|

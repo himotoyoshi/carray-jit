@@ -417,7 +417,7 @@ class CArray
                       steps: nil, contract: false, result: nil, function: false,
                       pointers: {}, map: false, cell_names: [],
                       recursion: nil, windows: [], returns: true,
-                      free_indices: nil, randoms: {})
+                      free_indices: nil, randoms: {}, masked: false)
         @source = source
         @node = node
         @array_names = array_names
@@ -470,6 +470,14 @@ class CArray
           reaches[name] = Array.new(rank.to_i) { [0, 0] }
         }
         @uses_undef = false
+        # Whether the kernel this body belongs to carries masks, which the
+        # caller settled from the operands before anything was read here.  A
+        # body reads the same either way; what it decides is what a local
+        # array is -- cells alone, or cells with a shadow byte beside each of
+        # them -- and so how much stack one takes and what may be done with
+        # it.  Always false for a function body, which has no cell to take a
+        # mask from and nowhere to put one.
+        @masked = masked
         @calls_for_effect = false
         @outer_names = []
         @inner_names = []
@@ -1669,6 +1677,20 @@ class CArray
       # the return address is in it.
       def build_local_array_address (name, argument, parameter, c_function)
         storage, shape = local_array_in_sight(name)
+        # The callee is handed a pointer to the cells, and the shadow beside
+        # them travels in no C declaration there is a spelling for here: a
+        # signature says what it points at, and "these cells, and a byte each
+        # saying whether they are there" is not one of the things it can say.
+        if @masked
+          raise Unsupported.new(
+            "`#{name}` is a local array of this kernel, and the kernel " \
+            "carries masks -- so `#{name}` carries one beside each of its " \
+            "cells, and there is no way to hand that to `#{c_function}`: a " \
+            "signature says what a pointer points at, and a mask travels in " \
+            "no C declaration. Copy the cells the function is to see into a " \
+            "captured array, or answer the mask in the kernel",
+            argument.location)
+        end
         unless parameter&.pointer
           raise Unsupported.new(
             "`#{c_function}` takes #{parameter ? "`#{parameter.text}`" : 'a number'} " \
@@ -1781,6 +1803,20 @@ class CArray
         argument = arguments.first
         name = local_array_name(argument)
         refuse_an_intrinsic_argument(node, argument) unless name
+        # What the four should do with a missing cell is not decided, and
+        # there is more than one defensible answer: skip it, gather it at the
+        # end the way `sort` gathers NaN, count it where a median is counted.
+        # So the array is refused rather than given a meaning here.
+        if @masked
+          raise Unsupported.new(
+            "`#{node.name}(#{name})` is over a local array of this kernel, " \
+            "and the kernel carries masks -- so `#{name}` carries one beside " \
+            "each of its cells, and what `#{node.name}` should do with a " \
+            "missing one is not decided: whether to pass over it, to gather " \
+            "it at the end as `sort` gathers NaN, or to count it where a " \
+            "median counts. Write the loop yourself, deciding it there",
+            node.location)
+        end
         storage, shape = local_array_in_sight(name)
         unless shape.size == 1
           raise Unsupported.new(
@@ -2060,18 +2096,30 @@ class CArray
         LocalArrayDeclaration.new(name, storage, shape, zeroed, location, scope)
       end
 
+      # A shadow byte a cell where the kernel carries masks: it is on the
+      # same stack as the cells, so it is counted with them.
       def local_array_bytes (storage, shape)
-        LOCAL_ARRAY_STORAGE_BYTES.fetch(storage) * shape.inject(1, :*)
+        cells = shape.inject(1, :*)
+        (LOCAL_ARRAY_STORAGE_BYTES.fetch(storage) + (@masked ? 1 : 0)) * cells
+      end
+
+      # How the refusal accounts for a size the block did not write out.
+      def local_array_bytes_phrase (storage, shape)
+        cells = shape.inject(1, :*)
+        values = LOCAL_ARRAY_STORAGE_BYTES.fetch(storage) * cells
+        return "#{values} bytes of #{storage}" unless @masked
+        "#{values + cells} bytes -- #{values} of #{storage} and #{cells} of " \
+        "the mask beside it, a byte a cell, since this kernel carries masks"
       end
 
       def verify_local_array_fits (name, storage, shape, location)
         bytes = local_array_bytes(storage, shape)
         return if bytes <= LOCAL_ARRAY_BYTE_LIMIT
         raise Unsupported.new(
-          "`#{name}` asks for #{bytes} bytes of #{storage} on the stack, and " \
-          "one local array is held to #{LOCAL_ARRAY_BYTE_LIMIT}; pass a " \
-          "captured array of workspace, which is on the heap and has no such " \
-          "limit",
+          "`#{name}` asks for #{local_array_bytes_phrase(storage, shape)} " \
+          "on the stack, and one local array is held to " \
+          "#{LOCAL_ARRAY_BYTE_LIMIT}; pass a captured array of workspace, " \
+          "which is on the heap and has no such limit",
           location)
       end
 
@@ -2082,7 +2130,9 @@ class CArray
         return if total <= LOCAL_ARRAY_TOTAL_BYTE_LIMIT
         raise Unsupported.new(
           "the local arrays of this kernel come to #{total} bytes of stack " \
-          "with `#{name}`, and one kernel is held to " \
+          "with `#{name}`" +
+          (@masked ? ", the mask beside each of their cells counted in" : "") +
+          ", and one kernel is held to " \
           "#{LOCAL_ARRAY_TOTAL_BYTE_LIMIT}; pass a captured array of " \
           "workspace for the larger ones",
           location)
@@ -2426,13 +2476,23 @@ class CArray
         if (name = local_array_name(node.receiver))
           storage, shape = local_array_in_sight(name)
           if value_node && undef_constant?(value_node)
-            raise Unsupported.new(
-              "`#{name}` is a local array, and a local array carries no mask " \
-              "-- it is cells and nothing beside them, so there is nowhere " \
-              "for UNDEF to be recorded. Keep a value that stands for " \
-              "missing, or write the result into a captured array and mark " \
-              "the cell there",
-              location)
+            # A kernel that writes UNDEF anywhere carries masks by that
+            # alone, so this is a mark on the shadow beside the cell.  In a
+            # function body there is no shadow: a function is handed numbers
+            # and pointers, and a mask reaches neither.
+            unless @masked
+              raise Unsupported.new(
+                "`#{name}` is a local array in a compiled function's body, " \
+                "and nothing there carries masks -- a function is handed " \
+                "numbers and pointers, and a mask travels in neither. Keep " \
+                "a value that stands for missing, or mark the cell in the " \
+                "kernel that called this",
+                location)
+            end
+            @uses_undef = true
+            return LocalArrayMaskWrite.new(
+              name, storage, shape,
+              local_array_subscripts(name, shape, indices, location), location)
           end
           return LocalArrayWrite.new(
             name, storage, shape,
@@ -2796,11 +2856,26 @@ class CArray
             "only a cell can be compared with UNDEF, as in `a[i] == UNDEF`",
             location)
         end
+        arguments = receiver.arguments ? receiver.arguments.arguments : []
+        if (made = local_array_name(receiver.receiver))
+          storage, shape = local_array_in_sight(made)
+          unless @masked
+            raise Unsupported.new(
+              "`#{made}` is a local array in a compiled function's body, " \
+              "and nothing there carries masks -- a function is handed " \
+              "numbers and pointers, and a mask travels in neither, so " \
+              "there is no shadow beside these cells to ask about",
+              location)
+          end
+          @uses_undef = true
+          return LocalArrayMaskTest.new(
+            made, storage, shape,
+            local_array_subscripts(made, shape, arguments, location),
+            negated, location)
+        end
         array = array_name(receiver.receiver, location)
         array_for_test = array
-        subscripts = read_subscripts(array_for_test,
-                                     receiver.arguments ? receiver.arguments.arguments : [],
-                                     location)
+        subscripts = read_subscripts(array_for_test, arguments, location)
         # Recorded like any other read, because the cell still has to exist
         # and still has to have been settled before it is asked about.  What
         # it does not do is feed the value-mask propagation, which is decided

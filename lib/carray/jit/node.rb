@@ -735,6 +735,50 @@ class CArray
       end
     end
 
+    # `w[k] = UNDEF`: marks the cell missing and leaves its bytes alone.
+    #
+    # Beside LocalArrayWrite for the reason MaskWrite stands beside
+    # ElementWrite: UNDEF is a mark rather than a value, so there is no
+    # expression here to compute or to store.
+    class LocalArrayMaskWrite < Node
+      attr_accessor :binding
+      attr_reader :name, :storage, :shape, :subscripts
+      def initialize (name, storage, shape, subscripts, location = nil)
+        super(location)
+        @name = name
+        @storage = storage
+        @shape = shape
+        @subscripts = subscripts
+      end
+      def local
+        [@name, @binding]
+      end
+      def children
+        @subscripts.filter_map { |_index, offset| offset if offset.is_a?(Node) }
+      end
+    end
+
+    # `w[k] == UNDEF`, and `!=` with `negated`: reads the shadow byte beside
+    # the cell rather than the cell.
+    class LocalArrayMaskTest < Node
+      attr_accessor :binding
+      attr_reader :name, :storage, :shape, :subscripts, :negated
+      def initialize (name, storage, shape, subscripts, negated, location = nil)
+        super(location)
+        @name = name
+        @storage = storage
+        @shape = shape
+        @subscripts = subscripts
+        @negated = negated
+      end
+      def local
+        [@name, @binding]
+      end
+      def children
+        @subscripts.filter_map { |_index, offset| offset if offset.is_a?(Node) }
+      end
+    end
+
     # `sum(w)`, `min(w)`, `max(w)`: a value worked out over a local array.
     #
     # `name` is the array's, not the function's, so that a read of the array's

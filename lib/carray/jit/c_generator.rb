@@ -400,7 +400,6 @@ class CArray
         @origin = origin
         @block_source = block_source
         refuse_generated_indices
-        refuse_a_masked_local_array
       end
 
       attr_reader :arrays, :reals, :integers, :complexes, :unsigned_integers,
@@ -423,33 +422,6 @@ class CArray
       # its own this has to ask the pasted ones as well.
       def clears_a_local_array?
         @analyzer.clears_a_local_array? || @pasted_clears_a_local_array
-      end
-
-      # A local array has no mask beside it -- it is cells and nothing else --
-      # so a kernel that carries masks has nowhere to put one.  Refused rather
-      # than half-done: a body that read a cell it had written under a mask
-      # would get the value and not the absence.
-      #
-      # The two reasons are told apart because what to do about them differs.
-      def refuse_a_masked_local_array
-        return unless @masked
-        made = @analyzer.local_array_declarations
-        return if made.empty?
-        name = made.first[1]
-        if @analyzer.uses_undef?
-          raise Unsupported,
-                "`#{name}` is a local array, and this block asks about " \
-                "UNDEF -- so the kernel carries masks, and a local array has " \
-                "no mask beside its cells to carry one into. Keep a value " \
-                "that stands for missing, or split the question out of the " \
-                "kernel"
-        end
-        raise Unsupported,
-              "`#{name}` is a local array, and an operand of this kernel " \
-              "carries a mask -- so the kernel carries masks, and a local " \
-              "array has no mask beside its cells to carry one into. " \
-              "`strip_mask(fill)` says what the missing cells should be, and " \
-              "a kernel over that carries none"
       end
 
       def generate
@@ -1180,8 +1152,16 @@ class CArray
           # #local_array_reference), and a flat array is also what a C
           # function's pointer parameter is handed.  `double m[3][4]` would
           # be the same bytes and a second spelling to keep in step.
-          "#{indent}#{storage_c_type(storage)} " \
-          "#{local_c_name(name, binding)}[#{shape.inject(1, :*)}];\n"
+          variable = local_c_name(name, binding)
+          cells = shape.inject(1, :*)
+          # Where the kernel carries masks, a shadow of one byte a cell
+          # beside the cells -- the same arrangement a scalar local has, one
+          # byte beside its value, spread over the cells.  A cell of a local
+          # array then reads like a cell of a captured one: the value, and
+          # whether it is there.
+          "#{indent}#{storage_c_type(storage)} #{variable}[#{cells}];\n" +
+            (@masked ?
+               "#{indent}uint8_t #{local_mask_name(variable)}[#{cells}];\n" : "")
         }.join
       end
 
@@ -1302,6 +1282,8 @@ class CArray
         when LocalArrayDeclaration then emit_local_array_clearing(statement, indent)
         when LocalArrayWrite then guarded(statement, indent) { |inner|
                                   emit_local_array_write(statement, inner) }
+        when LocalArrayMaskWrite then guarded(statement, indent) { |inner|
+                                  emit_local_array_mask_write(statement, inner) }
         when ElementWrite  then guarded(statement, indent) { |inner|
                                   emit_element_write(statement, inner) }
         when MaskWrite     then guarded(statement, indent) { |inner|
@@ -1577,7 +1559,8 @@ class CArray
       # length the block wrote, and there is no variable to name.
       def write_extent (write, axis)
         case write
-        when LocalArrayWrite then write.shape.fetch(axis).to_s
+        when LocalArrayWrite, LocalArrayMaskWrite
+          write.shape.fetch(axis).to_s
         else extent_name(write.array, axis)
         end
       end
@@ -1923,36 +1906,68 @@ class CArray
       #
       # `sizeof` rather than a byte count written out: the length is already
       # in the declaration, and one place for it is one place to be wrong.
+      # The shadow is cleared with the cells, and a cleared shadow byte is
+      # "not missing": a fresh array in Ruby holds zeros, which are values
+      # that are there.  The `empty` spelling says nothing about either, so
+      # its shadow is whatever the stack held -- the same bargain its cells
+      # are under, and the same promise the block made by writing `empty`.
       def emit_local_array_clearing (declaration, indent)
         return "" unless declaration.zeroed
         name = local_c_name(declaration.name, declaration.binding)
-        "#{indent}memset(#{name}, 0, sizeof #{name});\n"
+        "#{indent}memset(#{name}, 0, sizeof #{name});\n" +
+          (@masked ?
+             "#{indent}memset(#{local_mask_name(name)}, 0, " \
+             "sizeof #{local_mask_name(name)});\n" : "")
+      end
+
+      # `w[k] = UNDEF`: the shadow byte alone.  The cell's bytes are out of
+      # contract once it is marked, so there is nothing to store into them.
+      def emit_local_array_mask_write (write, indent)
+        "#{indent}#{local_array_reference(write, :mask)} = 1;\n"
       end
 
       def emit_local_array_write (write, indent)
         target = local_array_reference(write)
         expression = write.expression
+        # A cell of a local array carries a mask beside it the way a scalar
+        # local carries one beside its value, and by the same rule: what the
+        # expression written into it carried.  The masks of the branches this
+        # statement stands in are not in it -- a statement inside an `if`
+        # runs when the `if` says so, and what it wrote is what it wrote.
+        mask = if @masked
+                 "#{indent}#{local_array_reference(write, :mask)} = " \
+                 "#{emit_mask(write.expression)};\n"
+               else
+                 ""
+               end
         if expression.is_a?(Conditional)
           temporary = next_temporary
           type = expression.type
           "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{temporary};\n" +
             emit_conditional_statement(expression, temporary, type, indent) +
             "#{indent}#{target} = " \
-            "#{cast_to_storage(temporary, type, write.storage)};\n"
+            "#{cast_to_storage(temporary, type, write.storage)};\n" + mask
         else
           value = cast_to_storage(emit(expression, expression.type),
                                   expression.type, write.storage)
-          "#{indent}#{target} = #{value};\n"
+          "#{indent}#{target} = #{value};\n" + mask
         end
       end
 
       # `w[(k) + 1]`, and for a rank above one the row-major offset with the
       # strides folded in -- the shape is written in the block, so they are
       # constants rather than numbers the kernel is handed.
-      def local_array_reference (node)
+      # `:mask` asks for the shadow byte beside the cell rather than the
+      # cell: the same position, in the array beside it.  It reports no index
+      # of its own, for the reason a captured array's mask read does not --
+      # the value's read asks the same question a moment later, and one
+      # report is the one the cell deserves.
+      def local_array_reference (node, kind = :data)
         name = local_c_name(node.name, node.binding)
+        name = local_mask_name(name) if kind == :mask
         terms = node.subscripts.each_with_index.map { |(index, offset), axis|
-          position = local_array_position(node, index, offset, axis)
+          position = local_array_position(node, index, offset, axis,
+                                          reporting: kind != :mask)
           stride = node.shape[(axis + 1)..].inject(1, :*)
           stride == 1 ? position : "(#{position}) * #{stride}"
         }
@@ -1962,7 +1977,7 @@ class CArray
       # An axis the analyzer settled carries an index and a literal offset,
       # and the C says so with nothing around it.  One it could not settle
       # carries the expression, and the check is here.
-      def local_array_position (node, index, offset, axis)
+      def local_array_position (node, index, offset, axis, reporting: true)
         if index.nil?
           return offset.to_s unless offset.is_a?(Node)
           return emit(offset, :int64) if Analyzer.fixed_subscript?(offset)
@@ -1971,7 +1986,8 @@ class CArray
           return held if held
           @uses_index_check = true
           return "carray_jit_index(#{emit(offset, :int64)}, " \
-                 "#{node.shape.fetch(axis)}, #{error_argument})"
+                 "#{node.shape.fetch(axis)}, " \
+                 "#{reporting ? error_argument : '(int32_t *) 0'})"
         end
         return index.to_s if offset.zero?
         offset.negative? ? "#{index} - #{-offset}" : "#{index} + #{offset}"
@@ -2006,12 +2022,14 @@ class CArray
           cell_reference(node.array, node.subscripts, :mask)
         when LocalRead
           local_mask_name(local_c_name(node.name, node.binding, node.lane))
+        when LocalArrayRead
+          local_array_reference(node, :mask)
         when Conditional
           branches = "#{emit(node.condition, :boolean)} ? " \
                      "#{emit_mask(node.consequent)} : #{emit_mask(node.alternative)}"
           combine_masks([emit_mask(node.condition), "(#{branches})"])
         when IntegerLiteral, FloatLiteral, IndexVariable, CaptureRead, MaskTest,
-             BoundsValue, ZeroLike
+             LocalArrayMaskTest, BoundsValue, ZeroLike
           "0"
         else
           combine_masks(node.children.map { |child| emit_mask(child) })
@@ -2702,6 +2720,7 @@ class CArray
             [cell, LEAF_PRECEDENCE]
           end
         when MaskTest         then emit_mask_test(node)
+        when LocalArrayMaskTest then emit_local_array_mask_test(node)
         when NumericPredicate then emit_numeric_predicate(node)
         when Clamp            then emit_clamp(node)
         when UnaryMinus
@@ -2831,6 +2850,11 @@ class CArray
 
       def emit_mask_test (node)
         cell = cell_reference(node.array, node.subscripts, :mask)
+        node.negated ? ["! #{cell}", UNARY_PRECEDENCE] : [cell, LEAF_PRECEDENCE]
+      end
+
+      def emit_local_array_mask_test (node)
+        cell = local_array_reference(node, :mask)
         node.negated ? ["! #{cell}", UNARY_PRECEDENCE] : [cell, LEAF_PRECEDENCE]
       end
 

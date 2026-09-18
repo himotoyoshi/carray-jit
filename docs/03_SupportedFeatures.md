@@ -135,26 +135,55 @@ CArray.jit_for(1) { |i|
 #=> IndexError: index out of range
 ```
 
-**A local array is a workspace and not a value.** It has no methods, is not read bare, and does not yet go to a C function:
+**A local array is a workspace and not a value.** It has no methods and is not read bare:
 
 ```ruby
 w = CArray.double(4)
 x = w                #=> `w` is a local array; index it, as in `w[0]`
 x = w.sum            #=> `sum` is a method CArray answers outside a kernel
-f.call(w)            #=> handing one to a C function is a later release
 ```
 
 A constructor stands on the right of an assignment and nowhere else: there is no name for the C array to be declared under otherwise.
 
 `CArray.jit_for`, `jit_each`, `jit_map` and `jit_stencil` take them. The last three are where they are wanted most: a block with no index has no way to pick a row of captured workspace, so before this there was no place to put a window while it was being sorted.
 
-A `jit_function` body takes one in a later release. A contraction takes none -- its body is one expression, so there is no run of statements for a workspace to be used by. And a kernel that carries masks takes none either: a local array is cells and nothing beside them, so there is nowhere for a mask to go. A kernel carries masks when an operand has one, or when the block asks about `UNDEF`; `border: :mask` does **not** make one, the frame being marked before the loop runs and never reached by it, so a stencil with that border takes a local array like any other.
+A `jit_function` body takes one too, and hands one on to another function. A contraction takes none -- its body is one expression, so there is no run of statements for a workspace to be used by.
 
 In the whole-array spellings a name the block assigns may be an array where the block was written -- that is what `out = a + b` rests on. A name the block makes an array *under* is refused there: the one line would mean a declaration to this compiler and a write to that array's cell to a reader, and the two are different things. Rename one of them.
 
 **They are on the stack, so they are held to a size.** One array is held to 4 KiB and one kernel's arrays together to 16 KiB. Both numbers are provisional -- what a Ruby thread's stack actually is has not been measured -- and what the total does not count is a pasted `jit_function`'s own arrays, recursion, and whatever a future thread pool gives its threads. For anything larger, pass a captured array of workspace: it is on the heap and has no such limit.
 
-What a local array buys over that captured array is the memory. A 3x3 median filter over a 2000x2000 image needs nine doubles at a time; a row of workspace per cell is `work[2000, 2000, 9]`, which is 288 MB to hold 72 bytes in use. And `jit_stencil` cannot use one at all, its block having no index to pick a row by -- which is the release this is heading for.
+What a local array buys over that captured array is the memory. A 3x3 median filter over a 2000x2000 image needs nine doubles at a time; a row of workspace per cell is `work[2000, 2000, 9]`, which is 288 MB to hold 72 bytes in use. And `jit_stencil` cannot use one at all, its block having no index to pick a row by.
+
+#### Masks in a local array
+
+A kernel that carries masks gives every local array a **shadow** of one byte a cell, declared beside the cells, and a cell of the array carries a mask the way a plain local carries one beside its value: what the expression written into it carried. So a window copied into a workspace keeps its holes, and reading a cell back is reading what it was made of.
+
+```ruby
+field[2] = UNDEF
+CArray.jit_for(1...7) { |i|
+  w = CArray.double(3)
+  w[0] = field[i-1]; w[1] = field[i]; w[2] = field[i+1]
+  out[i] = w[0] + w[1] + w[2]
+}
+#=> out[1], out[2] and out[3] are UNDEF; they are the cells that read field[2]
+```
+
+A cell can be marked and asked about, as a captured array's can:
+
+```ruby
+w[k] = UNDEF
+w[k] == UNDEF
+w[k] != UNDEF
+```
+
+The zeroed spellings clear the shadow with the cells, so a cell starts every pass present rather than holding what the pass before left there. `CArray.empty` says nothing about either: its cells and its shadow are both whatever the stack held, which is the bargain that spelling makes.
+
+Two things a local array does not do under masks. **The intrinsics refuse it**: what `sum`, `min`, `max` or `sort` should do with a missing cell is not decided -- pass over it, gather it at the end as `sort` gathers NaN, or count it where a median counts -- so the refusal says that rather than choosing. And **a C function cannot take one**: a signature says what a pointer points at, and a mask travels in no C declaration there is a way to write. Either way the answer is to decide it in the kernel, or to copy the cells the callee should see into a captured array.
+
+The shadow counts against the size a local array is held to, being on the same stack: an array of 512 doubles is 4 KiB of cells and fits on its own, and 4.5 KiB once it carries masks, which does not.
+
+`border: :mask` does **not** make a masked kernel -- the frame is marked before the loop runs and never reached by it -- so a stencil with that border pays for no shadow. Nor does a compiled function's body ever carry one: a function is handed numbers and pointers, and a mask travels in neither, so `w[k] = UNDEF` in a body is refused.
 
 ### Intrinsics
 
@@ -197,7 +226,7 @@ A network has no branch in it at all. At nine cells, the helper compiles to 50 `
 
 All four are emitted as `static inline` helpers in the preamble, one per element type and, for a network, per length; the body carries the call. So `max(w) - min(w)` is one line with two calls in it, `c_source` stays readable, and the compiler has the length as a literal to propagate.
 
-They are written wherever a local array is: `CArray.jit_for`, `jit_each`, `jit_map` and `jit_stencil`. A `jit_function` body takes them with local arrays, in a later release. `qsort` is not used anywhere -- its comparison goes through a function pointer, which ends inlining and makes the NaN rule a property of whoever wrote the callback.
+They are written wherever a local array is: `CArray.jit_for`, `jit_each`, `jit_map`, `jit_stencil`, and a `jit_function` body. The one place they are refused is over an array of a kernel that carries masks, where what to do with a missing cell is not decided (see [Masks in a local array](#masks-in-a-local-array)). `qsort` is not used anywhere -- its comparison goes through a function pointer, which ends inlining and makes the NaN rule a property of whoever wrote the callback.
 
 ### Postfix math
 
@@ -433,7 +462,7 @@ CArray.jit_for(7) { |i| result[i] = source[i-1] + source[i+1] }
 
 Masking follows the offsets, and each output takes its mask from its own inputs rather than from everything the body read.
 
-The mask of a value is built the same shape as the value. A flat union of everything an expression touches would be wrong for a conditional: `a[i] == UNDEF ? 0.0 : a[i]` does not read `a[i]` when the condition holds, and Ruby's answer there is not missing. So the conditional's mask is conditional too, and a block-local carries a mask alongside its value.
+The mask of a value is built the same shape as the value. A flat union of everything an expression touches would be wrong for a conditional: `a[i] == UNDEF ? 0.0 : a[i]` does not read `a[i]` when the condition holds, and Ruby's answer there is not missing. So the conditional's mask is conditional too, and a block-local carries a mask alongside its value -- as does every cell of a local array, which under masks is declared with a shadow of one byte a cell beside it (see [Masks in a local array](#masks-in-a-local-array)).
 
 The value under a masked cell is **out of contract**: a kernel may compute anything into it, so long as the mask ends up right (`guides/devel/05`). That is what lets the loop stay branchless -- every cell is computed and only the mask is reconciled, instead of a test per cell to protect data that was never protected.
 
@@ -936,7 +965,7 @@ Anything outside it raises `CArray::JIT::Unsupported`, naming the construct and 
 - `real`, `imag`, `conjugate`, `arg` and their other Ruby spellings, on a Complex or on a real number; `Complex(x, y)` and `Complex(x)` to build one
 - `Math::PI`, `Math::E`
 - `if`/`elsif`/`else` and the ternary operator, as expressions and as statements
-- `a[i] == UNDEF` and `a[i] != UNDEF`, either way round; `a[i] = UNDEF`
+- `a[i] == UNDEF` and `a[i] != UNDEF`, either way round; `a[i] = UNDEF`. A cell of a local array is asked and marked the same way, `w[k] == UNDEF` and `w[k] = UNDEF`, where the kernel carries masks -- which gives every local array a shadow of one byte a cell (see [Masks in a local array](#masks-in-a-local-array))
 - `Math.sqrt`, `cbrt`, `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `hypot`, `asinh`, `acosh`, `atanh`
 - the postfix spelling of those -- `x.sqrt`, `(0.0415 * (t[i] - 218.8)).tanh` -- which `CArray::CoreExtensions` provides (see [Postfix math](#postfix-math))
 - `a[i - c]` and `a[i + c]`, with `c` a non-negative integer literal or an integer built from literals and captured integers, one subscript per axis of the array; a constant subscript pins an axis, and a computed one gathers or scatters
@@ -967,6 +996,7 @@ Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symb
 - **A `while` may fail to return, and nothing can interrupt it.** The loop is in the subset now, and the bound that used to be compulsory is not: a compiler-invented cap would be a number nobody could choose, since the loops whose bound is knowable are already `(0...cap).each` with a `break`.  What comes with that is C's bargain, the one a `jit_function` recursing too deep already takes.  It bites harder here than it would in Ruby: a generated loop has no interrupt check in it, so `Ctrl-C` does not reach a running kernel -- whether or not it holds the GVL -- and a runaway pass ends with a signal from another terminal.  The one case that can be read off the page, `while true` with no `break` and no `raise` in it, is refused.
 - **`until` is not in the subset.** `while` with the condition negated is the same loop, and one spelling of it is enough to keep.
 - **A range written over another index is read at its widest.** `(p+1...3)` gives `k` a different start for every `p`, and a subscript is held to its array with one pair of numbers, so what that pair covers is every pass the loop could take. It is the safe direction -- a subscript this calls inside really is -- but a reach nothing actually makes can still be refused, and where it is, the message says which index the range was written over and that it was read at its widest. Narrowing the range, or the array's use, is what says it is safe.
+- **The intrinsics and a C function take no local array of a kernel that carries masks.** A cell of such an array carries a mask beside it, and neither has anywhere to put that: what `sum` or `sort` should do with a missing cell is not decided -- pass over it, gather it at the end, count it where a median counts -- and a C signature says what a pointer points at, which a mask travels in no spelling of. Decide it in the kernel, or copy the cells the callee should see into a captured array. `border: :mask` is not a masked kernel and is unaffected.
 - **An inner loop's stride is a literal.** It is what says which way the loop runs, and the C is written one way or the other before anything is known, so `k.step(0, s)` with `s` a captured integer is refused. `downto`, `upto` and `reverse_each` are refused by name, with `step` named as the spelling to use -- one way of counting down is enough to keep, and it is the one an extent already takes.
 - **A kernel draws from a `CArray::Rng` and from nothing else.** `rand` is Ruby's, and Ruby's generator is reached through the VM: a kernel runs with the GVL released, which is not where it may be reached at all. What a kernel *can* draw from is a generator whose C it can paste, which is what `CArray::Rng` is: `rand = CArray::Rng.new(seed: 4)` and then `rand.random` in the block, once per cell, giving a double in `[0.0, 1.0)`. `rand.randomn` is a standard normal, which costs two draws and keeps no spare -- the classical pairing would have to hold the second in the generator's state, and a spare held between an array and a kernel is a second thing to keep in step. `random(rng: rand)` and `randomn(rng: rand)` are those two spelled as `CArray#random!(rng:)` spells them -- the only keyword arguments the subset has -- and `rand.bits` is the raw word a draw came from, as a `uint64`. All of them read one generator, so mixing them walks one sequence. It is a generator on both sides of the compiler: `a.random!(rng: rand)` fills an array from it and leaves it where a kernel then carries on, because CArray compiles the generator and hands out the same text for the kernel to paste rather than the two agreeing by construction. Two generators in one kernel are two sequences. What is not offered is a draw fixed to a *position*: which draw lands in which cell is the loop's order, and this compiler does not fix that order -- a stencil's border is a second loop over the frame, and a reduction may split its accumulator. Where that matters -- common random numbers, antithetic variates, stratification -- fill an array with `CArray#random!` before the call and read a cell of it, which was drawn in one order and stays in it. A compiled function is a third case: `jit_function` takes everything through its parameters and has nowhere to keep a state, so a body that needs draws takes the state as an `int64_t state[4]` parameter and is passed `rand.state`.
 - **An operand that is not an entity is transferred before the loop.** A kernel walks memory, so an array that is not one -- a view that does not fold to an entity, a `CAObject` computing its cells in Ruby -- has the box the kernel touches transferred into a packed buffer first, and written back afterwards if the kernel wrote it. The box, not the array: an extent covering two cells transfers two. What that costs is a copy; what it changes is when the cells are read. An array whose cells are computed on read is read once per cell per call, so two reads of one cell in a kernel give the same number where the same Ruby loop would give two -- and a one-cell source is one number for the whole loop. Drawing random numbers that way therefore works, and means what filling an array before the call means.

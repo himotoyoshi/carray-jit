@@ -704,8 +704,9 @@ class TestIntrinsics < Minitest::Test
     end
   end
 
-  # An intrinsic over a masked kernel is refused for the array it is over,
-  # which is the same refusal a local array gets on its own.
+  # A local array under masks carries one of its own, a byte a cell -- but
+  # what the four should do with a missing cell is not decided, so they are
+  # refused over an array that carries one.
   def test_an_intrinsic_over_a_masked_kernel_is_refused
     a = CArray.double(6).seq!(1.0)
     a[2] = UNDEF
@@ -713,8 +714,8 @@ class TestIntrinsics < Minitest::Test
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a; out = sum(w) }
     end
-    assert_match(/`w` is a local array/, error.message)
-    assert_match(/carries a mask/, error.message)
+    assert_match(/`sum`/, error.message)
+    assert_match(/carries masks/, error.message)
   end
 
   def test_the_median_filter_loses_its_sort_loop

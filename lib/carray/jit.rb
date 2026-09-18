@@ -1550,7 +1550,8 @@ class CArray
                                 rank: rank, steps: steps, contract: contract,
                                 result: result, map: map, free_indices: free_indices,
                                 cell_names: cell_names, windows: windows,
-                                randoms: random_state_names(randoms))
+                                randoms: random_state_names(randoms),
+                                masked: masked)
         assignment = TypeAssignment.new(analyzer.body, storage_types,
                                         scalar_values, c_functions)
         generator = CGenerator.new(analyzer, storage_types, assignment.scalar_types,

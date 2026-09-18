@@ -331,6 +331,17 @@ class CArray
           walk_local_array_subscripts(node)
           walk(node.expression)
           node.type = self.class.storage_type(node.storage)
+        when LocalArrayMaskWrite
+          # A mark rather than a value: it says the cell is missing and
+          # leaves the bytes under it alone, so there is nothing to type
+          # beyond the cell's own storage.
+          node.binding = array_binding(node)
+          walk_local_array_subscripts(node)
+          node.type = self.class.storage_type(node.storage)
+        when LocalArrayMaskTest
+          node.binding = array_binding(node)
+          walk_local_array_subscripts(node)
+          node.type = :boolean
         when ElementWrite
           walk_subscripts(write_subscripts(node))
           walk(node.expression)
@@ -1000,6 +1011,11 @@ class CArray
           # argument is an array rather than an expression: there is nothing
           # under here to walk.
         when LocalArrayRead
+          node.subscripts.each { |_index, offset|
+            verify(offset) if offset.is_a?(Node)
+          }
+        when LocalArrayMaskWrite, LocalArrayMaskTest
+          # Nothing to check: one writes a mask byte and the other reads one.
           node.subscripts.each { |_index, offset|
             verify(offset) if offset.is_a?(Node)
           }
