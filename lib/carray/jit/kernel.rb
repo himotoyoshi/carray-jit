@@ -410,12 +410,108 @@ class CArray
           ranges[name] = covered_span(bounds[axis])
         end
         flat = bounds.flatten
+        # In source order, outermost first, so an index a range is written
+        # over has its own range settled before it is read.
         @inner_ranges.each do |name, (from, to, step)|
-          ranges[name] = covered_span([evaluate(from, scalar_values, flat),
-                                       evaluate(to, scalar_values, flat),
-                                       step || 1])
+          step ||= 1
+          first = span_of(from, scalar_values, flat, ranges, name)
+          last = span_of(to, scalar_values, flat, ranges, name)
+          # The widest pass the range could describe: counting up, that is the
+          # earliest start against the latest end, and counting down it is the
+          # other way round.
+          start, limit = step.positive? ? [first.first, last.last]
+                                        : [first.last, last.first]
+          ranges[name] = covered_span([start, limit, step])
         end
         ranges
+      end
+
+      # A range written over another index is read at its widest (see
+      # #span_of), so the number in the message above can be one no pass
+      # actually starts or ends at.  Saying which index it was written over is
+      # what tells a reader whether to narrow the range or the array's use --
+      # without it the message names a bound the loop never reaches.
+      def widest_reading (index, spelled)
+        over = range_indices(index)
+        return "" if over.empty?
+        ". The range on `#{spelled}` is written over " \
+        "#{over.map { |name| "`#{name}`" }.join(' and ')}, and a range over " \
+        "another index is read here at its widest -- as far as any value of " \
+        "#{over.size == 1 ? 'it' : 'them'} could take it, which may be " \
+        "further than it goes on any one pass"
+      end
+
+      # The indices an inner loop's range mentions, by the name the block
+      # wrote for each.
+      def range_indices (index)
+        range = @inner_ranges[index]
+        return [] unless range
+        from, to, = range
+        [from, to].flat_map { |node| mentioned_indices(node) }.uniq
+          .map { |name| @index_sources.fetch(name, name) }
+      end
+
+      def mentioned_indices (node)
+        return [] unless node.is_a?(Node)
+        return [node.name] if node.is_a?(IndexVariable)
+        node.children.flat_map { |child| mentioned_indices(child) }
+      end
+
+      # What an index range covers, as [lowest, highest] inclusive.
+      #
+      # A range written over another index -- `(p+1...3)`, the shape a
+      # triangular loop takes -- has no single pair of numbers to be: `k`
+      # starts somewhere else for every `p`.  What the two callers of this
+      # want is where the index can reach, not what it is on a given pass:
+      # `verify_bounds` asks whether a subscript can leave its array, and
+      # `region_box` asks what a stencil touches.  So the answer is an
+      # interval, and a range over another index is read at its widest.
+      #
+      # Widest is the safe direction.  It covers every pass the loop can take
+      # and then some, so a subscript this says is inside really is; what it
+      # costs is that a reach nothing actually makes can still be refused.
+      #
+      # A range that mentions no index gives an interval of one number, which
+      # is what `evaluate` gave before, so those kernels are unchanged.
+      def span_of (node, scalars, flat_bounds, ranges, index)
+        case node
+        when IntegerLiteral then [node.value, node.value]
+        when CaptureRead    then value = Integer(scalars.fetch(node.name))
+                                 [value, value]
+        when BoundsValue    then value = flat_bounds.fetch(node.slot)
+                                 [value, value]
+        when IndexVariable
+          # Held half-open, as the loops are; the last index it visits is one
+          # below the end.
+          low, high = ranges.fetch(node.name) do
+            raise Unsupported,
+                  "the range on `#{index}` is written over `#{node.name}`, " \
+                  "which is not an index around it"
+          end
+          [low, high - 1]
+        when UnaryMinus
+          low, high = span_of(node.operand, scalars, flat_bounds, ranges, index)
+          [-high, -low]
+        when BinaryOperation
+          left = span_of(node.left, scalars, flat_bounds, ranges, index)
+          right = span_of(node.right, scalars, flat_bounds, ranges, index)
+          case node.operator
+          when :+ then [left.first + right.first, left.last + right.last]
+          when :- then [left.first - right.last, left.last - right.first]
+          when :*
+            # Four corners, because either interval may straddle zero.
+            corners = [left.first * right.first, left.first * right.last,
+                       left.last * right.first, left.last * right.last]
+            [corners.min, corners.max]
+          else
+            raise Unsupported,
+                  "an inner loop's range is built from `+`, `-` and `*` only"
+          end
+        else
+          raise Unsupported,
+                "an inner loop's range is an integer expression over " \
+                "literals, captured scalars and the indices around it"
+        end
       end
 
       # The half-open span an axis actually touches.  A step may skip cells,
@@ -504,14 +600,16 @@ class CArray
               raise Unsupported,
                     "`#{name}` is indexed at " \
                     "#{offset_text(name, spelled, minimum)}, so " \
-                    "the range on `#{spelled}` cannot start at #{low}"
+                    "the range on `#{spelled}` cannot start at #{low}" +
+                    widest_reading(index, spelled)
             end
             if high - 1 + maximum > extent - 1
               raise Unsupported,
                     "`#{name}` is indexed at " \
                     "#{offset_text(name, spelled, maximum)}, so " \
                     "the range on `#{spelled}` cannot end at #{high} " \
-                    "for an extent of #{extent}"
+                    "for an extent of #{extent}" +
+                    widest_reading(index, spelled)
             end
           end
         end

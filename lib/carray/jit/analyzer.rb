@@ -2195,16 +2195,19 @@ class CArray
       def local_array_subscript (name, shape, axis, argument, location)
         extent = shape[axis]
         if (index = index_name(argument)) && index_in_scope?(index)
-          return checked_index_subscript(name, shape, axis, index, 0,
-                                         argument, location)
-        end
-        if argument.is_a?(Prism::CallNode) && [:+, :-].include?(argument.name) &&
-           (receiver = index_name(argument.receiver)) && index_in_scope?(receiver)
+          settled = checked_index_subscript(name, shape, axis, index, 0,
+                                            argument, location)
+          return settled if settled
+        elsif argument.is_a?(Prism::CallNode) &&
+              [:+, :-].include?(argument.name) &&
+              (receiver = index_name(argument.receiver)) &&
+              index_in_scope?(receiver)
           arguments = argument.arguments ? argument.arguments.arguments : []
           if arguments.size == 1 && (offset = literal_integer(arguments.first))
             offset = -offset if argument.name == :-
-            return checked_index_subscript(name, shape, axis, receiver, offset,
-                                           argument, location)
+            settled = checked_index_subscript(name, shape, axis, receiver,
+                                              offset, argument, location)
+            return settled if settled
           end
         end
         if (position = literal_integer(argument))
@@ -2223,9 +2226,19 @@ class CArray
         [nil, build(argument)]
       end
 
+      # The subscript settled as the block is read, or nil where it cannot be.
+      #
+      # Nil is not "allow it": it sends the axis to the check at the access,
+      # which is where every position this compiler cannot settle goes.  The
+      # two kinds it cannot settle are a loop whose bound is a captured
+      # integer and one whose range is written over another index -- in both
+      # the reach is not knowable until the kernel runs.  Returning the index
+      # unchecked would leave a write past the end of a stack array with
+      # nothing at all looking at it.
       def checked_index_subscript (name, shape, axis, index, offset, argument,
                                    location)
         identifier = index_identifier(index)
+        return nil unless index_reach(identifier)
         verify_index_reach(name, shape, axis, identifier, offset, argument,
                            location)
         [identifier, offset]

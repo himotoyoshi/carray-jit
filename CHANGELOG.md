@@ -39,6 +39,28 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: an inner loop's range may be written over another index --
+  `3.times { |p| (p+1...3).each { |r| ... } }`, the shape a triangular loop
+  takes -- where that index is one of the loops around it. Forward
+  elimination and Neville's interpolation are the two this was wanted for,
+  and both now read as they do on paper rather than as a full loop with an
+  `if` inside it. The C was always emitted; what stood in the way was the
+  call, where each index's range is worked out so that a subscript can be
+  held to its array. A range over another index has no single pair of
+  numbers to be, so it is read as an interval, at its widest: every pass the
+  loop could take and sometimes more. Where that refuses a reach the loop
+  never makes, the message says which index the range was written over and
+  that it was read at its widest. A range over a local variable, a sibling
+  loop's index or a deeper one is still refused.
+
+- Fix: a local array indexed by an inner loop whose range is not known until
+  the kernel runs -- a bound that is a captured integer, and now a range
+  written over another index -- is checked where the cell is reached. Such a
+  subscript was checked nowhere: the check that reads the loop's range could
+  not settle it, and the check at the access did not cover an index, so a
+  write past the end of the array went into the block's stack frame. It now
+  raises `IndexError` as every other unsettled subscript does.
+
 - Fix: in a `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil`
   block, an array handed to a C function whole -- and read in no other way --
   is no longer lined up with the operands. One whose length differed from
