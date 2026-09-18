@@ -1477,6 +1477,7 @@ class CArray
         @address_name_cache = {}
         @block_cache = {}
         @undef_cache = {}
+        @probe_cache = {}
       end
 
       # @return [String] the directory this environment's kernels are kept in,
