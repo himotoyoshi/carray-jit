@@ -1114,8 +1114,12 @@ class CArray
       def run_over_whole_arrays (block, map: false)
         node, source, origin = read_block(block)
         free, assigned = free_and_assigned_names(source, node)
-        arrays, scalars, c_functions, randoms =
-          split_captures(free, binding_of(block))
+        # One Binding for the three questions asked of it.  `Proc#binding`
+        # allocates one every time it is asked, and this method is re-entered
+        # on every call of an element-wise pass, so asking three times was
+        # three allocations a call for one answer.
+        outside = binding_of(block)
+        arrays, scalars, c_functions, randoms = split_captures(free, outside)
         # `out = a + b` writes the array named `out` where the block was
         # written.  A name the block assigns is not free in it, so it is
         # looked up here rather than by split_captures -- and a name that is
@@ -1128,9 +1132,9 @@ class CArray
         # -- where the shapes happen to agree -- quietly makes the local array
         # an operand and part of the cache key.  So it is refused here, which
         # is before the broadcast.
-        made = Analyzer.local_array_names(source, node: node)
-        refuse_a_shadowed_array(made, binding_of(block))
-        arrays = arrays.merge(assigned_arrays(assigned - made, binding_of(block)))
+        made = local_array_names(source, node)
+        refuse_a_shadowed_array(made, outside)
+        arrays = arrays.merge(assigned_arrays(assigned - made, outside))
         if arrays.empty?
           raise Unsupported, "the block reaches no array"
         end
@@ -1422,9 +1426,26 @@ class CArray
           Analyzer.free_and_assigned_names(source, node: node)
       end
 
+      # Which names the block makes arrays of its own under.  A property of
+      # the source, so it is cached with the rest of them -- and for the
+      # reason the captured names are: an element-wise pass re-enters on
+      # every call, so a walk of the tree here is a walk per call.  It was
+      # the last of this family still being walked, at 3.3 us of a call.
+      def local_array_names (source, node = nil)
+        cached = local_array_name_cache[source]
+        return cached if cached
+        local_array_name_cache[source] =
+          Analyzer.local_array_names(source, node: node)
+      end
+
       # @private
       def registry
         @registry ||= {}
+      end
+
+      # @private
+      def local_array_name_cache
+        @local_array_name_cache ||= {}
       end
 
       # @private
@@ -1478,6 +1499,7 @@ class CArray
         @block_cache = {}
         @undef_cache = {}
         @probe_cache = {}
+        @local_array_name_cache = {}
       end
 
       # @return [String] the directory this environment's kernels are kept in,
@@ -1700,7 +1722,7 @@ class CArray
       # a compiled function or a table held in a constant is how a method
       # gets at one.
       def capture_value (name, binding)
-        if name.to_s.start_with?(/[A-Z]/)
+        if constant_name?(name)
           begin
             binding.eval(name.to_s)
           rescue NameError
@@ -1715,6 +1737,17 @@ class CArray
           end
           binding.local_variable_get(name)
         end
+      end
+
+      # A capture spelled with a capital is a constant and is looked up as one.
+      # Asked of the symbol's own name, which Ruby hands back frozen rather
+      # than building, and by the byte rather than by `/[A-Z]/`: this runs for
+      # every captured name on every call, and the String and the match it
+      # used to make were 2.7 us of an element-wise pass.  ASCII either way --
+      # that is what the pattern matched too.
+      def constant_name? (name)
+        first = name.name.getbyte(0)
+        !first.nil? && first >= 0x41 && first <= 0x5A
       end
 
       # `rand` is Kernel's, so "not defined" would be a lie, and the reason it
