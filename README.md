@@ -72,6 +72,7 @@ The `jit_` methods are this gem's, and exist once `require "carray/jit"` has run
 * [Compiling, caching and inspecting](docs/04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
 * [Design notes](docs/05_DesignNotes.md) — decisions that were not obvious, and why
 * [Cheatsheet](docs/06_Cheatsheet.md) — the seven `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
+* [30 exercises, with solutions](docs/07_StepByStep.md) — thirty small tasks in the order this guide introduces things, each with its solution and what it answers ([日本語](docs/07_StepByStep.ja.md))
 
 ## Contributing
 
