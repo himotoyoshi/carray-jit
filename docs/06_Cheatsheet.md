@@ -104,8 +104,8 @@ calls, not methods on the array -- `w.sum` is refused.
 | Written | Is | Notes |
 |---|---|---|
 | `sum(w)` | a value | in index order from cell 0; no partial sums. Boolean refused |
-| `min(w)` | a value | a NaN is skipped wherever it stands; all NaN gives `Infinity` |
-| `max(w)` | a value | the same, giving `-Infinity`. Complex and boolean refused |
+| `min(w)` | a value | a NaN is skipped wherever it stands; all NaN gives `NaN` |
+| `max(w)` | a value | the same. Complex and boolean refused |
 | `sort(w)` | a **statement** | ascending, in place, NaN last. A network up to 16 cells, an insertion sort above |
 
 ```ruby

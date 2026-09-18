@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: `min(w)` and `max(w)` over a floating local array answer `NaN` when
+  every cell is `NaN`, where they answered `Infinity` and `-Infinity`. This
+  follows CArray 3.0.2, which made the same change to its own `min` and `max`;
+  the gemspec already asks for that version. An array holding at least one
+  number answers as before, a `NaN` still losing to any number, and an integer
+  local array is unchanged.
+
 - New: an inner loop's range may be written over another index --
   `3.times { |p| (p+1...3).each { |r| ... } }`, the shape a triangular loop
   takes -- where that index is one of the loops around it. Forward

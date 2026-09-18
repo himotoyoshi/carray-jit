@@ -2071,18 +2071,14 @@ class CArray
 
       # ---- the intrinsics, written into the preamble ----
 
-      # The accumulator each one starts from, and the C for it.  `min` and
-      # `max` start at the limit of the type rather than at the first cell,
-      # which is what makes a NaN disappear wherever it stands: `NaN < acc` is
-      # false, so a NaN never displaces the accumulator, and an array of
-      # nothing but NaN comes back holding the limit.  That is CArray's own
-      # answer, measured -- `CArray.double(3) { [NAN]*3 }.min` is Infinity and
-      # `.max` is -Infinity -- and matching it is the rule this compiler keeps.
+      # The accumulator `min` and `max` start from over an integer array,
+      # where starting at the limit of the type rather than at the first cell
+      # saves asking whether a cell has been seen yet.  A floating array
+      # starts at NaN instead and folds with fmin / fmax -- see
+      # #intrinsic_fold_helper.
       INTRINSIC_LIMITS = {
         :int64  => ["INT64_MAX", "INT64_MIN"],
         :uint64 => ["UINT64_MAX", "0"],
-        :float  => ["INFINITY", "-INFINITY"],
-        :double => ["INFINITY", "-INFINITY"],
       }.freeze
 
       def computation_c_type_of (storage)
@@ -2135,13 +2131,34 @@ class CArray
 
           C
         end
+        if floating_storage?(storage)
+          fold = intrinsic == :min ? "fmin" : "fmax"
+          return <<~C
+            /* `#{intrinsic}(w)`, which is what CArray's own #{intrinsic} answers.
+               C99 #{fold} is that answer exactly: a lone number beats a NaN, so a
+               NaN is skipped wherever it stands, and an array of nothing but NaN
+               comes back NaN.  Starting at NaN is what lets the first cell in
+               take the accumulator without a seen-yet test.
+
+               The sorts below do not use #{fold}, and for the same reason this
+               does: dropping a NaN is right for a fold and wrong for a sort,
+               which has to put every cell somewhere. */
+            static inline #{result}
+            carray_jit_#{intrinsic}_#{storage} (const #{cell} *w, int64_t n)
+            {
+              #{result} best = NAN;
+              for ( int64_t k = 0; k < n; k++ ) best = #{fold}(best, w[k]);
+              return best;
+            }
+
+          C
+        end
         limit = INTRINSIC_LIMITS.fetch(type)[intrinsic == :min ? 0 : 1]
         comparison = intrinsic == :min ? "<" : ">"
         <<~C
-          /* `#{intrinsic}(w)`, which is what CArray's own #{intrinsic} answers:
-             a NaN never displaces the accumulator, so it is skipped wherever
-             it stands, and an array of nothing but NaN comes back holding
-             the limit this starts from. */
+          /* `#{intrinsic}(w)`, which is what CArray's own #{intrinsic} answers.
+             An integer type has no NaN, so the limit this starts from is only
+             ever an answer for an array with no cells. */
           static inline #{result}
           carray_jit_#{intrinsic}_#{storage} (const #{cell} *w, int64_t n)
           {
@@ -2161,8 +2178,10 @@ class CArray
       # those, so the finite cells come out ascending with the NaNs behind
       # them.  That is where CArray's own sort puts them.
       #
-      # `fmin` and `fmax` are not used anywhere here: they answer the *other*
-      # number when one is a NaN, which drops a cell rather than moving it.
+      # `fmin` and `fmax` are not used here, though the min / max folds above
+      # are built on them: they answer the *other* number when one is a NaN,
+      # which drops a cell rather than moving it.  A fold wants that; a sort
+      # has to put every cell somewhere.
       def intrinsic_order_helper (storage)
         cell = storage_c_type(storage)
         nan_term = floating_storage?(storage) ? " || (a != a && b == b)" : ""

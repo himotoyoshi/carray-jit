@@ -132,7 +132,7 @@ class TestIntrinsics < Minitest::Test
     end
   end
 
-  def test_min_and_max_of_all_nan_answer_the_limit_carray_answers
+  def test_min_and_max_of_all_nan_answer_nan_as_carray_does
     low = CArray.double(1)
     high = CArray.double(1)
     CArray.jit_for(1) { |i|
@@ -141,11 +141,30 @@ class TestIntrinsics < Minitest::Test
       low[i] = min(w)
       high[i] = max(w)
     }
+    # With no number left to win, there is no minimum to name.  CArray
+    # answers NaN here, and used to answer the accumulator it started from.
     reference = CArray.double(3) { [NAN, NAN, NAN] }
-    assert_equal(Float::INFINITY, reference.min, "carray's own answer")
-    assert_equal(-Float::INFINITY, reference.max, "carray's own answer")
-    assert_equal(Float::INFINITY, low[0])
-    assert_equal(-Float::INFINITY, high[0])
+    assert(reference.min.nan?, "carray's own answer")
+    assert(reference.max.nan?, "carray's own answer")
+    assert(low[0].nan?)
+    assert(high[0].nan?)
+  end
+
+  # A number beats a NaN however many NaNs it is among, which is what keeps
+  # the answer above from swallowing an array that holds one.
+  def test_a_single_number_among_nan_is_the_answer
+    low = CArray.double(1)
+    high = CArray.double(1)
+    CArray.jit_for(1) { |i|
+      w = CArray.double(3)
+      w[0] = 0.0 / 0.0
+      w[1] = 2.0
+      w[2] = 0.0 / 0.0
+      low[i] = min(w)
+      high[i] = max(w)
+    }
+    assert_equal(2.0, low[0])
+    assert_equal(2.0, high[0])
   end
 
   def test_min_and_max_over_a_signed_zero
@@ -158,8 +177,9 @@ class TestIntrinsics < Minitest::Test
       low[i] = min(w)
       high[i] = max(w)
     }
-    # `-0.0 < 0.0` is false, so neither displaces the other: both answers are
-    # the cell the accumulator reached first.  The value is zero either way.
+    # fmin and fmax may answer either operand when the two compare equal, and
+    # 0.0 and -0.0 do.  The value is zero either way, which is what is asked
+    # here; the sign is not part of the answer.
     assert_equal(0.0, low[0])
     assert_equal(0.0, high[0])
   end
@@ -385,17 +405,50 @@ class TestIntrinsics < Minitest::Test
     assert_match(/carray_jit_sort_float64\(w, 17\)/, kernel.c_source)
   end
 
-  def test_the_helpers_borrow_nothing_from_libc_that_loses_a_nan
+  def test_the_sort_helpers_borrow_nothing_from_libc_that_loses_a_nan
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
         w = CArray.double(9)
         (0...9).each { |k| w[k] = out[i] + k }
         sort(w)
-        out[i] = min(w) + max(w) + sum(w)
+        out[i] = w[0]
       }
     RUBY
     refute_match(/qsort/, kernel.c_source)
+    # fmin and fmax answer the other number when one is a NaN, which drops a
+    # cell.  A sort has to put every cell somewhere, so the comparator is
+    # written out; the min / max folds below want exactly that dropping and
+    # do use them.
     refute_match(/\bfmin\b|\bfmax\b|\bfminf\b|\bfmaxf\b/, kernel.c_source)
+  end
+
+  def test_the_min_and_max_helpers_fold_with_fmin_and_fmax
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
+      proc { |i|
+        w = CArray.double(9)
+        (0...9).each { |k| w[k] = out[i] + k }
+        out[i] = min(w) + max(w)
+      }
+    RUBY
+    assert_match(/best = fmin\(best, w\[k\]\)/, kernel.c_source)
+    assert_match(/best = fmax\(best, w\[k\]\)/, kernel.c_source)
+    assert_match(/double best = NAN;/, kernel.c_source)
+  end
+
+  # An integer type has no NaN, so its folds stay on the limit and the
+  # comparison -- fmin over an int64 would go through a double and lose the
+  # large ones.
+  def test_the_integer_helpers_keep_the_limit_and_the_comparison
+    kernel = compile_kernel(<<~RUBY, arrays: { :out => "int64" })
+      proc { |i|
+        w = CArray.int64(9)
+        (0...9).each { |k| w[k] = out[i] + k }
+        out[i] = min(w) + max(w)
+      }
+    RUBY
+    refute_match(/\bfmin\b|\bfmax\b/, kernel.c_source)
+    assert_match(/int64_t best = INT64_MAX;/, kernel.c_source)
+    assert_match(/int64_t best = INT64_MIN;/, kernel.c_source)
   end
 
   def test_one_helper_serves_two_sorts_of_one_type_and_length

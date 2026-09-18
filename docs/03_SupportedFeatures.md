@@ -181,7 +181,7 @@ The name does not collide with anything the block writes. `sum = 0.0` beside `su
 CArray.double(3) { [Float::NAN, 1.0, 2.0] }.min   #=> 1.0
 ```
 
-and an array of nothing but NaN comes back holding the limit the accumulator started from -- `Infinity` for `min`, `-Infinity` for `max`, which is again CArray's answer. `fmin` and `fmax` are not used anywhere: they answer the *other* number when one is a NaN, which drops a cell rather than skipping it. A Complex array is refused, Ruby not ordering Complex numbers either, and so is a boolean one.
+and an array of nothing but NaN comes back `NaN`, there being no number left to win, which is again CArray's answer. Over a floating array the fold is C99 `fmin` / `fmax`, whose rule is that one exactly; over an integer array, which has no NaN, it is a comparison against the limit of the type. `fmin` and `fmax` are not used by `sort`, for the reason they are used here: they answer the *other* number when one is a NaN, which drops a cell -- right for a fold, wrong for a sort. A Complex array is refused, Ruby not ordering Complex numbers either, and so is a boolean one.
 
 **`sort`** puts the cells in ascending order where they stand. It is a statement and never a value; writing `x = sort(w)` is refused, and so is `sort(w)` in the middle of an expression. Every NaN ends up after every number, which is where CArray's own sort puts them. The relative order of `-0.0` and `0.0` is not promised -- the comparison is `<`, which reads them as equal -- and that is the one place this compiler compares floats by value rather than bit for bit; CArray's sort takes the same licence.
 
