@@ -37,6 +37,22 @@ class TestPrimitives < Minitest::Test
       CArray.jit_for(VALUES.size) { |i| out[i] = a[i].abs } }
   end
 
+  # An integer's magnitude is an integer, and has its own spelling in C.
+  # INT64_MIN has none in an int64, and wraps to itself as every other int64
+  # overflow does.
+  def test_absolute_value_of_an_integer
+    values = CArray.int64(5) { |i| i - 2 }
+    values[0] = -2**63
+    result = CArray.int64(5)
+    CArray.jit_for(5) { |i| result[i] = values[i].abs }
+    assert_equal([-2**63, 1, 0, 1, 2], result.to_a)
+    small = CArray.int32(3) { |i| i - 1 }
+    mapped = CArray.jit_map { small.abs }
+    assert_equal([1, 0, 1], mapped.to_a)
+    f = CArray.jit_function("int64_t (*)(int64_t)") { |x| x.abs }
+    assert_equal(7, f.call(-7))
+  end
+
   # Float#floor and friends hand back an Integer in Ruby, and do here too.
   def test_rounding_family
     check("floor", ->(v) { v.floor }) { |a, out|
