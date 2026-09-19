@@ -210,10 +210,11 @@ class CArray
 
       ARITHMETIC_OPERATORS = [:+, :-, :*, :/, :%].freeze
       # Ruby's bit operators on Integers, which C has too.  What they do at
-      # the edges is C's answer rather than Ruby's -- a shift wraps and takes
-      # its count modulo the width, because CArray's own `<<` compiles to the
-      # same C shift (`ext/mkkernel.rb`, :bit_lshift) and this has to agree
-      # with CArray.
+      # the edges is C's answer rather than Ruby's -- a shift wraps, and a
+      # count of 64 or more or below zero is C's undefined one.  The width is
+      # the kernel's, int64, not the cell's: CArray's own `<<` shifts an int32
+      # in 32 bits (`ext/mkkernel.rb`, :bit_lshift), so past the cell's width
+      # the two part, and the kernel is the one that agrees with a Ruby loop.
       BIT_OPERATORS = [:&, :|, :^, :<<, :>>].freeze
 
       # Methods whose result type is a property of the method: Float#floor and
