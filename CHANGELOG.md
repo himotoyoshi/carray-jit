@@ -39,6 +39,10 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a block run through `eval` -- in a console, or from code that builds
+  its kernels as text -- no longer stays in memory for the life of the
+  process once nothing refers to it. On Ruby 3.2 it still does.
+
 - Fix: a kernel over a masked array read and wrote the wrong cells of its
   mask, and on a large enough array wrote past the end of it, when an
   unmasked operand whose number of axes differs from the kernel's -- a row
