@@ -444,6 +444,9 @@ class CArray
       end
 
       def raise_for (code)
+        if (failure = CGenerator::FIXED_FAILURES[code])
+          raise failure[0], failure[1]
+        end
         case code
         when 0 then nil
         when 1 then raise ZeroDivisionError, "divided by 0"

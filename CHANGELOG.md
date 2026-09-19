@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `floor`, `ceil`, `round`, `truncate` and `to_i` on a Float raise
+  `FloatDomainError` for a NaN or an infinity, as Ruby does, and `RangeError`
+  for a result past int64; they gave a clamped or arbitrary number. Written
+  straight into a float cell, or returned from a `CArray.jit_function`
+  declared `double`, the result is Ruby's however large -- `1e20.floor` is
+  `1e20`. A loop doing little but rounding runs slower for the check.
+
 - Fix: `.abs` on an integer compiles in `CArray.jit_for`, `CArray.jit_map`,
   `CArray.jit_function` and the other entry points; it raised
   `CArray::JIT::CompilationError` unless the kernel also allocated a local
