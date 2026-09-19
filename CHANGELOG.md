@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a subscript that walks with one index and adds another --
+  `a[i + r]`, `r` an inner loop's index -- is refused as the block is read,
+  with a message that says so and that the sum put in a local first
+  (`k = i + r`, then `a[k]`) is checked at each cell and runs. It was
+  refused at the call, for a reason about an inner loop's range. The
+  exception is `CArray::JIT::Unsupported`, as it was.
+
 - Change: a `CArray.jit_function` body that subscripts a pointer parameter
   with a literal outside the length its declaration gave -- `v[7]` or
   `v[-1]` against `double v[2]` -- raises `CArray::JIT::Unsupported` as the

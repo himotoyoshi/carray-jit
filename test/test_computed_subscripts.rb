@@ -126,4 +126,22 @@ class TestComputedSubscripts < Minitest::Test
     refute(result.is_masked[0])
   end
 
+  # `a[i + r]` walks with `i` and adds an inner loop's index, which no
+  # offset worked out before the first cell can be.  It is refused as the
+  # block is read, saying so, where it used to be refused at the call for a
+  # reason about an inner loop's range.  The same sum in a local is a
+  # subscript the kernel works out, and it runs.
+  def test_an_index_as_an_offset_says_what_to_write_instead
+    a = CArray.double(8).seq!(1.0)
+    out = CArray.double(6)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(6) { |i| s = 0.0; 3.times { |r| s += a[i + r] }; out[i] = s }
+    end
+    assert_match(/`i \+ r` walks with `i` and is offset by `r`, an index as well/,
+                 error.message)
+    assert_match(/put the sum in a local first/, error.message)
+    CArray.jit_for(6) { |i| s = 0.0; 3.times { |r| k = i + r; s += a[k] }; out[i] = s }
+    assert_equal((0...6).map { |i| (0...3).sum { |r| a[i + r] } }, out.to_a)
+  end
+
 end
