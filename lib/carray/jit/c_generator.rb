@@ -369,6 +369,7 @@ class CArray
         @uses_floor_divide = false
         @uses_floor_modulo = false
         @uses_integer_power = false
+        @uses_integer_abs = false
         @uses_unsigned_divide = false
         @uses_unsigned_modulo = false
         @uses_unsigned_power = false
@@ -532,6 +533,7 @@ class CArray
         { :intrinsics => @intrinsic_needs.dup,
           :clears_a_local_array => clears_a_local_array?,
           :integer_power => @uses_integer_power,
+          :integer_abs => @uses_integer_abs,
           :unsigned_divide => @uses_unsigned_divide,
           :unsigned_modulo => @uses_unsigned_modulo,
           :unsigned_power => @uses_unsigned_power,
@@ -635,6 +637,7 @@ class CArray
         pasted_closure.each do |function|
           needs = function.helpers || {}
           @uses_integer_power ||= needs[:integer_power]
+          @uses_integer_abs ||= needs[:integer_abs]
           @uses_unsigned_divide ||= needs[:unsigned_divide]
           @uses_unsigned_modulo ||= needs[:unsigned_modulo]
           @uses_unsigned_power ||= needs[:unsigned_power]
@@ -782,6 +785,20 @@ class CArray
                 exponent >>= 1;
               }
               return result;
+            }
+
+          C
+        end
+        if @uses_integer_abs
+          text << <<~C
+            /* An integer's magnitude, without llabs: that is <stdlib.h>'s,
+               which a kernel includes only when it allocates, and it leaves
+               INT64_MIN undefined.  Negated through uint64_t, INT64_MIN
+               wraps to itself -- the wrap an int64 cell has everywhere else. */
+            static inline int64_t
+            carray_jit_integer_abs (int64_t value)
+            {
+              return value < 0 ? (int64_t) (0 - (uint64_t) value) : value;
             }
 
           C
@@ -3215,7 +3232,7 @@ class CArray
          LEAF_PRECEDENCE]
       end
 
-      # cabs, fabs and llabs are three functions rather than one because C has
+      # cabs, fabs and an integer helper are three rather than one because C has
       # no generic for them, so this names each type instead of letting one of
       # them be what a type it has not heard of falls into.
       def emit_absolute_value (node)
@@ -3230,8 +3247,10 @@ class CArray
         case node.type
         when :double  then ["fabs(#{emit(node.operand, :double)})", LEAF_PRECEDENCE]
         when :float   then ["fabsf(#{emit(node.operand, :float)})", LEAF_PRECEDENCE]
-        when :int64   then ["llabs(#{emit(node.operand, :int64)})", LEAF_PRECEDENCE]
-        # An unsigned number is its own magnitude, and llabs would take it
+        when :int64
+          @uses_integer_abs = true
+          ["carray_jit_integer_abs(#{emit(node.operand, :int64)})", LEAF_PRECEDENCE]
+        # An unsigned number is its own magnitude, and a signed helper would take it
         # through a signed type on the way.
         when :uint64  then [emit(node.operand, :uint64), LEAF_PRECEDENCE]
         else unhandled_type(node, "abs")

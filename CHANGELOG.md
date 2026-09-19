@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `.abs` on an integer compiles in `CArray.jit_for`, `CArray.jit_map`,
+  `CArray.jit_function` and the other entry points; it raised
+  `CArray::JIT::CompilationError` unless the kernel also allocated a local
+  array. `(-2**63).abs` in an int64 wraps to itself, as other int64
+  overflow does. Float and complex `.abs` are unchanged.
+
 - Change: a subscript that walks with one index and adds another --
   `a[i + r]`, `r` an inner loop's index -- is refused as the block is read,
   with a message that says so and that the sum put in a local first
