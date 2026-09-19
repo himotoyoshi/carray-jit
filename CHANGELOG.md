@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `min(w)` and `max(w)` over a floating local array keep the first of
+  two cells that compare equal, as CArray's `min` and `max` do, so `0.0`
+  and `-0.0` come back in the order they stood; which zero came back was
+  left to the C library. NaN is still skipped, and an array of nothing but
+  NaN still answers `NaN`.
+
 - Fix: `floor`, `ceil`, `round`, `truncate` and `to_i` on a Float raise
   `FloatDomainError` for a NaN or an infinity, as Ruby does, and `RangeError`
   for a result past int64; they gave a clamped or arbitrary number. Written
