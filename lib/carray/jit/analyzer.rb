@@ -417,7 +417,8 @@ class CArray
       # number, and is not the same statement.
       def initialize (source, node: nil, array_names: [], c_functions: {}, rank: nil,
                       steps: nil, contract: false, result: nil, function: false,
-                      pointers: {}, map: false, cell_names: [],
+                      pointers: {}, pointer_lengths: {}, map: false,
+                      cell_names: [],
                       recursion: nil, windows: [], returns: true,
                       free_indices: nil, randoms: {}, masked: false)
         @source = source
@@ -456,6 +457,9 @@ class CArray
         # read and write, false to read only (= const), nil for one that
         # points at nothing in particular and so cannot be reached at all.
         @pointers = pointers
+        # And how many cells a pointer's declaration said it points at, for
+        # the ones whose declarator carried a length: `double v[3]`.
+        @pointer_lengths = pointer_lengths
         # What the function being compiled is called, what it takes and what
         # it returns -- so its own body can call it.  C puts a declarator's
         # name in scope inside the body it heads, and this is that.  Nil for
@@ -3007,7 +3011,26 @@ class CArray
             "`#{name}` is a pointer, so it takes one index", node.location)
         end
         @pointer_names << name unless @pointer_names.include?(name)
-        [name, build(arguments.first)]
+        index = build(arguments.first)
+        refuse_undeclared_cell(name, index, node.location)
+        [name, index]
+      end
+
+      # A subscript on a pointer is not checked when the function runs: that
+      # is C's bargain, and a computed one could only be checked there.  A
+      # literal needs no running to be read, though, and where the
+      # declaration said how many cells there are, one outside them is a
+      # write or a read past what the caller was held to -- the caller is
+      # checked for at least that many and no more.  C says nothing about
+      # `v[7]` against `double v[2]`; this says it as the body is read.
+      def refuse_undeclared_cell (name, index, location)
+        length = @pointer_lengths[name]
+        return unless length && index.is_a?(IntegerLiteral)
+        return if index.value >= 0 && index.value < length
+        raise Unsupported.new(
+          "`#{name}[#{index.value}]` is outside the #{length} " \
+          "#{length == 1 ? 'cell' : 'cells'} `#{name}` is declared with; " \
+          "a caller is held to that many and no more", location)
       end
 
       # `fact(n - 1)` inside the body of `double fact(double)`, and
