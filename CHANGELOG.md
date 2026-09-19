@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: the docs now say that `Math.sqrt`, `log`, `log2`, `log10`, `asin`,
+  `acos`, `acosh` and `atanh` answer `NaN` outside their domain, as `math.h`
+  does, where Ruby raises `Math::DomainError`, and that `Math.sqrt(-0.0)` is
+  `-0.0`. This was already the behaviour. `Math.gamma` still raises as Ruby
+  does. Test the argument in the block where it may leave the domain.
+
 - Fix: multiplying two Complex numbers, or a real number by a Complex
   (`x * z`), gives Ruby's answer where an infinity meets a zero:
   `0.0 * Complex(Float::INFINITY, 0.0)` is `0.0+0.0i`, where it was
