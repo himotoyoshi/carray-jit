@@ -113,6 +113,21 @@ class TestBooleans < Minitest::Test
     assert_match(/cannot combine types boolean and double/, error.message)
   end
 
+  # Two booleans do combine -- they are one type -- so the refusal above does
+  # not reach `flag[i] * flag[i]`, and a condition built from it compiled.
+  # `true * true` raises in Ruby, and is refused where the operator stands.
+  def test_arithmetic_between_two_boolean_cells_is_refused
+    flag = flags
+    result = CArray.double(8)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(8) { |i| result[i] = (flag[i] * flag[i]) ? 1.0 : 0.0 }
+    end
+    assert_match(/`\*` is arithmetic, and `true` and `false` have none/,
+                 error.message)
+    CArray.jit_for(8) { |i| result[i] = (flag[i] & flag[i]) ? 1.0 : 0.0 }
+    assert_equal(flag.to_a.map { |v| v ? 1.0 : 0.0 }, result.to_a)
+  end
+
   # The array-level `flags + 1` promotes in CArray, and the cell-level
   # `flags[i] + 1` raises in Ruby.  A kernel is the cell loop either way it is
   # written, so both forms take the cell's answer.

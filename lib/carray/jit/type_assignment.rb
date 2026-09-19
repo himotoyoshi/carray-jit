@@ -1097,6 +1097,14 @@ class CArray
             Analyzer::COMPARISON_OPERATORS.include?(node.operator)
           verify_bitwise(node) if
             Analyzer::BIT_OPERATORS.include?(node.operator)
+          # `true * true` is a NoMethodError in Ruby.  Said here, where the
+          # operator is, rather than wherever the boolean it made ends up.
+          if Analyzer::ARITHMETIC_OPERATORS.include?(node.operator) &&
+             !numeric?(node.type)
+            raise Unsupported.new(
+              "`#{node.operator}` is arithmetic, and `true` and `false` have " \
+              "none, in Ruby either", node.location)
+          end
           # `Complex(1,2) % 2` is a NoMethodError in Ruby: a floored
           # remainder needs an order, and the plane has none.
           if node.operator == :% && complex?(node.type)
@@ -1121,20 +1129,6 @@ class CArray
               "an integer raised to a variable power overflows int64 where " \
               "Ruby would not; make one of them a Float",
               node.location)
-          end
-        when BinaryOperation
-          node.children.each { |child| verify(child) }
-          if Analyzer::COMPARISON_OPERATORS.include?(node.operator)
-            unless numeric?(node.left.type) &&
-                   numeric?(node.right.type)
-              raise Unsupported.new("comparison operands must be numbers",
-                                    node.location)
-            end
-          else
-            unless numeric?(node.type)
-              raise Unsupported.new("`#{node.operator}` operands must be numbers",
-                                    node.location)
-            end
           end
         else
           node.children.each { |child| verify(child) }

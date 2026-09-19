@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: arithmetic between two booleans -- `flag[i] * flag[i]`, `+`, `-`,
+  `/`, `%` -- raises `CArray::JIT::Unsupported` where the operator stands,
+  as `true * true` raises in Ruby. Used as a condition it compiled and ran.
+  `&`, `|` and `^` on booleans are unchanged.
+
 - Fix: `min(w)` and `max(w)` over a floating local array keep the first of
   two cells that compare equal, as CArray's `min` and `max` do, so `0.0`
   and `-0.0` come back in the order they stood; which zero came back was
