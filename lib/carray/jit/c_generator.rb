@@ -1171,6 +1171,14 @@ class CArray
       # the block is read.  So is a length whose cells would not fit in a
       # `size_t`: the multiplication into `malloc` would wrap, and a small
       # allocation answered for a huge one is the worst of the outcomes.
+      #
+      # That is asked of the lengths before they are multiplied, one axis at
+      # a time against what the axes before it leave of the limit.  Asked of
+      # the product, it came too late: two lengths of 2**32 multiply to a
+      # number that has already wrapped to zero, which fits, and every
+      # subscript was then checked against its own axis and let through
+      # into an allocation of nothing.  The limit is `int64_t` as well as
+      # `size_t`, since that is what the cells are counted in.
       def heap_prologue
         return "" if heap_arrays.empty?
         lines = +""
@@ -1180,23 +1188,32 @@ class CArray
             lines << "  const int64_t #{heap_extent_name(variable, axis)} = " \
                      "#{emit(extent.node, :int64)};\n"
           end
+          room = "(uint64_t) (SIZE_MAX / sizeof(#{storage_c_type(storage)}))"
+          lines << "  const uint64_t #{heap_limit_name(variable)} =\n" \
+                   "    #{room} < (uint64_t) INT64_MAX ? #{room} : (uint64_t) INT64_MAX;\n"
+          lengths = heap_extent_texts(variable, shape)
+          tests = shape.each_with_index.filter_map { |extent, axis|
+            next if extent.is_a?(Integer)
+            "#{heap_extent_name(variable, axis)} >= 1"
+          } + lengths.each_index.map { |axis|
+            left = [heap_limit_name(variable)] +
+                   lengths.first(axis).map { |length| "(uint64_t) #{length}" }
+            "(uint64_t) #{lengths[axis]} <= #{left.join(' / ')}"
+          }
+          lines << "  const int #{heap_fits_name(variable)} =\n" \
+                   "    #{tests.join("\n    && ")};\n"
           next if literal_shape?(shape)
           lines << "  const int64_t #{heap_cells_name(variable)} = " \
-                   "#{heap_cells_product(variable, shape)};\n"
+                   "#{heap_fits_name(variable)} ? #{lengths.join(' * ')} : 0;\n"
         end
         heap_arrays.each do |variable, storage, _shape|
           lines << "  #{storage_c_type(storage)} *#{variable} = NULL;\n"
           lines << "  uint8_t *#{local_mask_name(variable)} = NULL;\n" if @masked
         end
-        tests = heap_arrays.flat_map { |variable, storage, shape|
-          cells = local_array_cells_text(variable, shape)
-          shape.each_with_index.filter_map { |extent, axis|
-            next if extent.is_a?(Integer)
-            "#{heap_extent_name(variable, axis)} < 1"
-          } + ["(uint64_t) #{cells} > " \
-               "(uint64_t) (SIZE_MAX / sizeof(#{storage_c_type(storage)}))"]
+        unfit = heap_arrays.map { |variable, _storage, _shape|
+          "!#{heap_fits_name(variable)}"
         }
-        lines << "  if ( #{tests.join("\n         || ")} ) {\n" \
+        lines << "  if ( #{unfit.join(' || ')} ) {\n" \
                  "    if ( error ) *error = #{SHAPE_CODE};\n" \
                  "    return;\n" \
                  "  }\n"
@@ -1242,10 +1259,18 @@ class CArray
         "#{variable}__cells"
       end
 
-      def heap_cells_product (variable, shape)
+      def heap_limit_name (variable)
+        "#{variable}__limit"
+      end
+
+      def heap_fits_name (variable)
+        "#{variable}__fits"
+      end
+
+      def heap_extent_texts (variable, shape)
         shape.each_with_index.map { |extent, axis|
           extent.is_a?(Integer) ? extent.to_s : heap_extent_name(variable, axis)
-        }.join(" * ")
+        }
       end
 
       def literal_shape? (shape)

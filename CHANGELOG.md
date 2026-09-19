@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a local array whose shape is written over captured integers --
+  `CArray.double(n, m)` -- raises `ArgumentError` when its lengths each fit
+  but their product does not count in bytes. Such a product wrapped to a
+  small number, the kernel allocated that, and subscripts in range on every
+  axis wrote past it. A shape of one axis, or of lengths whose product
+  fits, is unaffected.
+
 - Fix: `CArray::JIT.clear_registry` now forgets the functions
   `CArray.jit_function` compiled, as it already did kernels, so the next
   call reads them back from the cache on disk.

@@ -2809,6 +2809,33 @@ class TestLocalArrays < Minitest::Test
     assert_match(/more cells than its bytes could be counted in/, error.message)
   end
 
+  # Each length fits and their product does not.  Two lengths of 2**32 come
+  # to 2**64 cells, which multiplied in an `int64_t` is zero: asked of the
+  # product, that fit, and `w[0, 1000]` -- in range on both axes -- was
+  # written into an allocation of no cells.
+  def test_lengths_whose_product_is_too_large_are_reported
+    a = CArray.double(4).seq!(1.0)
+    n = 2**32
+    out = CArray.double(4)
+    error = assert_raises(ArgumentError) do
+      CArray.jit_for(4) { |i|
+        w = CArray.double(n, n)
+        w[0, 1000] = a[i]
+        out[i] = w[0, 1000]
+      }
+    end
+    assert_match(/more cells than its bytes could be counted in/, error.message)
+    m = 2**22
+    error = assert_raises(ArgumentError) do
+      CArray.jit_for(4) { |i|
+        w = CArray.double(m, m, m)
+        w[1, 1, 1] = a[i]
+        out[i] = w[1, 1, 1]
+      }
+    end
+    assert_match(/more cells than its bytes could be counted in/, error.message)
+  end
+
   def test_the_shape_may_not_vary_from_cell_to_cell
     arrays = { :a => "float64", :out => "float64" }
     index = refuse(<<~RUBY, /loop index/, arrays: arrays)
