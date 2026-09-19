@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a kernel over a masked array read and wrote the wrong cells of its
+  mask, and on a large enough array wrote past the end of it, when an
+  unmasked operand whose number of axes differs from the kernel's -- a row
+  added across a grid, or a contraction's operand -- sorted by name before
+  the masked one. Kernels whose operands all share the kernel's rank, and
+  kernels over no masked array, were not affected.
+
 - New: a local array may be larger than a stack frame should hold, and its
   shape may be written over an integer the block captured --
   `CArray.double(n)`, which was refused. Either way the kernel allocates the

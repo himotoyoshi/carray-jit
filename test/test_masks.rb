@@ -189,4 +189,18 @@ class TestMasks < Minitest::Test
     assert_match(/only a cell can be compared with UNDEF/, error.message)
   end
 
+  # An operand with no mask still takes a slot per axis of its own in the
+  # mask strides, and the masks after it are found by counting those.  A row
+  # broadcast over a grid has one axis where the kernel has two; counted as
+  # two, the grid's mask was read and written one stride off -- three cells
+  # masked here instead of one, and past the end of the mask on a larger grid.
+  def test_a_lower_rank_operand_leaves_the_masks_after_it_in_place
+    bias = CArray.double(3).seq!
+    grid = CArray.double(3, 10).seq!
+    grid[1, 0] = UNDEF
+    result = CArray.double(3, 10)
+    CArray.jit_for(3, 10) { |i, j| result[i, j] = bias[i] + grid[i, j] }
+    assert_equal([10], result.is_masked.where.to_a)
+  end
+
 end

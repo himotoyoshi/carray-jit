@@ -169,7 +169,7 @@ class CArray
         # Opened for a kernel rather than for a reader: the four buffers come
         # back packed, instead of a hash and two arrays per operand that this
         # would pack back into bytes and throw away.
-        Access.open(arrays, writable, box[0], box[1], @rank) do
+        Access.open(arrays, writable, box[0], box[1], true) do
                    |pointers, strides, mask_pointers, mask_strides|
           entry = border ? border_function : @function
           entry.call(buffer(pointers), buffer(strides), buffer(packed_bounds),

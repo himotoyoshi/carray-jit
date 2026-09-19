@@ -365,20 +365,16 @@ open_ensure (VALUE argument)
  * a round trip through the object heap that nothing looks at, and it cost
  * more than the opening did.  So this writes the four buffers directly.
  *
- * `rank` is what an array with no mask contributes to the mask strides: the
- * kernel's own rank, since the slot has to be there and there is no mask
- * shape to take it from.
+ * An array with no mask still takes its slots in the mask strides, one per
+ * axis of its own, zero.  Its own rank and not the kernel's: the generated C
+ * finds an array's mask strides at the sum of the ranks of the arrays before
+ * it, and an operand of lower rank than the kernel -- a row broadcast over a
+ * grid -- padded to the kernel's rank moved every mask after it.
  */
-typedef struct {
-  open_state *state;
-  int         rank;
-} packed_request;
-
 static VALUE
 packed_body (VALUE argument)
 {
-  packed_request *request = (packed_request *) argument;
-  open_state     *state   = request->state;
+  open_state     *state   = (open_state *) argument;
   int             count   = state->count;
   int             i;
   long            stride_slots = 0, mask_stride_slots = 0;
@@ -389,7 +385,8 @@ packed_body (VALUE argument)
   for ( i = 0; i < count; i++ ) {
     stride_slots += state->carrays[i]->ndim;
     mask_stride_slots += state->carrays[count + i]
-                       ? state->carrays[count + i]->ndim : request->rank;
+                       ? state->carrays[count + i]->ndim
+                       : state->carrays[i]->ndim;
   }
 
   pointers      = rb_str_new(NULL, (long) (count * sizeof(uint64_t)));
@@ -419,7 +416,7 @@ packed_body (VALUE argument)
       for ( k = 0; k < mask->ndim; k++ ) *mask_stride_slot++ = (int64_t) mask_own[k];
     } else {
       *mask_pointer_slot++ = 0;
-      for ( k = 0; k < request->rank; k++ ) *mask_stride_slot++ = 0;
+      for ( k = 0; k < ca->ndim; k++ ) *mask_stride_slot++ = 0;
     }
   }
 
@@ -431,19 +428,19 @@ packed_body (VALUE argument)
  * out -- including when the block raises.
  *
  * With four arguments the block is handed one basis hash per array, which is
- * the form to read an array's opening in.  Given a fifth -- the kernel's rank
- * -- it is handed the four packed buffers a kernel passes to the C instead:
- * pointers, strides, mask pointers, mask strides.
+ * the form to read an array's opening in.  Given a fifth that is true, it is
+ * handed the four packed buffers a kernel passes to the C instead: pointers,
+ * strides, mask pointers, mask strides.
  */
 static VALUE
 access_open (int argc, VALUE *argv, VALUE module)
 {
-  VALUE arrays, writable_flags, box_start, box_count, packed_rank;
+  VALUE arrays, writable_flags, box_start, box_count, packed;
   open_state state;
   int i;
 
   rb_scan_args(argc, argv, "23", &arrays, &writable_flags, &box_start,
-               &box_count, &packed_rank);
+               &box_count, &packed);
   Check_Type(arrays, T_ARRAY);
   Check_Type(writable_flags, T_ARRAY);
   if ( NIL_P(box_start) != NIL_P(box_count) ) {
@@ -506,13 +503,10 @@ access_open (int argc, VALUE *argv, VALUE module)
     }
   }
 
-  if ( NIL_P(packed_rank) ) {
-    return rb_ensure(open_body, (VALUE) &state, open_ensure, (VALUE) &state);
+  if ( RTEST(packed) ) {
+    return rb_ensure(packed_body, (VALUE) &state, open_ensure, (VALUE) &state);
   } else {
-    packed_request request;
-    request.state = &state;
-    request.rank  = NUM2INT(packed_rank);
-    return rb_ensure(packed_body, (VALUE) &request, open_ensure, (VALUE) &state);
+    return rb_ensure(open_body, (VALUE) &state, open_ensure, (VALUE) &state);
   }
 }
 
