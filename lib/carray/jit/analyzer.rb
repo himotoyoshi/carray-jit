@@ -3466,8 +3466,35 @@ class CArray
                   node.name == :+ ? constant : -constant]
         end
         offset = pinned_subscript(argument)
+        refuse_an_index_in_the_offset(node, receiver.name, offset)
         [index_identifier(receiver.name),
          node.name == :+ ? offset : UnaryMinus.new(offset)]
+      end
+
+      # `a[i + r]`, where `r` is an inner loop's index: the subscript walks
+      # with `i`, and an offset is worked out once per call, before any cell,
+      # which an index cannot be.  Left to the call, it was refused there
+      # for a reason about an inner loop's range -- true of the code that
+      # happened to read it, and nothing to do with what was written.  The
+      # same sum put in a local first is a subscript the kernel works out
+      # and checks at the cell, which is what the message points to.
+      def refuse_an_index_in_the_offset (node, walker, offset)
+        others = []
+        visit = lambda { |item|
+          next unless item.is_a?(Node)
+          others << item.name if item.is_a?(IndexVariable)
+          item.children.each(&visit)
+        }
+        visit.call(offset)
+        return if others.empty?
+        names = others.uniq.map { |name| "`#{name}`" }.join(" and ")
+        raise Unsupported.new(
+          "`#{node.slice}` walks with `#{walker}` and is offset by #{names}, " \
+          "an index as well; an offset is worked out once per call, from " \
+          "literals and captured integers -- put the sum in a local first " \
+          "(`k = #{node.slice}`, then `[k]`) and it is worked out and " \
+          "checked at each cell",
+          node.location)
       end
 
       # An index the block names as a parameter reads as a local variable.
