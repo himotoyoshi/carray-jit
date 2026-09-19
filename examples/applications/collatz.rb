@@ -57,7 +57,7 @@ puts format("  the highest value reached by any of them is %d, from %d",
 # why 704511 reaches 56 billion without overflowing an int32 on the way.
 puts
 puts "what the local was compiled as"
-puts format("  %s", kernel.c_source.lines.grep(/^\s*int\d+_t x =/).first.strip)
+puts format("  %s", kernel.c_source.lines.grep(/^\s*int\d+_t x;/).first.strip)
 
 # The same walk in Ruby, for the answer and the time.  Over the first tenth,
 # because the point of the comparison is the ratio.
