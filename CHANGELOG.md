@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: the docs now say that an Integer compared with a Float is
+  compared as two doubles, as CArray compares them, so past 2^53 the answer
+  can differ from Ruby's exact comparison. This was already the behaviour;
+  below 2^53 nothing differs.
+
 - Change: the docs now say that `Math.sqrt`, `log`, `log2`, `log10`, `asin`,
   `acos`, `acosh` and `atanh` answer `NaN` outside their domain, as `math.h`
   does, where Ruby raises `Math::DomainError`, and that `Math.sqrt(-0.0)` is
