@@ -168,9 +168,61 @@ class CArray
             return CMPLX(creal(z), y + cimag(z));
           }
         C
+        "safe_multiply" => <<~C,
+          /* complex.c's safe_mul, which every part of a Ruby complex product
+             goes through: a zero against a number that is not a zero or a
+             NaN meets only that number's sign, so a zero times an infinity is
+             a signed zero rather than C's NaN.  C's own complex `*` recovers
+             from infinities by Annex G's rules instead, which are not these. */
+          static inline double
+          carray_jit_safe_multiply (double a, double b)
+          {
+            if ( a != 0 && b == 0 && ! isnan(a) ) a = signbit(a) ? -1.0 : 1.0;
+            else if ( b != 0 && a == 0 && ! isnan(b) ) b = signbit(b) ? -1.0 : 1.0;
+            return a * b;
+          }
+        C
+        "complex_multiply" => <<~C,
+          /* Ruby's `a * b` for two Complex numbers, part by part in
+             complex.c's order: comp_mul.  safe_mul differs from a plain
+             product only for a zero against an infinity, which a plain
+             product answers NaN -- so the plain parts are the answer unless
+             one of them is a NaN, and only then is it worked out again the
+             safe way.  C's own `*` takes the same shape, and costs the same. */
+          static inline double _Complex
+          carray_jit_complex_multiply (double _Complex a, double _Complex b)
+          {
+            double are = creal(a), aim = cimag(a);
+            double bre = creal(b), bim = cimag(b);
+            double re = are * bre - aim * bim, im = are * bim + aim * bre;
+            if ( isnan(re) || isnan(im) ) {
+              re = carray_jit_safe_multiply(are, bre) - carray_jit_safe_multiply(aim, bim);
+              im = carray_jit_safe_multiply(are, bim) + carray_jit_safe_multiply(aim, bre);
+            }
+            return CMPLX(re, im);
+          }
+        C
+        "real_multiply_complex" => <<~C,
+          /* `x * z` coerces x to a Complex whose imaginary part is an exact
+             zero, and multiplies in full.  That zero meets safe_mul as any
+             zero does, so it is written as 0.0 here and gives the same parts;
+             only an addition treats an exact zero differently, and here the
+             zeros are multiplied first. */
+          static inline double _Complex
+          carray_jit_real_multiply_complex (double x, double _Complex b)
+          {
+            double bre = creal(b), bim = cimag(b);
+            double re = x * bre - 0.0 * bim, im = x * bim + 0.0 * bre;
+            if ( isnan(re) || isnan(im) ) {
+              re = carray_jit_safe_multiply(x, bre) - carray_jit_safe_multiply(0.0, bim);
+              im = carray_jit_safe_multiply(x, bim) + carray_jit_safe_multiply(0.0, bre);
+            }
+            return CMPLX(re, im);
+          }
+        C
         "complex_mul_real" => <<~C,
-          /* `z * x` scales each part.  `x * z` does not -- Ruby coerces the
-             x and multiplies in full -- so it is left to C's operator. */
+          /* `z * x` scales each part, with no safe_mul: Ruby's Complex#*
+             takes a real operand apart and multiplies each part by it. */
           static inline double _Complex
           carray_jit_complex_mul_real (double _Complex z, double x)
           {
@@ -3410,10 +3462,13 @@ class CArray
       # and dividing by one divides each part.
       #
       # Subtraction is the exception: there the zero really is subtracted, in
-      # Ruby as in C, so `z - x` and `x - z` are C's own operator.  So is
-      # `x * z`, which Ruby coerces and multiplies out in full -- which is
-      # why `2.0 * Complex(1.0, -0.0)` and `Complex(1.0, -0.0) * 2.0` do not
-      # agree with each other, and each is reproduced its own way.
+      # Ruby as in C, so `z - x` and `x - z` are C's own operator.  `x * z`
+      # is not the exception it looks like: Ruby coerces the x and multiplies
+      # out in full, as it does two Complex numbers, and a full product in
+      # Ruby is safe_mul's part by part -- a zero times an infinity a zero --
+      # where C's `*` recovers from infinities by Annex G's rules.  So both
+      # go through complex.c's comp_mul, and `2.0 * Complex(1.0, -0.0)` and
+      # `Complex(1.0, -0.0) * 2.0` still differ, each reproduced its own way.
       #
       # And a complex division is Smith's method as complex.c writes it,
       # which is not what the C library's __divdc3 computes.
@@ -3434,18 +3489,7 @@ class CArray
         if complex_type == :float_complex &&
            [:*, :/].include?(node.operator) &&
            complex_type?(node.left.type) && complex_type?(node.right.type)
-          helper = mixed_helper(node, :complex)
-          if helper
-            text, = emit_helper_call(*helper, false)
-          else
-            precedence = PRECEDENCE.fetch(node.operator)
-            # Parenthesised, because the cast binds tighter than the operator:
-            # without them it would narrow the left operand and leave the
-            # multiplication to be worked out around it.
-            text = "(#{emit_operand(node.left, :complex, precedence)} " \
-                   "#{node.operator} " \
-                   "#{emit_operand(node.right, :complex, precedence)})"
-          end
+          text, = emit_helper_call(*mixed_helper(node, :complex), false)
           return ["(float _Complex)#{text}", UNARY_PRECEDENCE]
         end
         narrow = complex_type == :float_complex
@@ -3458,6 +3502,9 @@ class CArray
       end
 
       def emit_helper_call (name, arguments, narrow)
+        COMPLEX_HELPER_NEEDS.fetch(name, []).each do |needed|
+          @complex_helpers |= [[needed, narrow]]
+        end
         @complex_helpers |= [[name, narrow]]
         prefix = narrow ? "carray_jit_f_" : "carray_jit_"
         ["#{prefix}#{name}(#{arguments.join(', ')})", LEAF_PRECEDENCE]
@@ -3488,9 +3535,19 @@ class CArray
         when :*
           if real_type?(right)
             ["complex_mul_real", [emit(left, ctype), emit(right, rtype)]]
+          elsif real_type?(left)
+            ["real_multiply_complex", [emit(left, rtype), emit(right, ctype)]]
+          else
+            ["complex_multiply", [emit(left, ctype), emit(right, ctype)]]
           end
         end
       end
+
+      # The helpers that call another, which has to be emitted above them.
+      COMPLEX_HELPER_NEEDS = {
+        "complex_multiply" => ["safe_multiply"],
+        "real_multiply_complex" => ["safe_multiply"],
+      }.freeze
 
       def complex_type? (type)
         TypeAssignment.complex?(type)
