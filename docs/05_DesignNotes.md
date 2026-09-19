@@ -4,7 +4,7 @@ Decisions that were not obvious, and why.
 
 ## The type is C's, and so is the arithmetic where the width is real
 
-The storage type is CArray's, mapped to C exactly -- `int64_t`, `uint8_t`, `float` -- and everything the type itself decides follows from that: the width, the wrap on store, the bit patterns, what a shift does past the width. There a kernel agrees with CArray, because both are the same C.
+The storage type is CArray's, mapped to C exactly -- `int64_t`, `uint8_t`, `float` -- and everything the type itself decides follows from that: the width, the wrap on store, the bit patterns. There a kernel agrees with CArray, because both are the same C. A shift is the exception that proves it: a kernel shifts an integer in the width it computes in, `int64_t`, and narrows on store, so on an `int32` cell a count past 31 gives the Ruby loop's answer where CArray, shifting in 32 bits, gives another.
 
 The arithmetic follows the same rule where the width makes a difference to the answer, and Ruby's where it does not. That splits the types in two.
 
@@ -65,7 +65,7 @@ Ruby floors integer division and gives the remainder the sign of the divisor; C 
 
 The generated helper mirrors `ext/mkkernel.rb` in CArray. Dividing by a positive power of two skips the helper: an arithmetic shift already floors, and is cheaper than the truncating divide C would emit.
 
-For the same reason `%` is **not** lowered to `fmod`, which truncates. Ruby and CArray floor it. `%` is not in the subset yet.
+For the same reason `%` is **not** lowered to `fmod`, which truncates. Ruby and CArray floor it, and so does a kernel -- through a helper for an integer, and for a float through `fmod` with the sign corrected afterwards.
 
 ## Integer division by zero
 
