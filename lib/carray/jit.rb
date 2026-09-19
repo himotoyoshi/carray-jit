@@ -1558,8 +1558,20 @@ class CArray
       # object for every Proc made from one block literal.  That makes it a
       # free identity for the block, and keeps the file from being read and
       # parsed again on each call.
+      #
+      # The key is held weakly.  A block literal in a file keeps its sequence
+      # for the life of the process, but every `eval` makes a new one -- in a
+      # console, or in code that builds its kernels as text -- and a Hash kept
+      # each of them alive along with a parse of the whole script it came
+      # from, for as long as the process ran.  Before Ruby 3.3 there is no
+      # WeakKeyMap and the cache is a Hash as it was.
       def block_cache
-        @block_cache ||= {}
+        @block_cache ||= new_block_cache
+      end
+
+      # @private
+      def new_block_cache
+        defined?(ObjectSpace::WeakKeyMap) ? ObjectSpace::WeakKeyMap.new : {}
       end
 
       # @!group Kernel cache
@@ -1572,7 +1584,7 @@ class CArray
         @registry = {}
         @capture_name_cache = {}
         @address_name_cache = {}
-        @block_cache = {}
+        @block_cache = new_block_cache
         @undef_cache = {}
         @probe_cache = {}
         @local_array_name_cache = {}
