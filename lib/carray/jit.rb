@@ -1585,6 +1585,7 @@ class CArray
         @capture_name_cache = {}
         @address_name_cache = {}
         @block_cache = new_block_cache
+        @function_registry = {}
         @undef_cache = {}
         @probe_cache = {}
         @local_array_name_cache = {}

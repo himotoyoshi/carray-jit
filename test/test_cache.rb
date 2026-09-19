@@ -39,6 +39,16 @@ class TestCache < Minitest::Test
     assert_same(first, second)
   end
 
+  # A compiled function is kept in memory beside the kernels, and clearing
+  # the registry is a promise that the next call starts from the disk.
+  def test_clearing_the_registry_forgets_compiled_functions
+    first = CArray.jit_function("double (*)(double)") { |x| x * x + 1.0 }
+    CArray::JIT.clear_registry
+    second = CArray.jit_function("double (*)(double)") { |x| x * x + 1.0 }
+    refute_same(first, second)
+    assert_in_delta(5.0, second.call(2.0))
+  end
+
   def test_storage_type_is_part_of_the_key
     source = unique_source
     double_kernel = compile_kernel(source, arrays: { :a => "float64" })
