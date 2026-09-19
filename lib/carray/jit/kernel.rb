@@ -614,6 +614,13 @@ class CArray
           # other way round.
           start, limit = step.positive? ? [first.first, last.last]
                                         : [first.last, last.first]
+          # A step that skips cells lands on the ones a pass started on, and
+          # where the start moves so do they: `(p...8).step(3)` visits 0, 3, 6
+          # from one start and 1, 4, 7 from the next.  Stepped out from the
+          # earliest start alone, the reach stopped at 6 and a pass wrote at
+          # 7.  So with a start that moves, the span is every cell between
+          # the widest start and the widest end, which every pass lies within.
+          step = step <=> 0 if first.first != first.last
           ranges[name] = covered_span([start, limit, step])
         end
         ranges

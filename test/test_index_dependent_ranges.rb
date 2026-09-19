@@ -147,6 +147,44 @@ class TestIndexDependentRanges < Minitest::Test
     assert_match(/cannot end at 4/, error.message)
   end
 
+  # A step lands on the cells its pass started on, and the start moves with
+  # `p`: 0, 3, 6 on one pass and 1, 4, 7 on the next.  Stepped out from the
+  # earliest start alone the reach stopped at 6, and the kernel wrote
+  # `dst[1, 7]` into the row after it.
+  def test_a_stepped_range_whose_start_moves_is_held_to_every_pass
+    dst = CArray.double(3, 7)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(1) { |i|
+        2.times { |p| (p...8).step(3) { |k| dst[p, k] = 99.0 } }
+      }
+    end
+    assert_match(/cannot end at 8/, error.message)
+    assert_equal([0.0] * 21, dst.to_a.flatten)
+  end
+
+  # The same counting down: 7, 4, 1 from one start and 6, 3, 0 from the
+  # next, so `k - 1` reaches -1 though the earliest start never does.
+  def test_a_stepped_range_counting_down_whose_start_moves
+    dst = CArray.double(8)
+    assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(1) { |i|
+        2.times { |p| (7 - p).step(0, -3) { |k| dst[k - 1] = 5.0 } }
+      }
+    end
+    assert_equal([0.0] * 8, dst.to_a)
+  end
+
+  # And where every pass does fit, the loop runs as Ruby would run it.
+  def test_a_stepped_range_whose_start_moves_inside_the_array
+    dst = CArray.double(3, 8)
+    CArray.jit_for(1) { |i|
+      3.times { |p| (p...8).step(3) { |k| dst[p, k] = k + 10.0 * p } }
+    }
+    reference = CArray.double(3, 8)
+    3.times { |p| (p...8).step(3) { |k| reference[p, k] = k + 10.0 * p } }
+    assert_equal(reference.to_a, dst.to_a)
+  end
+
   # ---------- the shapes a range may take ----------
 
   def test_a_range_built_with_a_product

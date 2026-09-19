@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: an inner loop stepping by more than one over a start written over
+  another index -- `2.times { |p| (p...8).step(3) { |k| ... } }` -- is held
+  to the cells every pass reaches, not only the pass from the earliest
+  start. A subscript one pass took past the end of an array was let through
+  and written; it is now refused as the call is prepared. A step of one, and
+  a start that does not move, are read as before.
+
 - Fix: a local array whose shape is written over captured integers --
   `CArray.double(n, m)` -- raises `ArgumentError` when its lengths each fit
   but their product does not count in bytes. Such a product wrapped to a
