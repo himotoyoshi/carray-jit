@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a `CArray.jit_function` body that subscripts a pointer parameter
+  with a literal outside the length its declaration gave -- `v[7]` or
+  `v[-1]` against `double v[2]` -- raises `CArray::JIT::Unsupported` as the
+  body is read. It compiled, and wrote or read past what the caller was
+  held to. A computed subscript, and any subscript on a pointer declared
+  without a length, are unchecked as before.
+
 - Fix: an inner loop stepping by more than one over a start written over
   another index -- `2.times { |p| (p...8).step(3) { |k| ... } }` -- is held
   to the cells every pass reaches, not only the pass from the earliest

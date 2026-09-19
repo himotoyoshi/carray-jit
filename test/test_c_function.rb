@@ -1194,6 +1194,31 @@ class TestCFunction < Minitest::Test
     assert_bits_equal(7.0, f.call(CArray.double(1) { 7.0 }))
   end
 
+  # The caller is held to the declared length and no more, so a literal
+  # subscript past it reaches memory no one promised.  Nothing needs to run
+  # to see that, and it is refused as the body is read -- for a write, a
+  # read, and a negative subscript alike.  A computed subscript is still the
+  # body's own business, as it is in C.
+  def test_a_literal_subscript_past_the_declared_length
+    [["void (*)(double v[2])", proc { |v| v[7] = 1.0 }, "v[7]"],
+     ["double (*)(const double v[2])", proc { |v| v[2] }, "v[2]"],
+     ["double (*)(const double v[2])", proc { |v| v[-1] }, "v[-1]"]
+    ].each do |declaration, body, spelled|
+      error = assert_raises(CArray::JIT::Unsupported) do
+        CArray.jit_function(declaration, &body)
+      end
+      assert_includes(error.message,
+                      "`#{spelled}` is outside the 2 cells `v` is declared with")
+    end
+    f = CArray.jit_function("double (*)(const double v[2])") { |v| v[0] + v[1] }
+    assert_bits_equal(3.0, f.call(CArray.double(2) { 1.5 }))
+  end
+
+  def test_an_unsized_pointer_takes_any_literal_subscript
+    f = CArray.jit_function("double (*)(const double *v)") { |v| v[3] }
+    assert_bits_equal(3.0, f.call(CArray.double(4).seq!))
+  end
+
   # ---------- handing a kernel's array to a C function ----------
   #
   # Inside a kernel a captured array has meant one thing -- the cell the

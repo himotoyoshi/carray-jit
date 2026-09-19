@@ -947,6 +947,9 @@ class CArray
                         .to_h { |name, type|
                           [name, type.indexable? ? !type.const : nil]
                         }
+        pointer_lengths = names.zip(parameters)
+                               .select { |_, type| type.indexable? && type.sized? }
+                               .to_h { |name, type| [name, type.array] }
         pointer_types = names.zip(parameters).select { |_, type| type.indexable? }
                              .to_h { |name, type| [name, type.element.computation] }
 
@@ -956,6 +959,7 @@ class CArray
         analyzer = Analyzer.new(source, node: node, function: true,
                                 returns: !returns_nothing,
                                 pointers: pointers,
+                                pointer_lengths: pointer_lengths,
                                 c_functions: called,
                                 recursion: (name && [name.to_sym, parameters,
                                                      return_type.computation]))
