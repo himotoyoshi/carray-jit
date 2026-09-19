@@ -195,12 +195,10 @@ class TestComplex < Minitest::Test
     product = compile_kernel("->(i) { r[i] = a[i] * b[i] }",
                              arrays: { :a => "cmplx64", :b => "cmplx64",
                                        :r => "cmplx64" })
-    assert_match(/\(float _Complex\)\(\(double _Complex\).*\*.*\)/,
+    assert_match(/\(float _Complex\)carray_jit_complex_multiply\(\(double _Complex\)/,
                  product.c_source,
-                 "a complex product is reached in double and rounded once -- " \
-                 "and the cast is round the whole product, since it binds " \
-                 "tighter than the operator and would otherwise narrow the " \
-                 "left operand and leave the multiply around it")
+                 "a complex product is reached in double and rounded once, " \
+                 "the cast round the whole product")
 
     sum = compile_kernel("->(i) { r[i] = a[i] + b[i] }",
                          arrays: { :a => "cmplx64", :b => "cmplx64",
@@ -581,6 +579,31 @@ class TestComplex < Minitest::Test
   def test_an_unsupported_scalar_class_names_complex_among_the_supported
     refuse("->(i) { a[i] = s * a[i] }", /Float, Integer or Complex/,
            scalars: { :s => "text" })
+  end
+
+  # A full product -- two Complex numbers, or a real times one -- goes part
+  # by part through complex.c's safe_mul, where a zero meeting an infinity
+  # is a zero.  C's complex `*` recovers from an infinity by Annex G's rules
+  # instead, and answered NaN in parts Ruby answers a zero in.
+  def test_a_product_meeting_an_infinity_is_rubys
+    inf = Float::INFINITY
+    nan = Float::NAN
+    reals = [0.0, -0.0, 3.0, inf, nan]
+    complexes = [Complex(inf, 0.0), Complex(0.0, 1.0), Complex(inf, nan),
+                 Complex(1.0, -0.0), Complex(-0.0, inf)]
+    pairs = reals.product(complexes)
+    x = CArray.double(pairs.size) { |k| pairs[k][0] }
+    z = CArray.cmplx128(pairs.size) { |k| pairs[k][1] }
+    w = CArray.cmplx128(pairs.size) { |k| complexes[(k * 3) % complexes.size] }
+    real_left = CArray.cmplx128(pairs.size)
+    both = CArray.cmplx128(pairs.size)
+    CArray.jit_for(pairs.size) { |i| real_left[i] = x[i] * z[i] }
+    CArray.jit_for(pairs.size) { |i| both[i] = z[i] * w[i] }
+    bits = ->(c) { [c.real, c.imaginary].pack("E2") }
+    pairs.size.times do |k|
+      assert_equal(bits.(x[k] * z[k]), bits.(real_left[k]), "#{x[k]} * #{z[k]}")
+      assert_equal(bits.(z[k] * w[k]), bits.(both[k]), "#{z[k]} * #{w[k]}")
+    end
   end
 
 end

@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: multiplying two Complex numbers, or a real number by a Complex
+  (`x * z`), gives Ruby's answer where an infinity meets a zero:
+  `0.0 * Complex(Float::INFINITY, 0.0)` is `0.0+0.0i`, where it was
+  `NaN+NaN*i`. Finite products are unchanged, `cmplx64` included, and
+  `z * x` still scales each part as it did.
+
 - Fix: `%` by a float zero raises `ZeroDivisionError`, as Ruby's does --
   `x % 0.0`, `x % -0.0`, an integer cell `% 0.0` -- in a kernel and in a
   `CArray.jit_function` alike. It answered `NaN`, which is what CArray's `%`

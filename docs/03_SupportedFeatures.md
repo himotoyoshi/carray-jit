@@ -454,10 +454,10 @@ CArray.jit_for(n) { |i| power[i] = spectrum[i].abs }
 
 The fifteen math functions CArray computes on a complex array -- `sqrt`, `exp`, `log`, the six trigonometric, the six hyperbolic -- compile to their C99 `c`-prefixed forms. The ones a complex CArray refuses are refused here too: `log10`, `log2` and `cbrt` have no complex form in C99, and `atan2` and `hypot` are about the plane a complex number already is.
 
-Ruby's Complex arithmetic is not C's, in ways that show up in the last bit and in the sign of a zero, so three of the four operators are compiled to match Ruby rather than to C's operator:
+Ruby's Complex arithmetic is not C's, in ways that show up in the last bit, in the sign of a zero, and where an infinity meets a zero, so three of the four operators are compiled to match Ruby rather than to C's operator:
 
 - A Complex **added to** a real number keeps its imaginary part exactly as it was, rather than having a zero added to it: Ruby's own `f_add` returns the other operand as it stands when one of them is the exact Integer zero a real operand carries. `Complex(1.0, -0.0) + 2.0` is `3.0-0.0i`; widening the `2.0` to a complex first would make it `3.0+0.0i`.
-- `z * x` **scales each part**, while `x * z` coerces and multiplies out in full -- so Ruby's two answers differ from each other, and each is reproduced its own way.
+- `z * x` **scales each part**, while `x * z` coerces and multiplies out in full -- so Ruby's two answers differ from each other, and each is reproduced its own way. A full product, `x * z` or two Complex numbers, is Ruby's part by part: a zero meeting an infinity gives a zero, so `0.0 * Complex(Float::INFINITY, 0.0)` is `0.0+0.0i`, where C's own complex `*` answers `NaN`s.
 - **Division** is Smith's method in the order `complex.c` writes it, which is not the order the C library's `__divdc3` arrives at.
 
 Subtraction is the one that needs no help: there the zero really is subtracted, in Ruby as in C.
