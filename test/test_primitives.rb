@@ -254,6 +254,30 @@ class TestPrimitives < Minitest::Test
     assert_equal("-0.0", (-6.0 % 3.0).to_s, "which is not what Ruby gives")
   end
 
+  # Ruby raises for a float divisor of zero too -- `3.0 % 0.0`, `3 % 0.0` --
+  # where fmod and CArray answer NaN.  A float `/` by zero is an infinity in
+  # Ruby, and is not this case.
+  def test_float_modulo_by_zero_is_reported
+    left = CArray.double(2).seq!(1.0)
+    right = CArray.double(2)
+    result = CArray.double(2)
+    assert_raises(ZeroDivisionError) do
+      CArray.jit_for(2) { |i| result[i] = left[i] % right[i] }
+    end
+    narrow = CArray.float32(2).seq!(1.0)
+    assert_raises(ZeroDivisionError) do
+      CArray.jit_for(2) { |i| result[i] = narrow[i] % 0.0 }
+    end
+    whole = CArray.int32(2).seq!(1)
+    assert_raises(ZeroDivisionError) do
+      CArray.jit_for(2) { |i| result[i] = whole[i] % -0.0 }
+    end
+    f = CArray.jit_function("double (*)(double, double)") { |a, b| a % b }
+    assert_raises(ZeroDivisionError) { f.call(2.0, 0.0) }
+    CArray.jit_for(2) { |i| result[i] = left[i] / right[i] }
+    assert_equal([Float::INFINITY] * 2, result.to_a)
+  end
+
   def test_integer_modulo_by_zero_is_reported
     left = CArray.int64(2).seq!(1)
     right = CArray.int64(2)

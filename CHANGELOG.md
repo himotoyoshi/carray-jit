@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `%` by a float zero raises `ZeroDivisionError`, as Ruby's does --
+  `x % 0.0`, `x % -0.0`, an integer cell `% 0.0` -- in a kernel and in a
+  `CArray.jit_function` alike. It answered `NaN`, which is what CArray's `%`
+  answers and not what the docs promised. A float `/` by zero is still an
+  infinity, as it is in Ruby.
+
 - Change: arithmetic between two booleans -- `flag[i] * flag[i]`, `+`, `-`,
   `/`, `%` -- raises `CArray::JIT::Unsupported` where the operator stands,
   as `true * true` raises in Ruby. Used as a condition it compiled and ran.

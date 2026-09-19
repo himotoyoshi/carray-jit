@@ -704,8 +704,12 @@ class CArray
                computing wide and narrowing afterwards stops agreeing with
                computing narrow. */
             static inline float
-            carray_jit_floor_modulo_float (float numerator, float denominator)
+            carray_jit_floor_modulo_float (float numerator, float denominator, int32_t *error)
             {
+              if ( denominator == 0 ) {
+                if ( error ) *error = 1;
+                return 0;
+              }
               float remainder = fmodf(numerator, denominator);
               if ( remainder != 0 ) {
                 if ( (remainder < 0) != (denominator < 0) ) remainder += denominator;
@@ -990,7 +994,12 @@ class CArray
                non-zero and disagrees with it in sign -- and, for floats,
                give a zero remainder the divisor's sign, so the rule holds
                without exception.  This mirrors CArray's own `:mod` kernel in
-               `ext/mkkernel.rb`. */
+               `ext/mkkernel.rb`.
+
+               A zero divisor is Ruby's rather than CArray's: `3.0 % 0.0` raises
+               ZeroDivisionError in Ruby, a float divisor as much as an integer
+               one, where fmod and CArray answer NaN.  `3.0 / 0.0` is not that
+               case -- an infinity in Ruby as in C -- and is left alone. */
             static inline int64_t
             carray_jit_floor_modulo (int64_t numerator, int64_t denominator, int32_t *error)
             {
@@ -1006,8 +1015,12 @@ class CArray
             }
 
             static inline double
-            carray_jit_floor_modulo_real (double numerator, double denominator)
+            carray_jit_floor_modulo_real (double numerator, double denominator, int32_t *error)
             {
+              if ( denominator == 0 ) {
+                if ( error ) *error = 1;
+                return 0;
+              }
               double remainder = fmod(numerator, denominator);
               if ( remainder != 0 ) {
                 if ( (remainder < 0) != (denominator < 0) ) remainder += denominator;
@@ -3580,11 +3593,11 @@ class CArray
         if node.type == :float
           @uses_floor_modulo_float = true
           return ["carray_jit_floor_modulo_float(#{emit(node.left, :float)}, " \
-                  "#{emit(node.right, :float)})", LEAF_PRECEDENCE]
+                  "#{emit(node.right, :float)}, #{error_argument})", LEAF_PRECEDENCE]
         end
         unhandled_type(node, "%") unless node.type == :double
         ["carray_jit_floor_modulo_real(#{emit(node.left, :double)}, " \
-         "#{emit(node.right, :double)})", LEAF_PRECEDENCE]
+         "#{emit(node.right, :double)}, #{error_argument})", LEAF_PRECEDENCE]
       end
 
       def power_of_two_shift (node)
