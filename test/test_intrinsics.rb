@@ -150,6 +150,28 @@ class TestIntrinsics < Minitest::Test
     assert(high[0].nan?)
   end
 
+  # 0.0 and -0.0 compare equal, and CArray keeps whichever came first.  So
+  # does the fold: a cell takes the accumulator only by beating it.
+  def test_of_two_zeros_min_and_max_keep_the_first_as_carray_does
+    [[0.0, -0.0], [-0.0, 0.0]].each do |first, second|
+      pair = CArray.double(2)
+      pair[0] = first
+      pair[1] = second
+      low = CArray.double(1)
+      high = CArray.double(1)
+      CArray.jit_for(1) { |i|
+        w = CArray.double(2)
+        w[0] = pair[0]
+        w[1] = pair[1]
+        low[i] = min(w)
+        high[i] = max(w)
+      }
+      assert_equal(pair.min.to_s, low[0].to_s, "min of #{[first, second]}")
+      assert_equal(pair.max.to_s, high[0].to_s, "max of #{[first, second]}")
+      assert_equal(first.to_s, low[0].to_s)
+    end
+  end
+
   # A number beats a NaN however many NaNs it is among, which is what keeps
   # the answer above from swallowing an array that holds one.
   def test_a_single_number_among_nan_is_the_answer
@@ -417,12 +439,13 @@ class TestIntrinsics < Minitest::Test
     refute_match(/qsort/, kernel.c_source)
     # fmin and fmax answer the other number when one is a NaN, which drops a
     # cell.  A sort has to put every cell somewhere, so the comparator is
-    # written out; the min / max folds below want exactly that dropping and
-    # do use them.
+    # written out.
     refute_match(/\bfmin\b|\bfmax\b|\bfminf\b|\bfmaxf\b/, kernel.c_source)
   end
 
-  def test_the_min_and_max_helpers_fold_with_fmin_and_fmax
+  # A comparison rather than fmin / fmax: the same NaN rule, and the first
+  # of two equal cells kept, which fmin leaves to the library.
+  def test_the_min_and_max_helpers_fold_by_comparison
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
         w = CArray.double(9)
@@ -430,8 +453,11 @@ class TestIntrinsics < Minitest::Test
         out[i] = min(w) + max(w)
       }
     RUBY
-    assert_match(/best = fmin\(best, w\[k\]\)/, kernel.c_source)
-    assert_match(/best = fmax\(best, w\[k\]\)/, kernel.c_source)
+    assert_match(/if \( w\[k\] < best \|\| best != best \) best = w\[k\];/,
+                 kernel.c_source)
+    assert_match(/if \( w\[k\] > best \|\| best != best \) best = w\[k\];/,
+                 kernel.c_source)
+    refute_match(/\bfmin\(|\bfmax\(/, kernel.c_source)
     assert_match(/double best = NAN;/, kernel.c_source)
   end
 
@@ -446,7 +472,7 @@ class TestIntrinsics < Minitest::Test
         out[i] = min(w) + max(w)
       }
     RUBY
-    refute_match(/\bfmin\b|\bfmax\b/, kernel.c_source)
+    refute_match(/\bfmin\(|\bfmax\(/, kernel.c_source)
     assert_match(/int64_t best = INT64_MAX;/, kernel.c_source)
     assert_match(/int64_t best = INT64_MIN;/, kernel.c_source)
   end
