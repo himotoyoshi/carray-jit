@@ -39,6 +39,10 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `CArray::JIT.clear_registry` now forgets the functions
+  `CArray.jit_function` compiled, as it already did kernels, so the next
+  call reads them back from the cache on disk.
+
 - Fix: a block run through `eval` -- in a console, or from code that builds
   its kernels as text -- no longer stays in memory for the life of the
   process once nothing refers to it. On Ruby 3.2 it still does.
