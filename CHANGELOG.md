@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: the docs now say that a negative Float to a fractional power is
+  `NaN`, as `pow` and CArray answer, where Ruby answers a Complex. This was
+  already the behaviour; a whole-number exponent or a non-negative base is
+  Ruby's number.
+
 - Change: the docs now say that an Integer compared with a Float is
   compared as two doubles, as CArray compares them, so past 2^53 the answer
   can differ from Ruby's exact comparison. This was already the behaviour;
