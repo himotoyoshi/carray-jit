@@ -67,6 +67,36 @@ class TestPrimitives < Minitest::Test
       CArray.jit_for(VALUES.size) { |i| out[i] = a[i].to_i } }
   end
 
+  # The Integer Ruby answers is exact however large, so a float cell gets it
+  # whole: 1e20.floor is 1e20, not the int64 it would have been cast to.
+  # Where there is no Integer -- a NaN, an infinity -- Ruby raises, and
+  # where there is one an int64 cannot hold, storing it does.
+  def test_rounding_past_int64_and_through_nothing
+    values = CArray.double(4)
+    [1e20, -1e20, 2.5, -2.5].each_with_index { |v, i| values[i] = v }
+    into_float = CArray.double(4)
+    CArray.jit_for(4) { |i| into_float[i] = values[i].floor }
+    assert_equal(values.to_a.map { |v| v.floor.to_f }, into_float.to_a)
+    scaled = CArray.double(4)
+    CArray.jit_for(4) { |i| scaled[i] = values[i].round * 0.5 }
+    assert_equal(values.to_a.map { |v| v.round * 0.5 }, scaled.to_a)
+    into_int = CArray.int64(4)
+    assert_raises(RangeError) do
+      CArray.jit_for(4) { |i| into_int[i] = values[i].floor }
+    end
+    odd = CArray.double(3)
+    odd[0] = Float::NAN; odd[1] = Float::INFINITY; odd[2] = -Float::INFINITY
+    ["NaN", "Infinity", "-Infinity"].each_with_index do |message, k|
+      error = assert_raises(FloatDomainError) do
+        CArray.jit_for(1) { |i| into_float[i] = odd[i + k].ceil }
+      end
+      assert_equal(message, error.message)
+    end
+    f = CArray.jit_function("double (*)(double)") { |x| x.truncate }
+    assert_equal(1e20, f.call(1e20))
+    assert_raises(FloatDomainError) { f.call(Float::NAN) }
+  end
+
   def test_float_power
     check("** 2.0", ->(v) { v ** 2.0 }) { |a, out|
       CArray.jit_for(VALUES.size) { |i| out[i] = a[i] ** 2.0 } }

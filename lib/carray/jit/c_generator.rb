@@ -370,6 +370,7 @@ class CArray
         @uses_floor_modulo = false
         @uses_integer_power = false
         @uses_integer_abs = false
+        @uses_whole_number = false
         @uses_unsigned_divide = false
         @uses_unsigned_modulo = false
         @uses_unsigned_power = false
@@ -534,6 +535,7 @@ class CArray
           :clears_a_local_array => clears_a_local_array?,
           :integer_power => @uses_integer_power,
           :integer_abs => @uses_integer_abs,
+          :whole_number => @uses_whole_number,
           :unsigned_divide => @uses_unsigned_divide,
           :unsigned_modulo => @uses_unsigned_modulo,
           :unsigned_power => @uses_unsigned_power,
@@ -638,6 +640,7 @@ class CArray
           needs = function.helpers || {}
           @uses_integer_power ||= needs[:integer_power]
           @uses_integer_abs ||= needs[:integer_abs]
+          @uses_whole_number ||= needs[:whole_number]
           @uses_unsigned_divide ||= needs[:unsigned_divide]
           @uses_unsigned_modulo ||= needs[:unsigned_modulo]
           @uses_unsigned_power ||= needs[:unsigned_power]
@@ -785,6 +788,40 @@ class CArray
                 exponent >>= 1;
               }
               return result;
+            }
+
+          C
+        end
+        if @uses_whole_number
+          text << <<~C
+            /* `floor`, `ceil`, `round` and `truncate` on a Float answer an
+               Integer in Ruby, and a NaN or an infinity has none to answer:
+               Ruby raises FloatDomainError.  A number past int64 has one, but
+               not in an int64_t, where the cast is undefined -- CArray raises
+               RangeError storing such an Integer, and so does this.  The real
+               one is for a value that stays a number: 1e20.floor into a
+               float64 cell is 1e20 in Ruby, and does not pass through int64. */
+            static inline double
+            carray_jit_whole_real (double value, int32_t *error)
+            {
+              if ( isnan(value) ) {
+                if ( error ) *error = #{FLOAT_NAN_CODE};
+              }
+              else if ( isinf(value) ) {
+                if ( error ) *error = value > 0 ? #{FLOAT_INFINITY_CODE} : #{FLOAT_NEGATIVE_INFINITY_CODE};
+              }
+              return value;
+            }
+
+            static inline int64_t
+            carray_jit_whole_int64 (double value, int32_t *error)
+            {
+              if ( ! ( value >= -9223372036854775808.0 && value < 9223372036854775808.0 ) ) {
+                carray_jit_whole_real(value, error);
+                if ( error && ! isnan(value) && ! isinf(value) ) *error = #{INTEGER_RANGE_CODE};
+                return 0;
+              }
+              return (int64_t) value;
             }
 
           C
@@ -1486,6 +1523,24 @@ class CArray
       # reaches for a negative code, so these two are the kernel's own.
       SHAPE_CODE = -1
       MEMORY_CODE = -2
+
+      # And what a rounding reports where Ruby has no Integer to answer, or
+      # has one an int64 cannot hold.  Negative for the same reason: fixed
+      # codes, which a `raise` digest must not land on.
+      FLOAT_NAN_CODE = -3
+      FLOAT_INFINITY_CODE = -4
+      FLOAT_NEGATIVE_INFINITY_CODE = -5
+      INTEGER_RANGE_CODE = -6
+
+      # The fixed failures a body reports, as the exception each one raises.
+      # A kernel and a compiled function both look here, so the two say the
+      # same thing for the same cell.
+      FIXED_FAILURES = {
+        FLOAT_NAN_CODE => [FloatDomainError, "NaN"],
+        FLOAT_INFINITY_CODE => [FloatDomainError, "Infinity"],
+        FLOAT_NEGATIVE_INFINITY_CODE => [FloatDomainError, "-Infinity"],
+        INTEGER_RANGE_CODE => [RangeError, "a rounded Float is past the range of int64"],
+      }.freeze
 
       RAISE_CODE_FLOOR = 3
 
@@ -2359,11 +2414,20 @@ class CArray
             "#{indent}#{target} = " \
             "#{cast_to_storage(temporary, type, array_storage(write.array))};\n"
         else
+          storage = array_storage(write.array)
+          real = REAL_STORAGE_TYPES[storage]
+          if real && rounded_real?(expression, real)
+            return "#{indent}#{target} = #{emit(expression, real)};\n"
+          end
           value = cast_to_storage(emit(expression, expression.type),
-                                  expression.type, array_storage(write.array))
+                                  expression.type, storage)
           "#{indent}#{target} = #{value};\n"
         end
       end
+
+      # A float cell, by what it computes in: the storage a rounding written
+      # straight into keeps as a real number (see #rounded_real?).
+      REAL_STORAGE_TYPES = { "float64" => :double, "float32" => :float }.freeze
 
       # A conditional in statement position becomes if/else rather than a
       # ternary; it reads far better when the branches are long.
@@ -2949,11 +3013,17 @@ class CArray
       # Emits `node` so that its value has type `target`, inserting a cast
       # only where the type actually changes.
       def emit (node, target)
+        return emit_rounded_real(node, target).first if rounded_real?(node, target)
         widen(*emit_raw(node), node.type, target).first
       end
 
       def emit_operand (node, target, parent_precedence, right_side = false)
-        text, precedence = widen(*emit_raw(node), node.type, target)
+        text, precedence =
+          if rounded_real?(node, target)
+            emit_rounded_real(node, target)
+          else
+            widen(*emit_raw(node), node.type, target)
+          end
         parenthesize(text, precedence, right_side ? parent_precedence + 1 : parent_precedence)
       end
 
@@ -3171,7 +3241,28 @@ class CArray
                   UNARY_PRECEDENCE]
         end
         return [emit(node.operand, :double), LEAF_PRECEDENCE] if node.result_type == :double
-        ["(int64_t)#{node.name}(#{emit(node.operand, :double)})", UNARY_PRECEDENCE]
+        @uses_whole_number = true
+        ["carray_jit_whole_int64(#{node.name}(#{emit(node.operand, :double)}), " \
+         "#{error_argument})", LEAF_PRECEDENCE]
+      end
+
+      # The same rounding where the answer is wanted as a real number: the
+      # Integer Ruby answers is exact however large, and a float cell holds
+      # it as the rounded double already is, so it does not go through int64
+      # and is not held to its range.
+      def rounded_real? (node, target)
+        node.is_a?(Conversion) && node.result_type == :int64 &&
+          node.type == :int64 &&
+          !TypeAssignment::INTEGER_TYPES.include?(node.operand.type) &&
+          [:double, :float].include?(target)
+      end
+
+      def emit_rounded_real (node, target)
+        @uses_whole_number = true
+        text = "carray_jit_whole_real(#{node.name}(#{emit(node.operand, :double)}), " \
+               "#{error_argument})"
+        return [text, LEAF_PRECEDENCE] if target == :double
+        ["(float)#{text}", UNARY_PRECEDENCE]
       end
 
       # creal and cimag are the way out of the complex type; conj stays in it.

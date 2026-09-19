@@ -374,6 +374,9 @@ class CArray
       # in Ruby would have raised.
       def report (error, scalars = {})
         code = error.unpack1("l")
+        if (failure = CGenerator::FIXED_FAILURES[code])
+          raise failure[0], failure[1]
+        end
         case code
         when 0 then nil
         when CGenerator::SHAPE_CODE then raise_a_bad_shape(scalars)
