@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a local assigned under an `if` or a `while` whose condition read a
+  missing cell is masked, as a cell written there already was. It came back
+  a number like any other, so `found = -1; ...; if a[i, j] > x then found =
+  j end; out[i] = found` reported a position found under a mask. A condition
+  that asks about the mask itself (`a[i] == UNDEF`) still masks nothing.
+
 - Change: a cache directory owned by another user is refused, as one other
   users can write to already was; everything in it is `dlopen`ed. A cache
   root that is a symlink is followed as before, and the owner of the

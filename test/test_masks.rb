@@ -203,4 +203,82 @@ class TestMasks < Minitest::Test
     assert_equal([10], result.is_masked.where.to_a)
   end
 
+  # A branch decided by a missing cell was decided by bytes that mean
+  # nothing, so what it writes is missing too.  That held where the branch
+  # wrote a cell and not where it wrote a local -- the spelling a search
+  # over a row takes -- and the answer came back a number like any other.
+  def masked_row
+    values = CArray.double(3, 4).seq!(1.0)
+    values[1, 1] = 1.0e9
+    values.mask = [[0, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]]
+    values
+  end
+
+  def test_a_local_written_under_a_masked_branch_is_masked
+    values = masked_row
+    result = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      v = 0.0
+      if values[i, 1] > 5.0 then v = 1.0 end
+      result[i] = v
+    }
+    assert_equal([false, true, false], result.is_masked.to_a)
+
+    direct = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      if values[i, 1] > 5.0 then direct[i] = 1.0 else direct[i] = 0.0 end
+    }
+    assert_equal(direct.is_masked.to_a, result.is_masked.to_a,
+                 "the local and the cell take the same rule")
+  end
+
+  def test_a_local_written_under_a_masked_while_is_masked
+    values = masked_row
+    counted = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      x = 0.0
+      n = 0.0
+      while x < values[i, 1]
+        x = x + 1.0
+        n = n + 1.0
+      end
+      counted[i] = n
+    }
+    assert_equal([false, true, false], counted.is_masked.to_a)
+    assert_equal([2.0, 10.0], counted.to_a.values_at(0, 2))
+  end
+
+  # The search over a row that the guide writes out: the index it reports for
+  # a row whose match was under a mask is not a position, and says so.
+  def test_a_search_that_matches_under_a_mask_reports_nothing
+    values = masked_row
+    first = CArray.int32(3)
+    CArray.jit_for(3) { |i|
+      found = -1
+      (0...4).each { |j|
+        if values[i, j] > 5.0
+          found = j
+          break
+        end
+      }
+      first[i] = found
+    }
+    assert_equal([false, true, false], first.is_masked.to_a)
+    assert_equal([-1, 0], first.to_a.values_at(0, 2))
+  end
+
+  # A condition about the mask itself was not decided by garbage, so filling
+  # from one leaves the cell present.
+  def test_filling_from_a_mask_test_leaves_the_cell_present
+    values = masked_row
+    filled = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      v = 0.0
+      if values[i, 1] == UNDEF then v = -1.0 else v = values[i, 1] end
+      filled[i] = v
+    }
+    assert_equal([false, false, false], filled.is_masked.to_a)
+    assert_equal([2.0, -1.0, 10.0], filled.to_a)
+  end
+
 end
