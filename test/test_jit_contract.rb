@@ -651,4 +651,23 @@ class TestContractNamedAxes < Minitest::Test
                  counted.to_a)
   end
 
+  # A contraction is one expression -- which is why it takes no local array
+  # either -- so a local assigned before the summand is refused, saying that.
+  # What said it before was the type assignment: the accumulator's zero is
+  # taken from the summand and stands above the loop the local is assigned
+  # in, so the local looked read before it was assigned.
+  def test_a_local_assigned_before_the_summand_says_why
+    left = CArray.double(3, 2).seq!(1.0)
+    right = CArray.double(2, 2).seq!(1.0)
+    into = CArray.double(3, 2)
+    [-> { CArray.jit_contract { |i, j, k| u = left[i, k]; u * right[k, j] } },
+     -> { CArray.jit_contract { |i, j, k| u = left[i, k]; into[i, j] = u * right[k, j] } }
+    ].each do |spelling|
+      error = assert_raises(CArray::JIT::Unsupported) { spelling.call }
+      assert_match(/`u` is assigned before the summand/, error.message)
+      assert_match(/a contraction is one expression/, error.message)
+      refute_match(/read before it is assigned/, error.message)
+    end
+  end
+
 end
