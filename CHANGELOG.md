@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a build whose compile fails leaves no `.c` behind in the cache. Such
+  a file was never looked up -- a cache hit is an object -- and eviction
+  passes over it, so one stayed for good, and one more for every kernel of
+  every run against a toolchain that cannot compile.
+
 - Change: a compiler this process cannot find -- `CARRAY_JIT_CC` naming
   something that is not there -- raises `CArray::JIT::CompilationError`
   saying so and naming the variable, where it raised `Errno::ENOENT` from

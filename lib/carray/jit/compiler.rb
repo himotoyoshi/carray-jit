@@ -247,7 +247,19 @@ class CArray
           # Build to a unique path and rename, so a concurrent process never
           # loads a half-written object.
           staging_path = "#{object_path}.#{Process.pid}"
-          compile(source_path, staging_path, flags)
+          begin
+            compile(source_path, staging_path, flags)
+          rescue Exception
+            # A build that did not finish leaves nothing behind.  The source
+            # is half an entry: nothing looks it up -- a hit is an object --
+            # and prune globs objects too, so it would sit in the cache for
+            # good, one per kernel per run against a toolchain that cannot
+            # compile.  The staging file would be swept in five minutes; it
+            # goes now, beside the source it came from.
+            remove_entry(object_path)
+            unlink(staging_path)
+            raise
+          end
           File.rename(staging_path, object_path)
           sweep_staging(directory)
           sweep_environments
@@ -460,13 +472,13 @@ class CArray
 
         def remove_entry (object_path)
           source_path = object_path.sub(/#{Regexp.escape(shared_object_suffix)}\z/, ".c")
-          [object_path, source_path].each do |path|
-            begin
-              File.unlink(path) if File.exist?(path)
-            rescue StandardError
-              nil
-            end
-          end
+          [object_path, source_path].each { |path| unlink(path) }
+        end
+
+        def unlink (path)
+          File.unlink(path) if File.exist?(path)
+        rescue StandardError
+          nil
         end
 
         def touch (path)

@@ -254,6 +254,22 @@ class TestCacheManagement < Minitest::Test
     CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
   end
 
+  # A build that fails leaves no half of an entry behind: a source with no
+  # object is never looked up and never pruned, so one would stay for good,
+  # and one more with every kernel of every run.
+  def test_a_failed_build_leaves_nothing_in_the_cache
+    ENV["CARRAY_JIT_CC"] = "/usr/bin/false"
+    CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
+    CArray::JIT.clear_registry
+    assert_raises(CArray::JIT::CompilationError) { compile_indexed(7) }
+    assert_empty(Dir[File.join(leaf, "*")],
+                 "a failed build should leave no source and no staging file")
+  ensure
+    ENV.delete("CARRAY_JIT_CC")
+    CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
+    CArray::JIT.clear_registry
+  end
+
   # A compiler that is not there is said once, where it is looked for --
   # rather than as an Errno::ENOENT out of the spawn, naming the program and
   # neither what it was for nor the variable that names it.
