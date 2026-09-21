@@ -153,8 +153,9 @@ CArray.jit_for(a.size) { |i| total[] += a[i] }  # and written like any cell
 A captured Numeric has no data type of its own, so a local seeded from one has
 none either; a `CScalar` is a value with a type, which is what makes it the way
 to hand a kernel a scalar and the way to take one back out. `s[]` is the value
-and `s[] = ...` puts one back -- in an indexed kernel a bare `s` says the same,
-there being no axis to walk and so no index to write.
+and `s[] = ...` puts one back.  A bare `s` reads the value too, there being no
+axis to walk; written to, a bare name is a local of the block's own, so an
+accumulator is `s[] = s[] + ...` and not `s = s + ...`.
 
 Every iteration writing the one cell it has is what makes it an accumulator,
 and what is left is what the same Ruby loop leaves. `CScalar.int()` is that one
@@ -181,6 +182,9 @@ is what the cell gets.
 |---|---|
 | `border: :mask` | a cell whose window falls off is `UNDEF` -- not computed (default) |
 | `border: :skip` | that cell is left as it was found |
+| `border: :zero` | a read that falls off gives 0, and the cell is computed |
+| `border: :clamp` | such a read gives the nearest cell inside |
+| `border: :wrap` | such a read comes back the other side |
 | `type:` | the data type to collect into; without it, the block's value's |
 | `into:` | write into an array of yours, which then decides the type |
 

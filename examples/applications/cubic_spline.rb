@@ -220,12 +220,15 @@ jump = lambda { |m, i, j, k|                   # S''' across the knot that is no
 puts format("  not-knot  S''' jumps by %.1e at x[1] and %.1e at x[n-2] -- neither is a knot",
             jump.call(not_a_knot, 0, 1, 2), jump.call(not_a_knot, n-3, n-2, n-1))
 
-# The interpolation itself: all of them pass through every knot.
+# The interpolation itself: all of them pass through every knot, so all three
+# are asked, not just the one whose name comes first.
 knots = CArray.double(n) { |i| x[i] }
 at_knots = CArray.double(n)
 at_knots_slope = CArray.double(n)
-evaluate(x, y, natural, n, knots, at_knots, at_knots_slope)
-puts format("  max |S(x_i) - y_i| = %.2e", (at_knots - y).abs.max)
+{ "natural" => natural, "clamped" => clamped, "not-a-knot" => not_a_knot }.each do |name, moment|
+  evaluate(x, y, moment, n, knots, at_knots, at_knots_slope)
+  puts format("  %-10s max |S(x_i) - y_i| = %.2e", name, (at_knots - y).abs.max)
+end
 
 # The query grid above is sorted, so the sweep applies to it -- and gives back
 # the same doubles, not merely close ones: the interval a point lands in is the

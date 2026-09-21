@@ -94,7 +94,7 @@ puts
 puts format("Newton steps per cell: %d at the least, %d at the most, %.2f on average",
             rounds_taken.min, rounds_taken.max, rounds_taken.mean)
 
-# The same bisection over whole arrays.  It cannot stop per cell, so it runs
+# The same Newton iteration over whole arrays.  It cannot stop per cell, so it runs
 # the worst cell's count everywhere, and every line here is a pass over the
 # grid holding another grid.
 def derive_over_arrays (temperature, humidity, rounds)
