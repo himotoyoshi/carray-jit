@@ -254,6 +254,34 @@ class TestCacheManagement < Minitest::Test
     CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
   end
 
+  # An object is opened before it is published, so that eviction cannot come
+  # between the build and the open.  Another process's prune spares only what
+  # that process is building, and with a limit below the number of processes
+  # building at once it evicted theirs: every one of five processes failed at
+  # a limit of 2, with "could not load freshly compiled".
+  def test_building_while_another_process_evicts
+    skip "fork is not available here" unless Process.respond_to?(:fork)
+    ENV["CARRAY_JIT_CACHE_LIMIT"] = "1"
+    pids = 3.times.map { |p|
+      fork do
+        status = 0
+        2.times do |r|
+          begin
+            CArray::JIT.clear_registry
+            compile_kernel("->(i) { a[i] = a[i-1] * 1#{p}#{r}.5 }")
+          rescue Exception
+            status = 1
+          end
+        end
+        exit status
+      end
+    }
+    failed = pids.count { |pid| Process.wait2(pid)[1].exitstatus != 0 }
+    assert_equal(0, failed, "a build should not lose to another's eviction")
+  ensure
+    ENV.delete("CARRAY_JIT_CACHE_LIMIT")
+  end
+
   # A build that fails leaves no half of an entry behind: a source with no
   # object is never looked up and never pruned, so one would stay for good,
   # and one more with every kernel of every run.
