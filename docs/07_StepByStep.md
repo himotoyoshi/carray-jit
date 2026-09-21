@@ -371,6 +371,9 @@ out.to_a                            #=> [15.0, 14.0, 12.0, 9.0, 5.0]
 ```
 
 ```ruby
+out = CArray.double(5)
+out[4] = a[4]
+
 CArray.jit_for(0...4) { |i| out[i] = a[i] + out[i + 1] }
 out.to_a                            #=> [1.0, 2.0, 3.0, 9.0, 5.0]
 # the extent is the only place the direction is stated, and stating it
@@ -492,8 +495,10 @@ kernel = CArray.jit_for(4) { |i|
   out[i] = v * v
 }
 
-kernel.c_source.lines.grep(/int64_t v =/).first.strip
-#=> "int64_t v = (int64_t)*(int32_t *)(p_source + (i) * source_s0);"
+kernel.c_source.lines.grep(/int64_t v;/).first.strip
+#=> "int64_t v;"
+# and the assignment below it:
+#   v = (int64_t)*(int32_t *)(p_source + (i) * source_s0);
 # nothing in `v = source[i]` asked for 64 bits: a local's type is settled
 # from the whole body, and `v * v` lands in an int64 array
 ```

@@ -125,12 +125,15 @@ This looks at the loop's range and not at what stands around the line, which is 
 Every other position -- a plain local, a value read out of an array, an index whose loop bound is a captured integer -- is checked where the cell is reached. A read outside the array reads cell zero and reports, and the loop leaves at the head of its next pass; a write outside it writes nothing and reports, since a report after the damage would be no use. Either way the call raises `IndexError`.
 
 ```ruby
+out = CArray.int64(1)
+
 CArray.jit_for(1) { |i|
   w = CArray.double(4)
   j = 0
   while w[j] == 0.0     # reads off the end on the fifth pass
     j += 1
   end
+  out[i] = j
 }
 #=> IndexError: index out of range
 ```
@@ -187,7 +190,10 @@ A `jit_function` body allocates nothing. It is called once per cell, so an alloc
 A kernel that carries masks gives every local array a **shadow** of one byte a cell, declared beside the cells, and a cell of the array carries a mask the way a plain local carries one beside its value: what the expression written into it carried, and the masks of the branches the write stands in. So a window copied into a workspace keeps its holes, and reading a cell back is reading what it was made of.
 
 ```ruby
+field = CArray.double(8).seq!(1.0)
 field[2] = UNDEF
+out = CArray.double(8)
+
 CArray.jit_for(1...7) { |i|
   w = CArray.double(3)
   w[0] = field[i-1]; w[1] = field[i]; w[2] = field[i+1]
@@ -482,8 +488,11 @@ A masked cell means "no value here". A plain CArray has no mask at all -- one co
 When some array does carry one, the mask propagates the way CArray's own operators propagate it: any cell that fed a result masks that result, and an array that is written gets a mask if it did not have one.
 
 ```ruby
+source = CArray.double(7).seq!(1.0)
 source[2] = UNDEF
-CArray.jit_for(7) { |i| result[i] = source[i-1] + source[i+1] }
+result = CArray.double(7)
+
+CArray.jit_for(1...6) { |i| result[i] = source[i-1] + source[i+1] }
 #=> result[1] and result[3] are UNDEF; they are the cells that read source[2]
 ```
 
