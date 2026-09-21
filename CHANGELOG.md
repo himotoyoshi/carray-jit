@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a build no longer fails with "could not load freshly compiled" when
+  another process evicts its object in the moment between the build and the
+  load. It opens the object before publishing it to the cache. Reachable
+  where `CARRAY_JIT_CACHE_LIMIT` is smaller than the number of processes
+  building at once: with five of them, a limit of 2 lost every one.
+
 - Fix: a build whose compile fails leaves no `.c` behind in the cache. Such
   a file was never looked up -- a cache hit is an object -- and eviction
   passes over it, so one stayed for good, and one more for every kernel of

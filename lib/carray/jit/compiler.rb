@@ -247,25 +247,36 @@ class CArray
           # Build to a unique path and rename, so a concurrent process never
           # loads a half-written object.
           staging_path = "#{object_path}.#{Process.pid}"
-          begin
-            compile(source_path, staging_path, flags)
-          rescue Exception
-            # A build that did not finish leaves nothing behind.  The source
-            # is half an entry: nothing looks it up -- a hit is an object --
-            # and prune globs objects too, so it would sit in the cache for
-            # good, one per kernel per run against a toolchain that cannot
-            # compile.  The staging file would be swept in five minutes; it
-            # goes now, beside the source it came from.
-            remove_entry(object_path)
-            unlink(staging_path)
-            raise
-          end
+          handle =
+            begin
+              compile(source_path, staging_path, flags)
+              # Opened before it is published, under the name only this
+              # process knows.  Published first, the object stands in the
+              # cache for the moment between the rename and the open, and
+              # another process pruning in that moment can evict it -- prune
+              # spares what the process running it is building, which says
+              # nothing about what anyone else is.  The build then failed to
+              # load what it had just compiled.  Opened first, the image is
+              # mapped and stays mapped whatever the directory does
+              # afterwards, which is why evicting an object in use is safe.
+              load_new_object(staging_path)
+            rescue Exception
+              # A build that did not finish leaves nothing behind.  The
+              # source is half an entry: nothing looks it up -- a hit is an
+              # object -- and prune globs objects too, so it would sit in the
+              # cache for good, one per kernel per run against a toolchain
+              # that cannot compile.  The staging file would be swept in five
+              # minutes; it goes now, beside the source it came from.
+              remove_entry(object_path)
+              unlink(staging_path)
+              raise
+            end
           File.rename(staging_path, object_path)
           sweep_staging(directory)
           sweep_environments
           prune(directory, object_path)
 
-          [load_new_object(object_path), true]
+          [handle, true]
         end
 
         # The flags are part of the key: the same C built two ways is two
