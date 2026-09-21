@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: the refusal for a `CArray.jit_stencil` writing into a view of an
+  array it reads says that the two are views of one array and that the test
+  is the storage rather than the cells, so two slabs that share none are
+  refused too, and names the copy to read from. It said a stencil writes
+  into an array of its own, which of two slabs is not true.
+
 - Change: an indexed kernel (`CArray.jit_for` and the rest) refuses an
   operand it cannot walk -- a gather, a lazy array -- that is a view of an
   array the same kernel writes, naming `a[order[i]]` as the spelling that

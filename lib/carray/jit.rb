@@ -1106,9 +1106,13 @@ class CArray
           }
           if aliased
             raise Unsupported,
-                  "`into:` is the array `#{aliased.first}` reaches its window " \
-                  "into, and a cell written there is one a later cell reads; " \
-                  "a stencil writes into an array of its own"
+                  "`into:` and `#{aliased.first}` are views of one array, and " \
+                  "a cell written through the one could be a cell the other " \
+                  "reads through its window. Which cells two views have in " \
+                  "common is not a question asked here -- the storage is -- " \
+                  "so two slabs of one array are refused along with the " \
+                  "overlapping case. Give the stencil an array of its own, " \
+                  "or `#{aliased.first}.copy` to read from"
           end
         end
         result.mask = 0 if (kernel.masked || border == :mask) && !result.has_mask?
