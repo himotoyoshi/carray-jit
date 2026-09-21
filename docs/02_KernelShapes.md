@@ -158,7 +158,7 @@ This is the one thing about a kernel that is not settled in advance, and it cost
 
 A view that has to be reached a box at a time still takes one, but the box becomes the whole view: a computed index could reach any cell of it. That costs what copying the view would have cost, which is what the caller would otherwise have been told to write by hand.
 
-One restriction remains. A write is either the cell the loop is on or a computed one -- never the cell one along, which is the cell another iteration writes.
+A write may also be displaced: `out[i + 1]` reaches a distinct cell for each pass, and the extent it needs is checked before the first one. Where the array written is also the array read, that is a recurrence -- `values[i + 1] = values[i] + 1.0` -- and it computes what the same Ruby loop computes, the loop running in index order and a sweep handing the chunks over in order too.
 
 ## Stencils
 
