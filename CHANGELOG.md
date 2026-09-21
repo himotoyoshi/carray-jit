@@ -39,6 +39,14 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that gathers from an
+  array it also touches -- `src = src[order] + 1.0` -- gives the answer the
+  same expression gives in Ruby. Over 20000 cells, 8192 of them came back
+  holding the kernel's own output: the chunked sweep re-gathers at the top
+  of every chunk, so a later chunk gathered what an earlier one had
+  written. Such a pass now keeps the unchunked driver, which reads the
+  gather once before the loop. Every other pass sweeps as before.
+
 - Change: the refusal for a block whose source cannot be read names
   `RubyVM.keep_script_lines = true` and `CArray::JIT.compile`, which takes a
   kernel as text. It named `source:`, which is a keyword no entry point
