@@ -1,6 +1,6 @@
 # Cheatsheet
 
-Eight entry points: the seven `jit_` methods this gem puts on `CArray`, and
+Nine entry points: the eight `jit_` methods this gem puts on `CArray`, and
 `CArray.fuse`, which is CArray's own and gets the compiler from this gem being
 installed. Every example here runs as written.
 
@@ -13,6 +13,7 @@ installed. Every example here runs as written.
 | The same, and you want the result back | `CArray.jit_map` |
 | A cell reads its neighbours, or the one computed before it | `CArray.jit_for` |
 | A cell reads a window, and the edge needs a rule | `CArray.jit_stencil` |
+| Fill an array from its own indices | `array.jit_init` |
 | An index repeats and is summed | `CArray.jit_contract` |
 | An index repeats and is *not* summed -- a point number, a batch | `CArray.jit_contract(:p)`, naming the result's axes |
 | Call a C function someone else compiled | `CArray.jit_extern` |
@@ -124,6 +125,20 @@ median = CArray.jit_for(rows) { |i|
   out[i] = w[4]
 }
 ```
+
+## Filling from the indices
+
+```ruby
+CArray.double(3, 4).jit_init { |i, j| i * 10.0 + j }
+grid = CArray.double(n)
+grid.jit_init { |i| Math.sin(i * step) }                # fills in place
+```
+
+`jit_init` fills every cell of the receiver from the indices of that cell, one
+block parameter per axis, as a constructor block does -- and hands the receiver
+back. What is compiled is the whole fill, so the block reaches the same subset
+every other kernel does and closes over arrays the same way. A block that names
+no index is `jit_each`'s work, and is refused here saying so.
 
 ## A scalar from outside
 
