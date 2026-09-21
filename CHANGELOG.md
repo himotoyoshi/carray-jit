@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: `CArray.jit_contract` refuses an index that stands inside a
+  subscript the kernel works out -- `a[i, idx[k]] * v[k]` -- saying that a
+  contraction counts positions and this one is a position of `idx`. It was
+  read as an index appearing once, so the sum the notation asks for did not
+  happen and the result came back a whole matrix. Write such a gather with
+  `CArray.jit_for`.
+
 - Change: a local assigned before the summand of a `CArray.jit_contract`
   block is refused saying so -- a contraction is one expression, which is
   why it takes no local array either. It was refused as "`u` is read before

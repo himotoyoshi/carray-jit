@@ -670,4 +670,37 @@ class TestContractNamedAxes < Minitest::Test
     end
   end
 
+  # A contraction counts the positions an index is read at.  An index inside
+  # a subscript the kernel works out sits on an axis of the array doing the
+  # gathering, and counting it either way decides something the notation does
+  # not say -- so it is refused, and the same loop written with jit_for runs.
+  def test_an_index_inside_a_computed_subscript_is_refused
+    order = CA_INT([0, 2, 1, 3])
+    matrix = CArray.double(3, 4).seq!(1.0)
+    vector = CArray.double(4).seq!(1.0)
+    into = CArray.double(3)
+    [-> { CArray.jit_contract { |i, k| matrix[i, order[k]] * vector[k] } },
+     -> { CArray.jit_contract { |i, k| into[i] = matrix[i, order[k]] * vector[k] } },
+     -> { CArray.jit_contract { |i, k| matrix[i, k] * vector[order[i]] } }
+    ].each do |spelling|
+      error = assert_raises(CArray::JIT::Unsupported) { spelling.call }
+      assert_match(/stands inside a subscript the kernel works out/, error.message)
+      assert_match(/jit_for/, error.message)
+    end
+
+    # The plain product it would be without the gather is untouched.
+    assert_equal([30.0, 70.0, 110.0],
+                 CArray.jit_contract { |i, k| matrix[i, k] * vector[k] }.to_a)
+
+    # And the loop the refusal names gives the answer the gather asked for.
+    result = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      total = 0.0
+      (0...4).each { |k| total = total + matrix[i, order[k]] * vector[k] }
+      result[i] = total
+    }
+    reference = (0...3).map { |i| (0...4).sum { |k| matrix[i, order[k]] * vector[k] } }
+    assert_equal(reference, result.to_a)
+  end
+
 end
