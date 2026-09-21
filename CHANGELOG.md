@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a cell of a local array written under an `if` or a `while` whose
+  condition read a missing cell is masked, as a plain local and a cell of an
+  array now are. It was left present deliberately; the rule the docs give
+  for it is the one the other two keep.
+
 - Fix: a local assigned under an `if` or a `while` whose condition read a
   missing cell is masked, as a cell written there already was. It came back
   a number like any other, so `found = -1; ...; if a[i, j] > x then found =

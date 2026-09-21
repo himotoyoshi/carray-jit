@@ -267,6 +267,18 @@ class TestMasks < Minitest::Test
     assert_equal([-1, 0], first.to_a.values_at(0, 2))
   end
 
+  def test_a_local_array_cell_written_under_a_masked_branch_is_masked
+    values = masked_row
+    result = CArray.double(3)
+    CArray.jit_for(3) { |i|
+      w = CArray.double(2)
+      w[0] = 0.0
+      if values[i, 1] > 5.0 then w[0] = 1.0 end
+      result[i] = w[0]
+    }
+    assert_equal([false, true, false], result.is_masked.to_a)
+  end
+
   # A condition about the mask itself was not decided by garbage, so filling
   # from one leaves the cell present.
   def test_filling_from_a_mask_test_leaves_the_cell_present

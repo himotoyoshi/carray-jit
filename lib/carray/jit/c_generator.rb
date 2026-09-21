@@ -2308,12 +2308,12 @@ class CArray
         expression = write.expression
         # A cell of a local array carries a mask beside it the way a scalar
         # local carries one beside its value, and by the same rule: what the
-        # expression written into it carried.  The masks of the branches this
-        # statement stands in are not in it -- a statement inside an `if`
-        # runs when the `if` says so, and what it wrote is what it wrote.
+        # expression written into it carried, and the branches the write
+        # stands in.  A write reached because a missing cell said so was
+        # reached for no reason, whichever of the three it writes.
         mask = if @masked
                  "#{indent}#{local_array_reference(write, :mask)} = " \
-                 "#{emit_mask(write.expression)};\n"
+                 "#{combine_masks(@carried_masks + [emit_mask(write.expression)])};\n"
                else
                  ""
                end
