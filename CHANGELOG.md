@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: two threads of one process compiling at the same time no longer
+  raise `Errno::ENOENT`; three threads in four did. A build now takes a lock
+  for the length of the compile, so the second thread finds the object the
+  first one left and reuses it rather than building its own. Compiling two
+  different kernels in two threads is that much less parallel -- four of
+  them took 970 ms here against 800.
+
 - Change: the docs now say that a negative Float to a fractional power is
   `NaN`, as `pow` and CArray answer, where Ruby answers a Complex. This was
   already the behaviour; a whole-number exponent or a non-negative base is

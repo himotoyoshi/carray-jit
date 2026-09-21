@@ -32,6 +32,38 @@ class TestCache < Minitest::Test
     refute(second.compiled, "the second build should reuse the cached object")
   end
 
+  # Two threads compiling the same kernel used to be two clangs writing one
+  # staging file, and whichever renamed first left the other renaming a path
+  # that was gone -- a bare Errno::ENOENT, out of three threads in four.
+  # Builds are serialised in a process, so the second thread finds the object
+  # the first left and compiles nothing.
+  def test_threads_compiling_one_kernel_build_it_once
+    source = unique_source
+    CArray::JIT.clear_registry
+    errors = []
+    built = []
+    lock = Mutex.new
+    4.times.map {
+      Thread.new do
+        begin
+          kernel = compile_kernel(source, arrays: { :a => "float64" })
+          lock.synchronize { built << kernel.compiled }
+        rescue Exception => error
+          lock.synchronize { errors << error }
+        end
+      end
+    }.each(&:join)
+    assert_empty(errors.map { |error| "#{error.class}: #{error.message}" })
+    assert_equal(4, built.size)
+    assert_equal(1, built.count(true), "one thread builds and the rest reuse")
+
+    array = CArray.double(3)
+    array[0] = 1.0
+    CArray::JIT.clear_registry
+    kernel = compile_kernel(source, arrays: { :a => "float64" })
+    refute(kernel.compiled, "the object the threads left is the one on disk")
+  end
+
   def test_registry_returns_the_same_kernel_within_a_process
     source = unique_source
     first = compile_kernel(source, arrays: { :a => "float64" })
