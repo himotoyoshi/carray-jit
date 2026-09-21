@@ -85,6 +85,41 @@ class TestSweep < Minitest::Test
     assert_equal((gather.to_ca + b * 2.0).to_a, out.to_a)
   end
 
+  # The sweep re-gathers what it cannot walk in place at the top of every
+  # chunk, where the driver here gathers it once before the loop.  That is
+  # the same answer only while the gathered cells stand still, and they do
+  # not when the pass writes the array they come from: the second chunk then
+  # gathers cells the first chunk wrote.  Ruby reads the whole right-hand
+  # side first, so the pass keeps the driver that does.
+  def test_a_gather_from_an_array_the_pass_writes_keeps_the_driver
+    rows, columns = 200, 100                     # 20_000 cells: several chunks
+    src = CArray.double(rows, columns).seq!(0.0)
+    reversed = CArray.int32(rows, columns) { |i, j|
+      rows * columns - 1 - (i * columns + j)
+    }
+    gather = src[reversed]
+    reference = CArray.double(rows, columns) { |i, j|
+      src[rows - 1 - i, columns - 1 - j] + 1.0
+    }
+    kernel = CArray.jit_each { src = gather + 1.0 }
+    assert_equal(2, kernel.rank, "the axes stay, which is the driver here")
+    assert_equal(reference.to_a, src.to_a)
+  end
+
+  # Only where they meet: a gather from somewhere else still sweeps.
+  def test_a_gather_from_elsewhere_still_sweeps
+    rows, columns = 200, 100
+    src = CArray.double(rows, columns).seq!(0.0)
+    reversed = CArray.int32(rows, columns) { |i, j|
+      rows * columns - 1 - (i * columns + j)
+    }
+    gather = src[reversed]
+    out = CArray.double(rows, columns)
+    kernel = CArray.jit_each { out = gather + 1.0 }
+    assert_equal(1, kernel.rank, "nothing the pass writes is gathered from")
+    assert_equal((gather.to_ca + 1.0).to_a, out.to_a)
+  end
+
   def test_the_value_spelling_sweeps_as_well
     a = CArray.double(5).seq!(1.0)
     b = CArray.double(5).seq!(0.5, 0.5)
