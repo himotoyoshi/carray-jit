@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: an indexed kernel (`CArray.jit_for` and the rest) refuses an
+  operand it cannot walk -- a gather, a lazy array -- that is a view of an
+  array the same kernel writes, naming `a[order[i]]` as the spelling that
+  means something. Such an operand is copied before the loop and put back
+  after it, so the loop read cells that had stopped being current and a
+  direct write to the same array was dropped at the end.
+
 - Fix: a `CArray.jit_each` or `CArray.jit_map` pass that reads one view of
   an array and writes another -- two blocks that share cells, a transpose
   written over itself -- reads the values the expression started with, as
