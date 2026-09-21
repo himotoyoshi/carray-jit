@@ -1394,6 +1394,45 @@ class CArray
         end
       end
 
+      # An operand a kernel cannot walk -- a gather, a lazy array -- is copied
+      # into a buffer before the loop and copied back after it.  For an
+      # expression over whole arrays that is what the expression means: the
+      # right-hand side is read, then assigned.  An indexed kernel means the
+      # loop instead, and a loop reads a cell when it reaches it: where the
+      # array copied is one the loop also writes, the copy is a photograph of
+      # cells that go on changing.  `y[i] = gy[i] + 1.0`, with `gy` a gather
+      # of `y`, gave the reversal of the array it started with where the Ruby
+      # loop sees its own writes; and a gather written beside a direct write
+      # put the whole buffer back at the end, dropping the direct one.
+      #
+      # Neither is a thing to fix by copying harder, so it is refused, with
+      # the loop that does mean something named: index the array itself and
+      # let the subscript do the gathering.
+      def refuse_a_transferred_alias (kernel, arrays)
+        written = kernel.written_arrays.filter_map { |name| arrays[name] }
+        return if written.empty?
+        roots = written.map { |array| root_of(array) }
+        arrays.each do |name, array|
+          next unless Access.classify(array)[:tier] == Access::TIER_XFER
+          root = root_of(array)
+          # Another operand on the same storage, and one of the two written:
+          # a copy taken before the loop cannot answer for either of them.
+          # The array alone on its root is not that case -- what it scatters
+          # back at the end, nothing in the loop was reading.
+          others = arrays.each_value.reject { |other| other.equal?(array) }
+                         .select { |other| root.equal?(root_of(other)) }
+          next if others.empty?
+          next unless written.any? { |one| one.equal?(array) } ||
+                      others.any? { |other| written.any? { |one| one.equal?(other) } }
+          raise Unsupported,
+                "`#{name}` cannot be walked as it stands, so the kernel would " \
+                "work on a copy of it taken before the loop -- and the loop " \
+                "writes the array it is a view of, which the copy would not " \
+                "see. Index that array directly and let the subscript gather: " \
+                "`a[order[i]]` rather than a view of `a`"
+        end
+      end
+
       # CArray lines the shapes up; a stretched axis comes back as a stride of
       # zero, which the kernel addresses like any other stride.
       # CArray leaves a CScalar as it is, because its own kernels know to read
@@ -1496,6 +1535,7 @@ class CArray
                 "#{pairs.size} #{pairs.size == 1 ? 'extent was' : 'extents were'} " \
                 "given"
         end
+        refuse_a_transferred_alias(kernel, arrays)
         kernel.call(arrays, scalars, pairs.map(&:first), c_functions)
         into || kernel
       end

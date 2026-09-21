@@ -364,4 +364,47 @@ class TestSubset < Minitest::Test
     assert_equal(reference.to_a, grid.to_a)
   end
 
+  # An array a kernel cannot walk is copied before the loop and copied back
+  # after it.  For an expression over whole arrays that is the meaning; for
+  # an indexed kernel the meaning is the loop, which reads a cell when it
+  # reaches it -- so where the copy is of an array the loop also writes, the
+  # copy is a photograph of cells that go on changing.
+  def test_a_gather_of_an_array_the_loop_writes_is_refused
+    values = CArray.double(8).seq!(1.0)
+    reversed = values[CArray.int32(8) { |i| 7 - i }]
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(8) { |i| values[i] = reversed[i] + 1.0 }
+    end
+    assert_match(/would work on a copy of it taken before the loop/, error.message)
+    assert_match(/`a\[order\[i\]\]`/, error.message)
+    assert_equal((1..8).map(&:to_f), values.to_a, "nothing ran")
+  end
+
+  def test_a_gather_written_beside_its_own_root_is_refused
+    values = CArray.double(6) { |i| i.to_f }
+    gathered = values[CArray.int(6) { |i| i }]
+    where = CArray.int(2) { |i| i }
+    assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(2) { |i| gathered[where[i]] = 100.0; values[4] = 7.0 }
+    end
+  end
+
+  # A gather alone on its storage is not that case: what it scatters back at
+  # the end, nothing in the loop was reading.
+  def test_a_gather_written_alone_still_runs
+    values = CArray.double(6).seq!(1.0)
+    gathered = values[CArray.int32(6) { |i| 5 - i }]
+    CArray.jit_for(6) { |i| gathered[i] = i * 1.0 }
+    assert_equal([5.0, 4.0, 3.0, 2.0, 1.0, 0.0], values.to_a)
+  end
+
+  # And a gather of another array reads as it always did.
+  def test_a_gather_of_another_array_still_runs
+    source = CArray.double(6).seq!(1.0)
+    gathered = source[CArray.int32(6) { |i| 5 - i }]
+    out = CArray.double(6)
+    CArray.jit_for(6) { |i| out[i] = gathered[i] + 1.0 }
+    assert_equal([7.0, 6.0, 5.0, 4.0, 3.0, 2.0], out.to_a)
+  end
+
 end
