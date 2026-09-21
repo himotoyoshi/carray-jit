@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: `CArray.jit_contract` takes a summand that calls a function made with
+  `CArray.jit_function` or `CArray.jit_extern`, which the docs say it does;
+  it was refused as an unsupported method. What the function hands back
+  types the result the contraction is collected into.
+
 - Fix: a cell of a local array written under an `if` or a `while` whose
   condition read a missing cell is masked, as a plain local and a cell of an
   array now are. It was left present deliberately; the rule the docs give

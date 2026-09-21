@@ -624,4 +624,31 @@ class TestContractNamedAxes < Minitest::Test
     assert_match(/CArray\.jit_contract\(:i, :j\)/, error.message)
   end
 
+  # A contraction with nothing to assign into is read twice: once by the
+  # probe, which sizes and types the result, and once by the compile.  The
+  # probe was not given the functions the summand calls, so a call it was
+  # meant to compile was refused as an unsupported method -- in the probe,
+  # before the compile that would have taken it.
+  def test_a_compiled_function_in_the_summand
+    left = CArray.double(3, 2).seq!(1.0)
+    right = CArray.double(2, 2).seq!(1.0)
+    square = CArray.jit_function("double (*)(double)") { |x| x * x }
+    result = CArray.jit_contract { |i, j, k| square.call(left[i, k]) * right[k, j] }
+    reference = CArray.double(3, 2)
+    3.times { |i|
+      2.times { |j|
+        reference[i, j] = (0...2).sum { |k| (left[i, k] ** 2) * right[k, j] }
+      }
+    }
+    assert_equal(reference.to_a, result.to_a)
+    assert_equal("float64", result.data_type_name)
+
+    # And what the function hands back types the result it is collected into.
+    whole = CArray.jit_function("int32_t (*)(double)") { |x| x.floor }
+    counted = CArray.jit_contract { |i, k| whole.call(left[i, k]) * right[k, 0] }
+    assert_equal("float64", counted.data_type_name)
+    assert_equal([1.0 + 2.0 * 3.0, 3.0 + 4.0 * 3.0, 5.0 + 6.0 * 3.0],
+                 counted.to_a)
+  end
+
 end
