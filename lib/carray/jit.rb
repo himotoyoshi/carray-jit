@@ -694,7 +694,8 @@ class CArray
       # `contract_terms` reach it with a source it wrote itself.
       def contract (source, arrays, free_indices,
                     node: nil, origin: nil, scalars: {}, c_functions: {})
-        result = allocate_result(source, node, arrays, scalars, free_indices)
+        result = allocate_result(source, node, arrays, scalars, free_indices,
+                                 c_functions)
         arrays = arrays.merge(RESULT => result) if result
 
         kernel = compile(source,
@@ -760,8 +761,10 @@ class CArray
       # typed before there is a kernel to ask, so the block is analyzed once
       # without being compiled.  Returns nil when the block assigns into an
       # array of its own.
-      def allocate_result (source, node, arrays, scalars, free_indices = nil)
-        probe = probe_contraction(source, node, arrays, scalars, free_indices)
+      def allocate_result (source, node, arrays, scalars, free_indices = nil,
+                           c_functions = {})
+        probe = probe_contraction(source, node, arrays, scalars, free_indices,
+                                  c_functions)
         return nil unless probe
         free, index_axes, type = probe
         shape = free.map do |index|
@@ -782,17 +785,23 @@ class CArray
       end
 
       # @private
-      def probe_contraction (source, node, arrays, scalars, free_indices = nil)
+      def probe_contraction (source, node, arrays, scalars, free_indices = nil,
+                             c_functions = {})
         key = [source, arrays.transform_values(&:data_type_name),
                scalars.transform_values { |value| TypeAssignment.scalar_type(value) },
                # The result's axes are named at the call site rather than in
                # the block, so the same source under another naming is another
                # kernel -- and another probe.
                free_indices,
+               # A compiled function the summand calls decides the type of
+               # what it hands back, which is the type the result is
+               # collected into.
+               c_functions.transform_values(&:signature),
                cell_names(arrays)]
         cached = probe_cache[key]
         return cached unless cached.nil?
-        probe_cache[key] = build_probe(source, node, arrays, scalars, free_indices)
+        probe_cache[key] = build_probe(source, node, arrays, scalars,
+                                       free_indices, c_functions)
       end
 
       # @private
@@ -801,14 +810,20 @@ class CArray
       end
 
       # @private
-      def build_probe (source, node, arrays, scalars, free_indices = nil)
+      def build_probe (source, node, arrays, scalars, free_indices = nil,
+                       c_functions = {})
         storage_types = arrays.transform_values(&:data_type_name)
+        # The functions the summand calls are given to the probe as they are
+        # to the compile below it: a body that calls one is a body the probe
+        # has to be able to read, and what the call hands back is what the
+        # result is sized and typed from.
         analyzer = Analyzer.new(source, node: node, array_names: arrays.keys,
                                 contract: :probe, free_indices: free_indices,
+                                c_functions: c_functions,
                                 cell_names: cell_names(arrays))
         return false if analyzer.body.statements.last.is_a?(ElementWrite)
 
-        TypeAssignment.new(analyzer.body, storage_types, scalars)
+        TypeAssignment.new(analyzer.body, storage_types, scalars, c_functions)
         summand = analyzer.body.statements.last
         axes = Hash.new { |hash, key| hash[key] = [] }
         analyzer.subscripts.each do |array, uses|
