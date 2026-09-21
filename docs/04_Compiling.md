@@ -107,7 +107,7 @@ Because the cache is shared across processes and across time, the key covers the
 
 An entry that will not load -- a truncated write, an OS or toolchain change -- is deleted and rebuilt rather than raised. A cache that outlives the process must not be able to turn one bad write into a permanent failure of every future run. A staging file left behind by a process killed mid-compile is swept once it is old enough to be certain nothing is still writing it.
 
-The directory is created 0700, and a cache directory other users can write to is refused rather than used -- everything in it gets `dlopen`ed, so a shared writable cache would be a way to run code as you.
+The directory is created 0700, and a cache directory other users can write to is refused rather than used -- everything in it gets `dlopen`ed, so a shared writable cache would be a way to run code as you. So is one that belongs to another user, whatever its mode says: its owner writes to it, and a directory of theirs at the name yours would have taken is the same thing by another route. A root that is a symlink to another volume is followed as before, the question being asked of the directory it lands on.
 
 ## Inspecting a kernel
 

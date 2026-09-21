@@ -314,6 +314,46 @@ class TestCacheManagement < Minitest::Test
     CArray::JIT.clear_registry
   end
 
+  # The mode says who may write; the owner says whose it is.  A directory
+  # belonging to someone else is one they write to whatever its mode says,
+  # and 0700 is what theirs would be -- so a cache root in a shared place,
+  # whose environment directory this user has yet to create, is a name
+  # someone else can take first and have its contents dlopen'd.
+  def test_a_cache_directory_of_another_user_is_refused
+    FileUtils.mkdir_p(leaf, :mode => 0700)
+    # Someone else's directory, arrived at from the other side: this process
+    # is someone else.  Owning the directory for real would take two users.
+    original = Process.method(:euid)
+    Process.define_singleton_method(:euid) { original.call + 1 }
+    begin
+      error = assert_raises(CArray::JIT::CompilationError) { compile_indexed(8) }
+      assert_match(/belongs to uid/, error.message)
+      assert_match(/CARRAY_JIT_CACHE/, error.message)
+    ensure
+      Process.define_singleton_method(:euid, original)
+    end
+  end
+
+  # A root symlinked elsewhere -- another volume, a different disk -- is an
+  # ordinary arrangement, and the link is followed as it always was: what is
+  # asked about is the directory it lands on.
+  def test_a_symlinked_cache_root_still_works
+    elsewhere = Dir.mktmpdir("carray-jit-elsewhere-")
+    FileUtils.chmod(0700, elsewhere)
+    root = Dir.mktmpdir("carray-jit-link-")
+    link = File.join(root, "cache")
+    File.symlink(elsewhere, link)
+    ENV["CARRAY_JIT_CACHE"] = link
+    CArray::JIT.clear_registry
+    compile_indexed(9)
+    refute_empty(Dir[File.join(elsewhere, "*", "*")],
+                 "the kernel should be cached through the link")
+  ensure
+    [elsewhere, root].each do |directory|
+      FileUtils.remove_entry(directory) if directory && File.directory?(directory)
+    end
+  end
+
   def test_cache_directory_is_created_private
     nested = File.join(@directory, "created")
     ENV["CARRAY_JIT_CACHE"] = nested

@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a cache directory owned by another user is refused, as one other
+  users can write to already was; everything in it is `dlopen`ed. A cache
+  root that is a symlink is followed as before, and the owner of the
+  directory it lands on is what is asked about. Set `CARRAY_JIT_CACHE` to a
+  directory of your own where this refuses.
+
 - Fix: a build no longer fails with "could not load freshly compiled" when
   another process evicts its object in the moment between the build and the
   load. It opens the object before publishing it to the cache. Reachable
