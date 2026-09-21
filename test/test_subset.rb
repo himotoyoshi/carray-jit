@@ -317,4 +317,51 @@ class TestSubset < Minitest::Test
                  error.message)
   end
 
+  # `a = b * 2.0` reads the whole right-hand side and then assigns.  A kernel
+  # walks cell by cell, which is the same thing until a cell it reads is one
+  # it has written: two views of one array that share cells read the output
+  # back as input.  A gather is copied before the loop and keeps the meaning;
+  # a strided view is addressed in place, which is what left these wrong.
+  def test_overlapping_views_read_the_values_the_pass_started_with
+    values = CArray.double(8).seq!(0.0)
+    low = values[0..6]
+    high = values[1..7]
+    reference = CArray.double(8).seq!(0.0)
+    reference[1..7] = reference[0..6] * 2.0
+    CArray.jit_each { high = low * 2.0 }
+    assert_equal(reference.to_a, values.to_a)
+  end
+
+  def test_a_transpose_written_over_itself
+    square = CArray.double(3, 3).seq!(1.0)
+    transposed = square.transpose
+    reference = CArray.double(3, 3).seq!(1.0)
+    reference[] = reference.transpose * 1.0
+    CArray.jit_each { square = transposed * 1.0 }
+    assert_equal(reference.to_a, square.to_a)
+  end
+
+  # A cell read that is the cell written is Ruby's own reading, and is not
+  # copied: `a = a + 1.0` means what it says.
+  def test_an_array_read_and_written_as_itself_is_not_copied
+    values = CArray.double(5).seq!(1.0)
+    reference = CArray.double(5).seq!(1.0)
+    reference[] = reference + 1.0
+    CArray.jit_each { values = values + 1.0 }
+    assert_equal(reference.to_a, values.to_a)
+  end
+
+  # And two views that share a root without sharing a cell still walk in
+  # place: what is copied is decided by the root, and what is right is
+  # decided by the answer.
+  def test_disjoint_views_of_one_array
+    grid = CArray.double(8, 8).seq!(0.0)
+    first = grid[nil, 0]
+    second = grid[nil, 1]
+    reference = CArray.double(8, 8).seq!(0.0)
+    reference[nil, 0] = reference[nil, 1] + 1.0
+    CArray.jit_each { first = second + 1.0 }
+    assert_equal(reference.to_a, grid.to_a)
+  end
+
 end
