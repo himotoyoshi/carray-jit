@@ -61,7 +61,13 @@ CArray.jit_for(n) { |i|
 
 puts
 puts "Newton, bounded by the extent"
-puts format("  worst relative error   %.1e", ((root ** 2 - a).abs / a).max)
+# Against Math.sqrt rather than against the loop's own residual: the residual
+# is what the break tested, so it can only come back at the tolerance.
+exact = CArray.double(n) { |i| Math.sqrt(a[i]) }
+puts format("  worst relative error   %.1e  (vs Math.sqrt)",
+            ((root - exact).abs / exact).max)
+puts format("  worst residual         %.1e  (what the break tested)",
+            ((root ** 2 - a).abs / a).max)
 puts "  passes taken           #{passes.min}..#{passes.max}"
 puts "  none ran out           #{passes.max < cap}"
 

@@ -436,7 +436,7 @@ CArray.jit_for(2) { |i|
   out[i] = count
 }
 #=> CArray::JIT::Unsupported: an inner loop's range is an integer expression
-#   over literals and captured scalars
+#   over literals, captured scalars and the indices around it
 ```
 
 ```ruby

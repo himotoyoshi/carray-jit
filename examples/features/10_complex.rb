@@ -48,15 +48,25 @@ CArray.jit_for(n) { |i| transformed[i] = signal[i].tanh }
 puts "  tanh matches the array operator #{transformed.to_a == signal.tanh.to_a}"
 
 # A reduction over complex cells: the accumulator starts from a complex zero.
+# The sum is split into partial ones, as every reduction here is, so the last
+# bits are not the serial loop's -- `reassociate: false` asks for that order
+# and gets it exactly.
 total = CArray.cmplx128(1)
 CArray.jit_for(1) { |i|
   running = Complex(0.0, 0.0)
   (0...n).each { |j| running = running + signal[j] }
   total[i] = running
 }
+in_order = CArray.cmplx128(1)
+CArray.jit_for(1, reassociate: false) { |i|
+  running = Complex(0.0, 0.0)
+  (0...n).each { |j| running = running + signal[j] }
+  in_order[i] = running
+}
 serial = (0...n).inject(Complex(0.0, 0.0)) { |sum, j| sum + signal[j] }
 puts "  sum               #{total[0].rectangular.map { |e| e.round(6) }.inspect}"
-puts "  matches Ruby      #{total[0] == serial}"
+puts "  split sum matches Ruby      #{total[0] == serial}   <- the partial sums"
+puts "  serial sum matches Ruby     #{in_order[0] == serial}   <- reassociate: false"
 
 # Where Ruby and C part company.  A real operand carries an exact Integer zero
 # as its imaginary part, and Ruby's own arithmetic returns the other operand
@@ -72,8 +82,8 @@ puts "  Ruby              #{(Complex(1.0, -0.0) + 2.0)}"
 puts "  the kernel        #{kept[0]}"
 puts "  widening first    #{Complex(1.0, -0.0) + Complex(2.0, 0.0)}   <- what C's + would give"
 
-# `**` is the one operation whose answer is not the Ruby loop's to the last
-# bit: Ruby raises a Complex to a power by binary powering, cpow goes round
+# Once the order is the same, `**` is the one operation whose answer is still
+# not the Ruby loop's to the last bit: Ruby raises a Complex to a power by binary powering, cpow goes round
 # through exp and log.  A few machine epsilons apart, growing with the
 # exponent -- and `z * z` is both exact and cheaper than the library call.
 cubed = CArray.cmplx128(n)
@@ -84,7 +94,7 @@ squared = CArray.cmplx128(n)
 CArray.jit_for(n) { |i| squared[i] = signal[i] * signal[i] }
 
 puts
-puts "the one inexact operation"
+puts "the one inexact operation, the order being equal"
 puts "  z ** 3 worst      #{(worst / Float::EPSILON).round(1)} machine epsilons"
 puts "  z * z  matches Ruby exactly #{(0...n).all? { |i| squared[i] == signal[i] * signal[i] }}"
 
