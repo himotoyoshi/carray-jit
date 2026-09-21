@@ -1935,6 +1935,18 @@ class CArray
           low = extent.begin || 0
           high = extent.end
           raise Unsupported, "an endless range has no extent" unless high
+          # `(n-2)..0` reads like a downward sweep and is not one: Ruby gives
+          # that Range no elements, so the loop it looks like would run no
+          # passes and say nothing.  A kernel handed one ran no passes too.
+          # An empty range whose ends agree -- `0...0`, a slice that came out
+          # empty -- is a count of zero and is taken as one.
+          if low > high
+            raise Unsupported,
+                  "`#{extent.inspect}` counts down and Ruby gives it no " \
+                  "elements, so this would run no passes at all. A downward " \
+                  "sweep is `#{low}.step(#{high}, -1)`, which is how Ruby " \
+                  "iterates backwards"
+          end
           [[low, extent.exclude_end? ? high : high + 1, 1], nil]
         when Integer
           [[0, extent, 1], nil]
