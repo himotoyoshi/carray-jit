@@ -1343,6 +1343,8 @@ class CArray
           aligned[name] = written
         end
 
+        aligned = read_once_where_the_pass_writes(aligned, kernel.written_arrays)
+
         # An array handed to a C function by address is passed whole rather
         # than walked, so the expression's shape has nothing to say about it.
         # Broadcasting it would stretch a one-cell state array into a
@@ -1363,6 +1365,33 @@ class CArray
         result.mask = 0 if map && kernel.masked && !result.has_mask?
         drive(kernel, aligned, scalars, c_functions, shape, sweeping)
         map ? result : kernel
+      end
+
+      # `a = b * 2.0` reads the whole of the right-hand side and then assigns,
+      # which is what the expression means in Ruby and what CArray's own
+      # operators do.  A kernel walks cell by cell instead, and that is the
+      # same thing only while no cell it reads is a cell it has written: two
+      # overlapping views of one array -- `hi = lo * 2.0` for blocks that
+      # share six cells, a transpose written over itself -- read the output
+      # back as input, cell by cell.  A gather is copied before the loop and
+      # keeps the meaning; a strided view is addressed in place, which is
+      # what makes it fast and what leaves it exposed here.
+      #
+      # So an operand that is read, and shares a root with one that is
+      # written without being that array itself, is copied once before the
+      # loop.  `a = a + 1.0` is not that case -- the cell read is the cell
+      # written, as in Ruby -- and neither is a pass whose arrays are
+      # separate, which is nearly all of them.
+      def read_once_where_the_pass_writes (aligned, written_names)
+        written = written_names.filter_map { |name| aligned[name] }
+        return aligned if written.empty?
+        roots = written.map { |array| root_of(array) }
+        aligned.to_h do |name, array|
+          next [name, array] if written_names.include?(name)
+          next [name, array] if written.any? { |other| other.equal?(array) }
+          shared = roots.any? { |root| root.equal?(root_of(array)) }
+          [name, shared ? array.copy : array]
+        end
       end
 
       # CArray lines the shapes up; a stretched axis comes back as a stride of

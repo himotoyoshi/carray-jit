@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that reads one view of
+  an array and writes another -- two blocks that share cells, a transpose
+  written over itself -- reads the values the expression started with, as
+  Ruby and CArray's own operators do. Such a view was addressed in place and
+  read back cells the pass had already written: `hi = lo * 2.0` over
+  overlapping blocks came back all zeros. The read operand is copied once
+  before the loop. `a = a + 1.0`, and views that share a root without
+  sharing a cell, are untouched.
+
 - Fix: a `CArray.jit_each` or `CArray.jit_map` pass that gathers from an
   array it also touches -- `src = src[order] + 1.0` -- gives the answer the
   same expression gives in Ruby. Over 20000 cells, 8192 of them came back
