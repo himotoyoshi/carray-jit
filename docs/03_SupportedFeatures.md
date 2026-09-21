@@ -184,7 +184,7 @@ A `jit_function` body allocates nothing. It is called once per cell, so an alloc
 
 #### Masks in a local array
 
-A kernel that carries masks gives every local array a **shadow** of one byte a cell, declared beside the cells, and a cell of the array carries a mask the way a plain local carries one beside its value: what the expression written into it carried. So a window copied into a workspace keeps its holes, and reading a cell back is reading what it was made of.
+A kernel that carries masks gives every local array a **shadow** of one byte a cell, declared beside the cells, and a cell of the array carries a mask the way a plain local carries one beside its value: what the expression written into it carried, and the masks of the branches the write stands in. So a window copied into a workspace keeps its holes, and reading a cell back is reading what it was made of.
 
 ```ruby
 field[2] = UNDEF
