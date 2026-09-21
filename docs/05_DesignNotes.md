@@ -133,4 +133,4 @@ The columns are the part that matters. `Proc#source_location` reports only a lin
 
 `RubyVM::AbstractSyntaxTree.of` looks like the obvious route and does not work: since Ruby 3.4 the default parser is Prism, and it refuses with "cannot get AST for ISEQ compiled by prism".
 
-Two cases fall back to `source:`. A block defined in `eval` or in a console has no file to read -- setting `RubyVM.keep_script_lines = true` before it is defined makes `script_lines` available and handles that. And a file edited since it was loaded no longer holds the same text at that position, which is reported rather than compiled.
+Two cases fall back to the text: `CArray::JIT.compile`, which takes a kernel as a string. A block defined in `eval` or in a console has no file to read -- setting `RubyVM.keep_script_lines = true` before it is defined makes `script_lines` available and handles that. And a file edited since it was loaded no longer holds the same text at that position, which is reported rather than compiled.

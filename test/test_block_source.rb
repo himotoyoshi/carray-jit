@@ -45,6 +45,37 @@ class TestBlockSource < Minitest::Test
     RubyVM.keep_script_lines = previous
   end
 
+  # The refusal names two routes, and both have to be ones that exist:
+  # `source:` is no keyword of any entry point, and was named here for
+  # years.
+  def test_the_refusal_names_a_route_that_exists
+    previous = RubyVM.keep_script_lines
+    RubyVM.keep_script_lines = false
+    error = assert_raises(CArray::JIT::Unsupported) do
+      values = CArray.double(3)
+      CArray.jit_for(3, &eval("proc { |i| values[i] = 1.0 }"))
+    end
+    assert_match(/RubyVM\.keep_script_lines = true/, error.message)
+    assert_match(/CArray::JIT\.compile/, error.message)
+    refute_match(/`source:`/, error.message)
+  ensure
+    RubyVM.keep_script_lines = previous
+  end
+
+  # And the second of them compiles a kernel from text, which is what the
+  # message says it does.
+  def test_a_kernel_compiled_from_text
+    kernel = CArray::JIT.compile("->(i) { out[i] = a[i] * 2.0 }",
+                                 array_names: [:a, :out],
+                                 storage_types: { :a => "float64",
+                                                  :out => "float64" },
+                                 scalar_values: {}, masked: false)
+    source = CArray.double(3).seq!(1.0)
+    out = CArray.double(3)
+    kernel.call({ :a => source, :out => out }, {}, [[0, 3, 1]])
+    assert_equal([2.0, 4.0, 6.0], out.to_a)
+  end
+
   # The file a block sits in is read by the encoding the parser gave it.
   # `File.read` would use `Encoding.default_external`, which has nothing to
   # do with a source's encoding: with no locale set it is US-ASCII, and the
