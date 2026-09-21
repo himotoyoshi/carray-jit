@@ -937,6 +937,23 @@ class CArray
             "array of your own")
         end
 
+        # And one expression is all of it: a local assigned before the summand
+        # is a run of statements, which a contraction has no room for -- the
+        # same reason it takes no local array.  Said here, because what said
+        # it before was the type assignment, which walks the accumulator's
+        # zero -- taken from the summand, above the loop the local is
+        # assigned in -- and reported the local as read before it is assigned.
+        leading = statements[0..-2].grep(Assignment).map(&:name)
+        unless leading.empty?
+          names = leading.uniq.map { |name| "`#{name}`" }.join(" and ")
+          raise Unsupported.new(
+            "#{names} #{leading.uniq.size == 1 ? 'is' : 'are'} assigned " \
+            "before the summand, and a contraction is one expression: there " \
+            "is no run of statements to assign in. Write the value into the " \
+            "expression, or write the loop with jit_for",
+            statements.first.location)
+        end
+
         write = writes.first
         unless write
           # The returned form: the free indices, in the order the block named

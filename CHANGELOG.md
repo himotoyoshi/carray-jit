@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a local assigned before the summand of a `CArray.jit_contract`
+  block is refused saying so -- a contraction is one expression, which is
+  why it takes no local array either. It was refused as "`u` is read before
+  it is assigned", about a local assigned on the line above.
+
 - Fix: `CArray.jit_contract` takes a summand that calls a function made with
   `CArray.jit_function` or `CArray.jit_extern`, which the docs say it does;
   it was refused as an unsupported method. What the function hands back
