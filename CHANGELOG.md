@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: the refusal for a block whose source cannot be read names
+  `RubyVM.keep_script_lines = true` and `CArray::JIT.compile`, which takes a
+  kernel as text. It named `source:`, which is a keyword no entry point
+  takes; the guide said the same.
+
 - Change: an extent that counts down as a `Range` -- `(n-2)..0` -- raises
   `CArray::JIT::Unsupported` naming `(n-2).step(0, -1)`, the spelling Ruby
   iterates backwards with. Ruby gives such a Range no elements, so the

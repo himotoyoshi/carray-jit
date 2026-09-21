@@ -25,14 +25,16 @@ class CArray
           unless defined?(RubyVM::InstructionSequence)
             raise Unsupported,
                   "this Ruby has no RubyVM::InstructionSequence; " \
-                  "pass the kernel as `source:` instead"
+                  "compile the kernel from text with " \
+                  "`CArray::JIT.compile` instead"
           end
 
           sequence = RubyVM::InstructionSequence.of(block)
           unless sequence
             raise Unsupported,
                   "the block has no instruction sequence (defined in C?); " \
-                  "pass the kernel as `source:` instead"
+                  "compile the kernel from text with " \
+                  "`CArray::JIT.compile` instead"
           end
 
           location = code_location(sequence)
@@ -57,7 +59,8 @@ class CArray
           unless location
             raise Unsupported,
                   "this Ruby does not report a code location for blocks; " \
-                  "pass the kernel as `source:` instead"
+                  "compile the kernel from text with " \
+                  "`CArray::JIT.compile` instead"
           end
           location
         end
@@ -81,8 +84,8 @@ class CArray
           raise Unsupported,
                 "the block's source is not available " \
                 "(defined in eval or in a console?); " \
-                "pass the kernel as `source:`, or set " \
-                "RubyVM.keep_script_lines = true before defining it"
+                "set RubyVM.keep_script_lines = true before defining it, " \
+                "or compile it from text with `CArray::JIT.compile`"
         end
 
         # Ruby reads a source file as UTF-8 unless a magic comment says
