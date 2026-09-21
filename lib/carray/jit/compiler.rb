@@ -407,12 +407,27 @@ class CArray
         # this user.
         def prepare (directory)
           FileUtils.mkdir_p(directory, :mode => 0700) unless File.directory?(directory)
-          mode = File.stat(directory).mode
-          if (mode & 0022) != 0
+          stat = File.stat(directory)
+          if (stat.mode & 0022) != 0
             raise CompilationError,
                   "#{directory} is writable by other users; " \
                   "carray-jit loads shared objects from it. " \
                   "Fix its permissions or set CARRAY_JIT_CACHE elsewhere."
+          end
+          # And whose it is, not only who may write to it.  A directory of
+          # someone else's is one they write to whatever its mode says, and
+          # 0700 is what an attacker's own directory would be: a cache root
+          # under a shared /tmp, where this user has yet to create the
+          # directory for their environment, is a name someone else can take
+          # first -- as a directory of their own, or as a symlink to one,
+          # which the mode is then read through.  Followed on purpose: a
+          # cache root symlinked to another volume is an ordinary
+          # arrangement, and it is the owner that says whether it is ours.
+          unless stat.uid == Process.euid
+            raise CompilationError,
+                  "#{directory} belongs to uid #{stat.uid}, not to this user " \
+                  "(uid #{Process.euid}); carray-jit loads shared objects " \
+                  "from it. Set CARRAY_JIT_CACHE to a directory of your own."
           end
           directory
         end
