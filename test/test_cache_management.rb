@@ -167,29 +167,57 @@ class TestCacheManagement < Minitest::Test
   # otherwise fail every future run as well, not just this one.
   def test_unusable_cache_entry_is_rebuilt
     source = "->(i) { a[i] = a[i-1] * 11.0 }"
-    kernel = compile_kernel(source)
-    key = CArray::JIT::Compiler.digest(kernel.c_source)
+    compile_kernel(source)
+    object = Dir[File.join(leaf, "*")].find { |path| !path.end_with?(".c") }
 
-    # A second directory, so the path is one dyld has not already loaded in
-    # this process -- otherwise it would hand back the cached image and the
-    # corrupt file would never be read.
+    # A second root, so the path is one dyld has not already loaded in this
+    # process -- otherwise it would hand back the cached image and the corrupt
+    # file would never be read.  The entry is planted under the name the build
+    # looks up, which is the name it wrote here: the key is a digest of the
+    # source the kernel is built from, which is neither `c_source` nor what
+    # `c_source` digests to, so computing one here is how this test came to
+    # plant its file where nothing would ever look.
+    # Two of them, because dyld hands back the image it already has for a
+    # path: the good copy below would be answered from memory, corrupt file
+    # or not, if both entries stood at one path.
+    good = plant(object, Dir.mktmpdir("carray-jit-good-"))
     other = Dir.mktmpdir("carray-jit-corrupt-")
-    FileUtils.chmod(0700, other)
-    suffix = File.extname(Dir[File.join(leaf, "*")].find { |path|
-      !path.end_with?(".c") })
-    File.write(File.join(other, "#{key}#{suffix}"), "not a shared object")
+    planted = plant(object, other)
 
+    # The name is the one consulted: a good copy under it is reused rather
+    # than built again.  Without this the corrupt entry below could sit
+    # unread and the rebuild look like a rebuild of nothing.
+    ENV["CARRAY_JIT_CACHE"] = File.dirname(File.dirname(good))
+    CArray::JIT.clear_registry
+    refute(compile_kernel(source).compiled,
+           "a good entry under this name should be reused")
+
+    File.write(planted, "not a shared object")
     ENV["CARRAY_JIT_CACHE"] = other
     CArray::JIT.clear_registry
     rebuilt = compile_kernel(source)
     assert(rebuilt.compiled, "a corrupt cache entry should be rebuilt")
+    assert_operator(File.size(planted), :>, "not a shared object".bytesize,
+                    "the corrupt entry should have been replaced")
 
     array = CArray.double(3)
     array[0] = 1.0
     rebuilt.call({ :a => array }, {}, [[1, 3, 1]])
     assert_equal(121.0, array[2])
   ensure
-    FileUtils.remove_entry(other) if other && File.directory?(other)
+    [other, good && File.dirname(File.dirname(good))].each do |directory|
+      FileUtils.remove_entry(directory) if directory && File.directory?(directory)
+    end
+  end
+
+  # A copy of `object` under the same name, in a root of its own.
+  def plant (object, root)
+    FileUtils.chmod(0700, root)
+    directory = File.join(root, File.basename(leaf))
+    FileUtils.mkdir_p(directory, :mode => 0700)
+    path = File.join(directory, File.basename(object))
+    FileUtils.cp(object, path)
+    path
   end
 
   # A process killed mid-compile leaves a staging file that matches neither
