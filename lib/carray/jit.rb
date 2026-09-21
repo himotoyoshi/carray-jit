@@ -393,6 +393,16 @@ class CArray
             "per axis, as a constructor block does; a block that names none " \
             "computes from other arrays and belongs to jit_each"
     end
+    # A splat or an optional parameter makes the arity negative, and the
+    # count in the message below a number nobody wrote.  The block reader
+    # refuses both a few steps later; here there is an arity to compare, and
+    # -1 is not one.
+    if block.arity.negative?
+      raise JIT::Unsupported,
+            "jit_init's block names one index per axis, and names them as " \
+            "required parameters; this one takes a splat or an optional " \
+            "parameter, which says nothing about how many axes it is for"
+    end
     unless block.arity == ndim
       raise JIT::Unsupported,
             "this array has #{ndim} #{ndim == 1 ? 'axis' : 'axes'} and the " \

@@ -39,6 +39,9 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: `CArray#jit_init` given a block that takes a splat or an optional
+  parameter says so, where it said "the block names -1 indices".
+
 - Change: `CArray.jit_contract` refuses an index that stands inside a
   subscript the kernel works out -- `a[i, idx[k]] * v[k]` -- saying that a
   contraction counts positions and this one is a position of `idx`. It was

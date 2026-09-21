@@ -104,6 +104,16 @@ class TestJitInit < Minitest::Test
 
   # It compiles or it raises.  Falling back to the slow loop would answer a
   # question nobody asked.
+  # A splat makes Proc#arity negative, and the count in the message above a
+  # number nobody wrote: "the block names -1 indices".
+  def test_a_block_that_names_no_count_says_so
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.int32(3).jit_init { |*i| i[0] }
+    end
+    assert_match(/required parameters/, error.message)
+    refute_match(/-1/, error.message)
+  end
+
   def test_a_body_outside_the_subset_raises
     table = { 0 => 1 }
     assert_raises(CArray::JIT::Unsupported) {
