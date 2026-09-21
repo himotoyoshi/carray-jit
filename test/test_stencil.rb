@@ -227,13 +227,34 @@ class TestStencil < Minitest::Test
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source, into: source) { |a| (a[-1] + a[0] + a[1]) / 3 }
     end
-    assert_match(/a cell written there is one a later cell reads/, error.message)
+    assert_match(/could be a cell the other reads through its window/,
+                 error.message)
 
     view = source[nil]
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source, into: view) { |a| (a[-1] + a[0] + a[1]) / 3 }
     end
-    assert_match(/a stencil writes into an array of its own/, error.message)
+    assert_match(/views of one array/, error.message)
+    assert_match(/Give the stencil an array of its own/, error.message)
+  end
+
+  # Two slabs of one array -- the ping-pong buffer a time-stepping caller
+  # keeps -- share no cell and are refused all the same, the test being the
+  # storage.  The message says so rather than calling them one array.
+  def test_two_slabs_of_one_array_are_refused_by_storage
+    pair = CArray.double(2, 6).seq!(1.0)
+    read = pair[0, nil]
+    write = pair[1, nil]
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_stencil(read, into: write) { |a| (a[-1] + a[0] + a[1]) / 3 }
+    end
+    assert_match(/views of one array/, error.message)
+    assert_match(/not a question asked here/, error.message)
+
+    # The copy the message names does run.
+    detached = read.copy
+    CArray.jit_stencil(detached, into: write) { |a| (a[-1] + a[0] + a[1]) / 3 }
+    assert_in_delta((1.0 + 2.0 + 3.0) / 3, pair[1, 1], 1.0e-12)
   end
 
   # The question is about the window onto the array being written, not about
