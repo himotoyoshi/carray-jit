@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: an extent that counts down as a `Range` -- `(n-2)..0` -- raises
+  `CArray::JIT::Unsupported` naming `(n-2).step(0, -1)`, the spelling Ruby
+  iterates backwards with. Ruby gives such a Range no elements, so the
+  kernel ran no passes and said nothing, which is what the guide says this
+  refusal exists to prevent. An empty range whose ends agree (`0...0`) is a
+  count of zero as before.
+
 - Change: `CArray#jit_init` given a block that takes a splat or an optional
   parameter says so, where it said "the block names -1 indices".
 

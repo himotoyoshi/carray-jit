@@ -138,4 +138,30 @@ class TestBounds < Minitest::Test
     assert_equal((2..7).map(&:to_f), values.to_a)
   end
 
+  # `(n-2)..0` reads like a downward sweep and Ruby gives it no elements, so
+  # the loop it looks like runs no passes and says nothing.  A kernel handed
+  # one ran no passes too, which is the silence the guide says it prevents.
+  def test_a_range_that_counts_down_is_refused
+    values = CArray.double(6)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(4..0) { |i| values[i] = 1.0 }
+    end
+    assert_match(/counts down/, error.message)
+    assert_match(/4\.step\(0, -1\)/, error.message)
+    assert_equal([0.0] * 6, values.to_a, "nothing ran")
+
+    # Which is the spelling that does run.
+    CArray.jit_for(4.step(0, -1)) { |i| values[i] = 1.0 }
+    assert_equal([1.0, 1.0, 1.0, 1.0, 1.0, 0.0], values.to_a)
+  end
+
+  # An empty range whose ends agree is a count of zero, not a mistake: a
+  # slice that came out empty walks no cells and says nothing.
+  def test_an_empty_range_still_runs_no_passes_quietly
+    values = CArray.double(3)
+    CArray.jit_for(0...0) { |i| values[i] = 1.0 }
+    CArray.jit_for(2...2) { |i| values[i] = 1.0 }
+    assert_equal([0.0] * 3, values.to_a)
+  end
+
 end
