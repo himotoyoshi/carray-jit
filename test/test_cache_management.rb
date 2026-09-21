@@ -254,6 +254,22 @@ class TestCacheManagement < Minitest::Test
     CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
   end
 
+  # A compiler that is not there is said once, where it is looked for --
+  # rather than as an Errno::ENOENT out of the spawn, naming the program and
+  # neither what it was for nor the variable that names it.
+  def test_a_compiler_that_is_not_there_says_so
+    ENV["CARRAY_JIT_CC"] = "carray-jit-no-such-compiler"
+    CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
+    CArray::JIT.clear_registry
+    error = assert_raises(CArray::JIT::CompilationError) { compile_indexed(6) }
+    assert_match(/carray-jit-no-such-compiler/, error.message)
+    assert_match(/CARRAY_JIT_CC/, error.message)
+  ensure
+    ENV.delete("CARRAY_JIT_CC")
+    CArray::JIT::Compiler.instance_variable_set(:@compiler_identity, nil)
+    CArray::JIT.clear_registry
+  end
+
   def test_cache_directory_is_created_private
     nested = File.join(@directory, "created")
     ENV["CARRAY_JIT_CACHE"] = nested

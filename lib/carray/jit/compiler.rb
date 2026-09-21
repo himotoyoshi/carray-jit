@@ -488,6 +488,17 @@ class CArray
         end
 
         def compile (source_path, object_path, flags = FLAGS)
+          # Asked before the spawn, because a spawn that finds nothing raises
+          # Errno::ENOENT naming the program and nothing else -- not what it
+          # was wanted for, and not where to say so.  This is the same lookup
+          # the key already makes to identify the compiler.
+          unless resolve_compiler(compiler_command)
+            raise CompilationError,
+                  "`#{compiler_command}` is not an executable this process " \
+                  "can find; carray-jit compiles its kernels with it. " \
+                  "Set CARRAY_JIT_CC to a C compiler, or leave it unset for " \
+                  "the one Ruby was built with."
+          end
           command = [compiler_command, *flags, source_path, "-o", object_path, "-lm"]
           output = IO.popen(command, err: [:child, :out]) { |io| io.read }
           unless $?.success?

@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a compiler this process cannot find -- `CARRAY_JIT_CC` naming
+  something that is not there -- raises `CArray::JIT::CompilationError`
+  saying so and naming the variable, where it raised `Errno::ENOENT` from
+  the spawn with the program name and nothing else.
+
 - Fix: two threads of one process compiling at the same time no longer
   raise `Errno::ENOENT`; three threads in four did. A build now takes a lock
   for the length of the compile, so the second thread finds the object the
