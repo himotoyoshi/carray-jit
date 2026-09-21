@@ -2178,10 +2178,16 @@ class CArray
         type = assignment.type
 
         # A local carries a mask alongside its value, so that reading it later
-        # is the same as reading what it was computed from.
+        # is the same as reading what it was computed from -- and, as a cell
+        # written here would, the masks of the branches this assignment stands
+        # in.  An `if` or a `while` taken on a missing cell was decided by
+        # bytes that mean nothing, so what it writes means nothing either,
+        # wherever it writes it.  Without this the rule held for
+        # `out[i] = 1.0` and not for `v = 1.0; out[i] = v`, which is the
+        # spelling a search over a row takes.
         mask = if @masked
                  "#{indent}#{local_mask_name(name)} = " \
-                 "#{emit_mask(assignment.expression)};\n"
+                 "#{combine_masks(@carried_masks + [emit_mask(assignment.expression)])};\n"
                else
                  ""
                end
