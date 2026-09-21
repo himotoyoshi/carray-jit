@@ -1025,6 +1025,7 @@ class CArray
       def classify_indices (statements, write)
         counts = Hash.new(0)
         subscripts_of(statements, write).each { |index, _| counts[index] += 1 }
+        refuse_a_gathered_index(statements, write)
 
         missing = @index_names - counts.keys
         unless missing.empty?
@@ -1047,6 +1048,67 @@ class CArray
         end
         [@index_names.select { |name| counts[name] == 1 },
          @index_names.select { |name| counts[name] > 1 }]
+      end
+
+      # An index inside a computed subscript -- `m[i, idx[k]]` -- is read at a
+      # position, but not at a position of the array it stands in: it
+      # addresses an axis of `idx`.  A contraction is a count of positions,
+      # and this one cannot be counted either way.  Counting it makes
+      # `m[i, idx[k]] * v[k]` a sum over k, which is what the notation says,
+      # and makes `a[i, k] * w[idx[i]]` a sum over i, which is not what
+      # anybody writing a gather means.  Not counting it leaves the first one
+      # a free index and the answer an outer product -- a whole matrix where
+      # the reader asked for a vector, quietly.
+      #
+      # So it is refused, and the loop it means is written with jit_for,
+      # where the gather is the ordinary computed subscript it already is.
+      def refuse_a_gathered_index (statements, write)
+        summand = write.is_a?(ElementWrite) ? write.expression : write
+        found = []
+        # Inside a gathering subscript every index is one of these, however
+        # deep: `a[idx[jdx[k]]]` gathers twice and k is no more a position of
+        # `a` for it.
+        inside = lambda do |node|
+          return unless node.is_a?(Node)
+          subscript_indices(node).each do |index|
+            found << index if @index_names.include?(index)
+          end
+          gathered_subscripts(node).each { |offset| inside.call(offset) }
+          node.children.each { |child| inside.call(child) }
+        end
+        walk = lambda do |node|
+          return unless node.is_a?(Node)
+          gathered_subscripts(node).each { |offset| inside.call(offset) }
+          node.children.each { |child| walk.call(child) }
+        end
+        (statements[0..-2] + [summand]).each { |statement| walk.call(statement) }
+        return if found.empty?
+        names = found.uniq.map { |name| "`#{name}`" }.join(" and ")
+        raise Unsupported.new(
+          "#{names} #{found.uniq.size == 1 ? 'stands' : 'stand'} inside a " \
+          "subscript the kernel works out, where a contraction cannot count " \
+          "it: an index there addresses an axis of the array doing the " \
+          "gathering, not of the array being read, so whether it is summed " \
+          "or free is not something the notation says. Write the loop with " \
+          "jit_for",
+          summand.location)
+      end
+
+      # The indices a read names directly, as the symbols a subscript pair
+      # carries rather than as nodes.
+      def subscript_indices (node)
+        return [] unless node.is_a?(ElementRead) || node.is_a?(MaskTest)
+        node.subscripts.filter_map { |index, _| index }
+      end
+
+      # The subscript expressions a read works out, which are the ones an
+      # index can hide in.  A plain `a[i]` or `a[i-1]` carries its index in
+      # the pair itself and has none of these.
+      def gathered_subscripts (node)
+        return [] unless node.is_a?(ElementRead) || node.is_a?(MaskTest)
+        node.subscripts.filter_map { |index, offset|
+          offset if index.nil? && offset.is_a?(Node)
+        }
       end
 
       # Every subscript on the right-hand side: the summand, and whatever the

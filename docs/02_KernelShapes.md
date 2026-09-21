@@ -431,6 +431,8 @@ t = CArray.jit_contract { |i|       q[i,i]          }   # a trace
 o = CArray.jit_contract { |i, j|    p[i] * r[j]     }   # an outer product, nothing summed
 ```
 
+An index inside a subscript the kernel works out -- `a[i, idx[k]]` -- is **refused**. Counting positions is what a contraction does, and that one sits on an axis of `idx` rather than on an axis of `a`: read as a position it makes `a[i, idx[k]] * v[k]` a sum over `k`, and not read as one it makes `a[i, k] * w[idx[i]]` a sum over nothing that was asked for. Which of the two was meant is not in the notation, so the gather is written with `jit_for`, where a computed subscript is the ordinary thing it already is.
+
 The result is allocated and returned, its axes being the free indices in the order the block named them -- so the parameter list is where the axis order is stated, and `{ |j, i, k| ... }` gives the transpose. Assigning into an array of your own says where to put it instead:
 
 ```ruby
