@@ -3,6 +3,7 @@ require "fileutils"
 require "rbconfig"
 require "tmpdir"
 require "fiddle"
+require "monitor"
 
 class CArray
   module JIT
@@ -207,7 +208,21 @@ class CArray
         # kernel does not throw its object away.  The file then names the
         # first site that compiled it, which is a place the code was written
         # rather than the only one.
+        # One compile at a time in a process.  The staging path a build
+        # compiles to is named for the process, so two threads building at
+        # once wrote the same file and whichever renamed first left the other
+        # renaming a path that was gone -- a bare Errno::ENOENT out of three
+        # threads in four.  Serialising them also spares the second thread the
+        # build: it takes the lock after the first has renamed, and finds the
+        # object where a later run would.  Reentrant, so that a build reached
+        # from inside another -- which none is today -- would not stop here.
+        LOCK = Monitor.new
+
         def build (source, function_name, header: nil, flags: FLAGS)
+          LOCK.synchronize { build_locked(source, function_name, header: header, flags: flags) }
+        end
+
+        def build_locked (source, function_name, header: nil, flags: FLAGS)
           dump(header.to_s + source)
 
           directory = prepare(cache_directory)
