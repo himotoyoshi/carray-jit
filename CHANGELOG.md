@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a keyword in value position is named as it was written --
+  `unless` in `CArray.jit_map { unless a > 1.0 then ... end }` says
+  "`unless` -- write it as `if` with the condition negated", where it said
+  "unsupported expression Unless". Statement position already did.
+
 - Change: the refusal for a `CArray.jit_stencil` writing into a view of an
   array it reads says that the two are views of one array and that the test
   is the storage rather than the cells, so two slabs that share none are

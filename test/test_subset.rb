@@ -20,6 +20,24 @@ class TestSubset < Minitest::Test
     refuse("->(i) { a[i] = [1, 2] }", /unsupported expression Array/)
   end
 
+  # A keyword is named as it was written wherever it stands.  In statement
+  # position it always was; in value position it came back as this
+  # compiler's reading of it -- "unsupported expression Unless".
+  def test_a_keyword_in_value_position_is_named_as_written
+    values = CArray.double(3).seq!(1.0)
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { unless values > 1.0 then 1.0 else 2.0 end }
+    end
+    assert_match(/this one is `unless`/, error.message)
+    assert_match(/write it as `if` with the condition negated/, error.message)
+    refute_match(/Unless/, error.message)
+
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_map { case values when 1.0 then 1.0 else 2.0 end }
+    end
+    assert_match(/this one is `case`/, error.message)
+  end
+
   # An inner loop runs over a range, which is what makes its extent knowable
   # before the kernel runs.
   def test_each_over_something_other_than_a_range
