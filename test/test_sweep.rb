@@ -86,12 +86,12 @@ class TestSweep < Minitest::Test
   end
 
   # The sweep re-gathers what it cannot walk in place at the top of every
-  # chunk, where the driver here gathers it once before the loop.  That is
-  # the same answer only while the gathered cells stand still, and they do
-  # not when the pass writes the array they come from: the second chunk then
-  # gathers cells the first chunk wrote.  Ruby reads the whole right-hand
-  # side first, so the pass keeps the driver that does.
-  def test_a_gather_from_an_array_the_pass_writes_keeps_the_driver
+  # chunk, which is the same answer only while the gathered cells stand
+  # still -- and they do not when the pass writes the array they come from.
+  # What settles it is the copy every such operand is given before the loop
+  # (see test_subset.rb): the sweep then re-gathers a copy nothing writes to,
+  # so the pass may still be chunked and still answers as Ruby does.
+  def test_a_gather_from_an_array_the_pass_writes_is_still_right
     rows, columns = 200, 100                     # 20_000 cells: several chunks
     src = CArray.double(rows, columns).seq!(0.0)
     reversed = CArray.int32(rows, columns) { |i, j|
@@ -102,7 +102,7 @@ class TestSweep < Minitest::Test
       src[rows - 1 - i, columns - 1 - j] + 1.0
     }
     kernel = CArray.jit_each { src = gather + 1.0 }
-    assert_equal(2, kernel.rank, "the axes stay, which is the driver here")
+    assert_equal(1, kernel.rank, "a copy is safe to chunk")
     assert_equal(reference.to_a, src.to_a)
   end
 

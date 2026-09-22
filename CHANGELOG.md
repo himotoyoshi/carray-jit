@@ -52,22 +52,15 @@ version you have and a newer one.
   after it, so the loop read cells that had stopped being current and a
   direct write to the same array was dropped at the end.
 
-- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that reads one view of
-  an array and writes another -- two blocks that share cells, a transpose
-  written over itself -- reads the values the expression started with, as
-  Ruby and CArray's own operators do. Such a view was addressed in place and
-  read back cells the pass had already written: `hi = lo * 2.0` over
-  overlapping blocks came back all zeros. The read operand is copied once
-  before the loop. `a = a + 1.0`, and views that share a root without
-  sharing a cell, are untouched.
-
-- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that gathers from an
-  array it also touches -- `src = src[order] + 1.0` -- gives the answer the
-  same expression gives in Ruby. Over 20000 cells, 8192 of them came back
-  holding the kernel's own output: the chunked sweep re-gathers at the top
-  of every chunk, so a later chunk gathered what an earlier one had
-  written. Such a pass now keeps the unchunked driver, which reads the
-  gather once before the loop. Every other pass sweeps as before.
+- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that reads a view of an
+  array it also writes -- two blocks that share cells, a transpose written
+  over itself, a gather held in `g` and written back as `src = g + 1.0` --
+  reads the values the expression started with, as Ruby and CArray's own
+  operators do. Such an operand was read as the pass went, so it came back
+  holding the kernel's own output: `hi = lo * 2.0` over overlapping blocks
+  gave all zeros, and a gather over 20000 cells was wrong in 8192 of them.
+  It is copied once before the loop instead. `a = a + 1.0`, and views that
+  share a root without sharing a cell, are untouched.
 
 - Change: the refusal for a block whose source cannot be read names
   `RubyVM.keep_script_lines = true` and `CArray::JIT.compile`, which takes a
@@ -359,8 +352,9 @@ version you have and a newer one.
   parameters is fine, the declarations carrying no `restrict`. Note that a
   borrowed function which keeps the pointer past the call is left pointing at
   a stack frame that has gone, and that a declaration carrying no length --
-  `const double *x` -- gives nothing to check against. Still excluded: a
-  `jit_function` body, more than one axis, and a contraction.
+  `const double *x` -- gives nothing to check against. Still excluded when this landed: a `jit_function` body,
+  more than one axis, and a contraction; the first two arrived later in this
+  release, and a contraction is still refused.
 
 - New: a local array, and the four intrinsics over one, may be written in a
   `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil` block as well as
@@ -372,17 +366,18 @@ version you have and a newer one.
   an array under is refused where the block also closes over an array of that
   name, since in these spellings an assignment writes that array's cell;
   rename one of the two. A `jit_map` block may not end by making an array, its
-  value having to fit in a cell. Still excluded: a `jit_function` body, a
+  value having to fit in a cell. Still excluded when this landed: a `jit_function` body, a
   contraction, more than one axis, passing one to a C function, and a kernel
-  that carries masks.
+  that carries masks; all but the contraction arrived later in this release.
 
 - New: `sum(w)`, `min(w)`, `max(w)` and `sort(w)` inside a `CArray.jit_for`
   block, over a local array of one axis. They are bare calls, the compiler's
   own names, rather than methods on the array -- `w.sum` is refused, and
   `sum = 0.0` beside `sum(w)` is still a local. `sum` accumulates in the
   element's computation type in index order; `min` and `max` skip a NaN
-  wherever it stands and answer `Infinity` / `-Infinity` for an array of
-  nothing but NaN, which is what `CArray#min` and `#max` answer. `sort`
+  wherever it stands, and answer `NaN` for an array of nothing but NaN,
+  which is what `CArray#min` and `#max` answer (they answered the type's
+  limit until a later change in this release). `sort`
   is a statement and orders the cells ascending with every NaN after every
   number, as `CArray#sort` does; the relative order of `-0.0` and `0.0` is
   not promised. Up to 16 cells it emits a comparator network with no branch
