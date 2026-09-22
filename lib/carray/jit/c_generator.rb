@@ -1585,7 +1585,8 @@ class CArray
       # that is no shape, and an allocation that failed.  Negative, because
       # the positive codes from RAISE_CODE_FLOOR up are a digest of a
       # `raise` message and a fixed one among them could collide; nothing
-      # reaches for a negative code, so these two are the kernel's own.
+      # reaches for a negative code, so the fixed ones are kept down here,
+      # the kernel's own.
       SHAPE_CODE = -1
       MEMORY_CODE = -2
 
