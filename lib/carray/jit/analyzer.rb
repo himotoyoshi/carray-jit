@@ -2761,8 +2761,19 @@ class CArray
           # closes over nothing.
           build_name_read(node.name, node.location)
         else
-          raise Unsupported.new("unsupported expression #{node_name(node)}",
-                                node.location)
+          # Named as it was written where there is a name for it, and with
+          # the same advice a statement in that position gets: `unless` in
+          # value position was "unsupported expression Unless", which is
+          # this compiler's reading of it rather than the reader's.
+          described = STATEMENT_DESCRIPTIONS[node.class]
+          hint = STATEMENT_HINTS[node.class]
+          raise Unsupported.new(
+            described ?
+              "a kernel computes its value from arithmetic, comparisons, " \
+              "cells and calls, and this one is #{described}" \
+              "#{hint ? " -- #{hint}" : ""}" :
+              "unsupported expression #{node_name(node)}",
+            node.location)
         end
       end
 
