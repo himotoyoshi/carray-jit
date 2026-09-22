@@ -362,7 +362,11 @@ class TestContract < Minitest::Test
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, j, k| view[i,j] = source[i,k] * b[k,j] }
     end
-    assert_match(/are the same array/, error.message)
+    # Two names for one storage rather than one array: the message says
+    # which, as the stencil's does, and says the test is the storage.
+    assert_match(/are views of one array/, error.message)
+    assert_match(/by the storage they share rather than by the cells/,
+                 error.message)
   end
 
   # An index is the loop's, and the C would assign to the counter -- walking
