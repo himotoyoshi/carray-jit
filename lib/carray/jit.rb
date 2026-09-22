@@ -755,10 +755,13 @@ class CArray
           arrays.each do |name, array|
             next if name == written
             next unless root_of(array).equal?(target)
+            same = arrays.fetch(written).equal?(array)
             raise Unsupported,
-                  "`#{written}` and `#{name}` are the same array, which this " \
-                  "both writes and reads; that is a recurrence rather than a " \
-                  "contraction, and is written with jit_for"
+                  "`#{written}` and `#{name}` are #{same ? 'the same array' : 'views of one array'}, " \
+                  "which this both writes and reads; that is a recurrence " \
+                  "rather than a contraction, and is written with jit_for. " \
+                  "Two views are refused by the storage they share rather " \
+                  "than by the cells, so two that share none are refused too"
           end
         end
       end
@@ -927,38 +930,9 @@ class CArray
       # 0.9 ns/cell with the driver here against 6.1 ns/cell swept, and no
       # scratch either way -- there was nothing the re-gather was buying.
       def walkable_in_place? (arrays)
-        arrays = arrays.to_a
         tiers = arrays.map { |array| Access.classify(array)[:tier] }
-        if tiers.include?(Access::TIER_XFER)
-          return false if gathers_what_the_pass_touches?(arrays, tiers)
-          return true
-        end
+        return true if tiers.include?(Access::TIER_XFER)
         tiers.none? { |tier| tier == Access::TIER_STRIDE }
-      end
-
-      # The one thing the sweep does differently, rather than only sooner: it
-      # re-gathers an operand it cannot walk in place at the top of every
-      # chunk, where the driver here gathers it once before the loop.  Both
-      # are the same answer while the gathered cells stand still.  They do
-      # not stand still when the pass also writes the array they are gathered
-      # from: chunk 2 gathers cells chunk 1 has already written, and a
-      # reversal over 20000 doubles came back with 8192 cells of the
-      # kernel's own output in it.  Ruby reads the whole right-hand side
-      # before assigning, which is what the gather-once driver does.
-      #
-      # Sharing a root is the test, not overlapping cells: a view knows what
-      # it is a view of, and asking further would be asking which cells two
-      # views have in common, which CArray does not answer and this does not
-      # need -- a pass that gathers from an array it also touches is rare,
-      # and what it loses is the chunking, not the answer.
-      def gathers_what_the_pass_touches? (arrays, tiers)
-        gathered = arrays.each_with_index.filter_map { |array, index|
-          root_of(array) if tiers[index] == Access::TIER_XFER
-        }
-        arrays.each_with_index.any? { |array, index|
-          next false if tiers[index] == Access::TIER_XFER
-          gathered.any? { |root| root.equal?(root_of(array)) }
-        } || gathered.uniq { |root| root.object_id }.size < gathered.size
       end
 
       # Which loop runs it.  Both compute the same thing from the same
