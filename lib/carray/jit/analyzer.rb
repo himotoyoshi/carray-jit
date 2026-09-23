@@ -1213,15 +1213,17 @@ class CArray
         extract_block(result.value)
       end
 
-      # Every spelling that binds a local: `x = e` and the operator forms,
-      # which read the name and write it back.  A name the block assigns is
-      # not a name it captures, and one that is an array outside is the array
-      # the whole-array spelling writes -- so an operator form left out here
-      # would have `out += a` reaching for a capture that is not there.
+      # Every spelling that binds a local: `x = e`, the operator forms, which
+      # read the name and write it back, and a name on the left of a parallel
+      # assignment.  A name the block assigns is not a name it captures, and
+      # one that is an array outside is the array the whole-array spelling
+      # writes -- so an operator form left out here would have `out += a`
+      # reaching for a capture that is not there.
       ASSIGNMENT_NODES = [Prism::LocalVariableWriteNode,
                           Prism::LocalVariableOperatorWriteNode,
                           Prism::LocalVariableOrWriteNode,
-                          Prism::LocalVariableAndWriteNode].freeze
+                          Prism::LocalVariableAndWriteNode,
+                          Prism::LocalVariableTargetNode].freeze
 
       def collect_assigned_names (node)
         return [] unless node
@@ -1405,6 +1407,8 @@ class CArray
           assign_local(node.name, expression, node.location, node.depth)
         when Prism::LocalVariableOperatorWriteNode
           build_operator_assignment(node)
+        when Prism::MultiWriteNode
+          build_parallel_assignment(node)
         when Prism::IndexOperatorWriteNode
           build_operator_element_write(node)
         when Prism::LocalVariableOrWriteNode, Prism::LocalVariableAndWriteNode,
@@ -1483,6 +1487,12 @@ class CArray
         Prism::CaseNode    => "write the branches out with `if` and `elsif`",
         Prism::ReturnNode  => "a body is one expression, and its value is " \
                               "the last thing in it",
+        # A statement, and a supported one; what it has not got is a value.
+        # Ruby's is the array of what it wrote, and a cell holds a number.
+        Prism::MultiWriteNode =>
+                              "its value in Ruby is the array of what it " \
+                              "wrote, and a cell holds a number; end with " \
+                              "the one you want",
       }.freeze
 
       def statement_description (node)
@@ -2564,6 +2574,156 @@ class CArray
         scope = [@scopes.size - 1 - depth, 0].max
         @scopes[scope] << name unless @scopes[scope].include?(name)
         Assignment.new(name, expression, location, scope)
+      end
+
+      # What a name on the left of a parallel assignment may not be, said the
+      # way it was written.  A cell may: `a[i], a[j] = a[j], a[i]` is the swap
+      # a sort is written with, and each half of it is the write `a[i] = ...`
+      # already was.
+      TARGET_DESCRIPTIONS = {
+        Prism::MultiTargetNode            => "a nested target",
+        Prism::SplatNode                  => "a splat",
+        Prism::ImplicitRestNode           => "a bare comma",
+        Prism::InstanceVariableTargetNode => "an instance variable",
+        Prism::GlobalVariableTargetNode   => "a global variable",
+        Prism::ClassVariableTargetNode    => "a class variable",
+        Prism::ConstantTargetNode         => "a constant",
+        Prism::ConstantPathTargetNode     => "a constant",
+        Prism::CallTargetNode             => "an attribute",
+      }.freeze
+
+      TARGET_HINTS = {
+        Prism::MultiTargetNode  => "it unpacks one value into several, and " \
+                                   "nothing in a kernel holds several; write " \
+                                   "the names out flat",
+        Prism::SplatNode        => "it takes however many values are left " \
+                                   "over, and how many there are is the one " \
+                                   "thing a C variable cannot be",
+        Prism::ImplicitRestNode => "it drops the rest of the values, and how " \
+                                   "many that is has to be written out here",
+      }.freeze
+
+      # `prev, cur = cur, prev + cur`, and the swap it is the general case of.
+      #
+      # Ruby settles every value on the right before it writes any of them,
+      # and so does this: each value is assigned to a name of its own first,
+      # and only then are the writes made.  The other way round, the line
+      # above would write `prev` and then read the new one back while working
+      # out `cur` -- which is the one thing the spelling exists to prevent,
+      # and why `jit_for` wanted it.  A recurrence advances by a parallel
+      # assignment in Ruby; until now it had to be unpicked by hand here, and
+      # the temporary a reader had to introduce is where the bug lives.
+      #
+      # The names are written even where nothing on the right reads what the
+      # left writes.  A rule that dropped them sometimes would be one a reader
+      # of the generated C had to know before they could tell what a line
+      # meant, and a C compiler drops a name assigned once and read once
+      # without being asked.
+      def build_parallel_assignment (node)
+        targets = parallel_targets(node)
+        values  = parallel_values(node, targets)
+        temporaries = values.map { |value|
+          assign_local(parallel_value_name, build(value), value.location)
+        }
+        writes = targets.each_with_index.map { |target, k|
+          value = build_name_read(temporaries[k].name, target.location)
+          if target.is_a?(Prism::LocalVariableTargetNode)
+            assign_local(target.name, value, target.location, target.depth)
+          else
+            indices = target.arguments ? target.arguments.arguments : []
+            element_write(target, indices, value, target.location)
+          end
+        }
+        ParallelAssignment.new(temporaries + writes, node.location)
+      end
+
+      def parallel_targets (node)
+        targets = node.lefts + (node.rest ? [node.rest] : []) + node.rights
+        targets.each do |target|
+          next if target.is_a?(Prism::LocalVariableTargetNode) ||
+                  target.is_a?(Prism::IndexTargetNode)
+          described = TARGET_DESCRIPTIONS[target.class]
+          hint = TARGET_HINTS[target.class]
+          raise Unsupported.new(
+            "a parallel assignment writes names and cells here -- " \
+            "`a, b = b, a`, `a[i], a[j] = a[j], a[i]` -- and this one writes " \
+            "#{described || node_name(target)}#{hint ? " -- #{hint}" : ""}",
+            target.location)
+        end
+        targets
+      end
+
+      # The values, told apart from the one value Ruby would spread.
+      #
+      # `a, b = b, a` writes its values out, and Prism hands them over as an
+      # array with no brackets around it.  Brackets are Ruby's other spelling
+      # -- `a, b = [b, a]` -- and it means something else: one value, taken
+      # apart across the names.  Nothing in a kernel is a value that can be
+      # taken apart, so the two are told apart here rather than quietly read
+      # as one.
+      def parallel_values (node, targets)
+        value = node.value
+        unless value.is_a?(Prism::ArrayNode) && value.opening_loc.nil?
+          raise Unsupported.new(
+            "a parallel assignment takes one value per name, written out on " \
+            "the right, as in `a, b = b, a`. Ruby takes a single value apart " \
+            "across the names, and a kernel computes numbers -- there is " \
+            "nothing here to take apart",
+            value.location)
+        end
+        if (splat = value.elements.find { |element|
+                      element.is_a?(Prism::SplatNode) })
+          raise Unsupported.new(
+            "`*` spreads a value across the names, and how many it comes to " \
+            "is the one thing a C variable cannot be; write the values out",
+            splat.location)
+        end
+        unless value.elements.size == targets.size
+          # Ruby has an answer for either way round, and neither is one a
+          # kernel can keep: the names it runs out of values for are nil, and
+          # a value it runs out of names for is dropped.
+          raise Unsupported.new(
+            "this writes #{count_of(targets.size, "name")} and has " \
+            "#{count_of(value.elements.size, "value")} for them. Ruby " \
+            "#{value.elements.size < targets.size ?
+                 "leaves the rest of the names nil, which is not a number a " \
+                 "local or a cell can hold" :
+                 "drops the values it has no name for, and a value computed " \
+                 "and dropped is a line that does nothing"}",
+            node.location)
+        end
+        value.elements
+      end
+
+      def count_of (n, noun)
+        "#{n} #{n == 1 ? noun : noun + "s"}"
+      end
+
+      # A name for a value on the right that no name in the block can be, and
+      # that no other statement uses.
+      #
+      # The block's own text settles the first half: a local, a capture, an
+      # index and an array all appear in it, so a name that appears nowhere
+      # in it is none of them.  An underscore is added until that holds,
+      # which keeps the same block reading the same way every time -- it has
+      # to, the generated C being part of the cache key.
+      #
+      # The second half is the counter.  Two parallel assignments sharing a
+      # name would be two statements sharing a C variable, and a variable
+      # live at the head of a loop is one the loop carries: a body that
+      # swapped Integers before the loop and Floats inside it was refused for
+      # changing the type of `value1` on the way round -- a name its author
+      # never wrote, about a value that is dead by the end of the line it is
+      # on.  A name of its own per statement cannot be carried anywhere.
+      def parallel_value_name
+        @parallel_value_prefix ||= begin
+          text = (@source || @node&.slice).to_s
+          prefix = "value"
+          prefix = "_" + prefix while text.include?(prefix)
+          prefix
+        end
+        @parallel_value_count = @parallel_value_count.to_i + 1
+        :"#{@parallel_value_prefix}#{@parallel_value_count}"
       end
 
       # `x += e` is `x = x + e`, and is read as exactly that: the name is

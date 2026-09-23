@@ -83,6 +83,11 @@ value and both bounds one class.
 An operator assignment is the assignment it stands for: `total += a[i]`,
 `work[i, k] *= 2.0`, `counts[bin[i]] += 1`.
 
+A parallel assignment settles every value before it writes anything, which is
+how a recurrence advances: `a, b = b, a + b`, `a[i], a[j] = a[j], a[i]`. One
+value per name, written out -- the readings that take a single value apart
+(`a, b = f(x)`, `a, *rest =`, `a, (b, c) =`) are each refused by name.
+
 `reassociate:` says whether a reduction's accumulator may be split into partial
 sums. Default is `CArray::JIT.reassociate` (`true`). Pass `false` for the
 serial order -- a compensated summation, or checking against the loop.

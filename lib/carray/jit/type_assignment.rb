@@ -300,6 +300,13 @@ class CArray
           node.binding = bind(node.name, node.type)
           @assigned_in_while.delete(node.name)
           declare(node)
+        when ParallelAssignment
+          # The values were made statements of their own by the analyzer, and
+          # stand before the writes.  Walking them in that order is what gives
+          # a name on the left the binding it had on the right: `a, b = b, a`
+          # reads `b` while `b` is still the old one, because the statement
+          # that reads it comes first.
+          node.statements.each { |statement| walk(statement) }
         when LocalArrayDeclaration
           # A declaration has no value, so it has no type: what it says is
           # what to put at the head of the block.  An extent the block wrote
@@ -983,6 +990,8 @@ class CArray
             raise Unsupported.new("a condition must be a comparison",
                                   node.condition.location)
           end
+          node.statements.each { |statement| verify(statement) }
+        when ParallelAssignment
           node.statements.each { |statement| verify(statement) }
         when InnerLoop
           [node.from, node.to].each do |bound|

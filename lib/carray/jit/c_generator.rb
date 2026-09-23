@@ -1553,6 +1553,14 @@ class CArray
       def emit_statement (statement, indent)
         case statement
         when Assignment    then emit_assignment(statement, indent)
+        when ParallelAssignment then
+          # The values, and then the writes.  They are ordinary statements by
+          # the time they reach here -- the analyzer made them so -- and the
+          # order they are in is the whole of what a parallel assignment
+          # means.
+          statement.statements.map { |inner|
+            emit_statement(inner, indent)
+          }.join
         when IntrinsicStatement then emit_intrinsic_statement(statement, indent)
         when LocalArrayDeclaration then emit_local_array_clearing(statement, indent)
         when LocalArrayWrite then guarded(statement, indent) { |inner|

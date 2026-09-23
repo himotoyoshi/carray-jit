@@ -41,6 +41,56 @@ A local belongs to the scope Ruby gives it, and is declared at the head of the C
 
 The version before this one settled locals by joining every assignment's type and declaring the variable once. On the example above it printed the right answer -- by dividing in double where Ruby divided in integers, and then truncating 1.5 to 1 on the way back. Two errors that happened to cancel.
 
+### Parallel assignment
+
+`a, b = b, a` is in the subset, and means what Ruby means by it: **every value on the right is settled before anything on the left is written**.
+
+```ruby
+# The Fibonacci numbers, by the recurrence that defines them.
+out = CArray.int64(12)
+CArray.jit_for(12) { |i|
+  a = 0
+  b = 1
+  i.times { |k| a, b = b, a + b }   # `a + b` reads the old `a`
+  out[i] = a
+}
+```
+
+That is the line the spelling exists for. Written out by hand it is three, and the middle one is where the mistake goes:
+
+```ruby
+t = a           # forget this and `b` reads the new `a`
+a = b
+b = t + b
+```
+
+The compiler writes that temporary instead, one per value, and the C says so -- this is the inner loop above:
+
+```c
+for (int64_t k = INT64_C(0); k < i; k++) {
+  int64_t value1;
+  int64_t value2;
+  value1 = b;
+  value2 = a + b;      /* the `a` here is still the old one */
+  a = value1;
+  b = value2;
+}
+```
+
+The names are written every time, for the simple ones too. A rule that dropped them where nothing on the right read what the left writes would be a rule a reader of the C had to know before they could tell what a line meant, and a C compiler drops a name assigned once and read once without being asked.
+
+A cell is a target as much as a name is, which is the swap a sort is written with:
+
+```ruby
+CArray.jit_for(n / 2) { |i| a[i], a[n - 1 - i] = a[n - 1 - i], a[i] }
+```
+
+Each value keeps its own type, as it would on a line of its own -- `counts[i], parts[i] = i * 2, i / 4.0` writes an integer and a double -- and a value carries its mask to the name it is written to, the way an ordinary assignment does.
+
+**One value per name, written out.** Ruby's other readings all rest on taking one value apart, and nothing in a kernel is a value that can be taken apart, so each is refused by name rather than read as the first: `a, b = f(x)` and `a, b = [1, 2]` spread a single value, `a, *rest =` and `= 1, *xs` ask for however many are left over, `a, (b, c) =` unpacks again one level down, and a count that does not match says which way round it did not and what Ruby would have done about it.
+
+And it is a statement, not a value. Ruby's value for it is the array of what it wrote, so a block that ends in one is refused where `jit_map` wanted a number.
+
 ### Local arrays
 
 A local variable becomes a C variable; a `CArray` the block makes becomes a C array. It lives on the stack of the block it was written in, its length is whatever the block wrote, and it is reached at a subscript the way a captured array is.

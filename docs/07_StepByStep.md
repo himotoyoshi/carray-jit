@@ -1,6 +1,6 @@
-# 30 carray-jit exercises, with solutions
+# 31 carray-jit exercises, with solutions
 
-Thirty small tasks, in the order the documentation introduces things, with a
+Thirty-one small tasks, in the order the documentation introduces things, with a
 solution under each. Roughly in order of difficulty -- the stars say how much
 of the subset a task leans on, not how much code it takes.
 
@@ -380,7 +380,29 @@ out.to_a                            #=> [1.0, 2.0, 3.0, 9.0, 5.0]
 # wrongly is not refused: every cell read the zero that was still there
 ```
 
-#### 25. The longest run of 1s in a series of 0s and 1s (★★★)
+#### 25. Write the `i`-th Fibonacci number into `out[i]`, advancing two locals rather than reading the array back (★★★)
+
+`hint: both names change at once`
+
+```ruby
+out = CArray.int64(12)
+
+CArray.jit_for(12) { |i|
+  a = 0
+  b = 1
+  i.times { |k| a, b = b, a + b }
+  out[i] = a
+}
+out.to_a                            #=> [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+# every value on the right is settled before anything on the left is
+# written, so `a + b` reads the `a` this pass came in with.  Written as two
+# lines -- `a = b` and then `b = a + b` -- the second reads the `a` the
+# first just wrote, and `a` merely doubles: [0, 1, 2, 4, 8, ...].  Not a
+# refusal, and not this compiler's doing: those two lines mean the same in
+# Ruby
+```
+
+#### 26. The longest run of 1s in a series of 0s and 1s (★★★)
 
 `hint: two things have to survive the iteration, and neither is a sum`
 
@@ -396,7 +418,7 @@ CArray.jit_for(8) { |i|
 best[0]                             #=> 3
 ```
 
-#### 26. For each query, write the index of the last grid point not above it into `found` (★★★)
+#### 27. For each query, write the index of the last grid point not above it into `found` (★★★)
 
 `hint: the grid is sorted`
 
@@ -422,7 +444,7 @@ CArray.jit_for(4) { |i|
 found.to_a                          #=> [0, 2, 3, 3]
 ```
 
-#### 27. Count up to `bound[i]`, read from an array. What stops it, and what gets past it? (★★★)
+#### 28. Count up to `bound[i]`, read from an array. What stops it, and what gets past it? (★★★)
 
 `hint: an inner range is known before the loop runs`
 
@@ -452,7 +474,7 @@ CArray.jit_for(2) { |i|
 out.to_a                            #=> [2, 3]
 ```
 
-#### 28. Write the square of a complex array into `squared`, and the magnitude of the original into `size` (★★☆)
+#### 29. Write the square of a complex array into `squared`, and the magnitude of the original into `size` (★★☆)
 
 `hint: a data type like the others`
 
@@ -468,7 +490,7 @@ squared.to_a                        #=> [(-1.0+0.0i), (0.0+2.0i)]
 size.to_a                           #=> [1.0, 1.4142135623730951]
 ```
 
-#### 29. Fill an array with a hundred thousand random numbers in [0, 1), drawn inside the kernel (★★☆)
+#### 30. Fill an array with a hundred thousand random numbers in [0, 1), drawn inside the kernel (★★☆)
 
 `hint: not Ruby's rand -- the loop runs without the GVL`
 
@@ -482,7 +504,7 @@ draws.mean.round(4)                 #=> 0.5006
 # fill an array with CArray#random! first and read a cell of it
 ```
 
-#### 30. A local holds an int32 cell and is squared into an int64 array. What C type did it get? (★★★)
+#### 31. A local holds an int32 cell and is squared into an int64 array. What C type did it get? (★★★)
 
 `hint: read what was compiled`
 
