@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: the docs now say what a branch not taken costs under a mask. A
+  branch decided by a missing cell masks what it writes; taking the other
+  path writes nothing, so a conclusion reached that way -- `found` left at
+  -1 for a row whose only candidate was masked -- is reported as an ordinary
+  value. Ask about the mask with `a[i] == UNDEF` where that matters.
+
 - Change: a keyword in value position is named as it was written --
   `unless` in `CArray.jit_map { unless a > 1.0 then ... end }` says
   "`unless` -- write it as `if` with the condition negated", where it said
