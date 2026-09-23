@@ -421,9 +421,13 @@ class CArray
                       pointers: {}, pointer_lengths: {}, map: false,
                       cell_names: [],
                       recursion: nil, windows: [], returns: true,
-                      free_indices: nil, randoms: {}, masked: false)
+                      free_indices: nil, randoms: {}, masked: false,
+                      declared_parameters: nil)
         @source = source
         @node = node
+        # `jit_call`'s: the parameter names its declaration gave, standing
+        # where a block's own would.
+        @declared_parameters = declared_parameters
         @array_names = array_names
         # Arrays with one cell and no axis to walk -- a CScalar.  There is no
         # index to write for one, which is the whole of what distinguishes it
@@ -1267,7 +1271,23 @@ class CArray
         end
 
         if @function
-          @parameter_names = requireds.map(&:name)
+          # A body written for `jit_call` takes no parameters: the names are
+          # in the declaration, where they also name the locals the call
+          # reads.  Written in both places they could disagree, so the block
+          # is refused for naming any.
+          if @declared_parameters
+            unless requireds.empty?
+              raise Unsupported.new(
+                "this body's parameters are the ones its declaration named " \
+                "-- #{@declared_parameters.map { |n| "`#{n}`" }.join(', ')} " \
+                "-- and the block names #{requireds.map { |p| "`#{p.name}`" }.join(', ')} " \
+                "again. Written in two places they could disagree; leave " \
+                "the block's off")
+            end
+            @parameter_names = @declared_parameters
+          else
+            @parameter_names = requireds.map(&:name)
+          end
           @index_names = []
           @outer_names = []
           return

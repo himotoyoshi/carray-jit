@@ -733,9 +733,40 @@ class CArray
         text.split(",").map(&:strip)
       end
 
+      # The names a declaration gave its parameters, in order, with `nil`
+      # where it gave none.
+      #
+      # `read_type` drops them, and for every other spelling that is right:
+      # nothing reads a parameter's name for a function bound from a library,
+      # and one compiled from a block takes its parameters from the block.
+      # `jit_call` is where they stop being decorative -- there the names are
+      # what binds the call to the locals around it -- so they are read here
+      # rather than kept on a type, where a name does not belong.
+      def parameter_names (prototype)
+        text = prototype.strip.sub(/;\z/, "")
+        _, _, parameter_text = split(text, prototype)
+        parts = split_parameters(parameter_text)
+        return [] if parts.size == 1 && parts.first.strip == "void"
+        parts.map { |part| parameter_name(part) }
+      end
+
+      # The same grammar `read_type` reads, answering the name it throws
+      # away.  Written out beside it rather than folded into it: `read_type`
+      # is asked about a return type too, and a return type has no name.
+      def parameter_name (text)
+        stripped = text.strip.sub(/\[\s*\d*\s*\]\s*\z/, "")
+        words = stripped.split(/\s+|(?=\*)|(?<=\*)/).reject(&:empty?)
+        words.shift while words.first && KEYWORDS.include?(words.first)
+        words.shift while words.first == "*"
+        last = words.first
+        # A Symbol, which is what a block's parameters are and what the rest
+        # of the compiler compares names as.
+        last.to_sym if last&.match?(/\A[A-Za-z_]\w*\z/)
+      end
+
       # `[const] <keywords> [*] [name] [[]]` is the whole grammar there is.
-      # A parameter's own name is dropped: nothing reads it for a bound
-      # function, and a compiled one uses the block's parameter names.
+      # A parameter's own name is dropped here; `parameter_names` above reads
+      # it for the one spelling that needs it.
       def read_type (text, prototype)
         array = nil
         stripped = text.strip.sub(/\[\s*(\d*)\s*\]\s*\z/) {
@@ -867,7 +898,47 @@ class CArray
       # What comes back is the same object `jit_extern` hands out, so a kernel
       # calls either without knowing which it has; `compiled?` is where the
       # difference is still visible, along with the block, which it keeps.
-      def function (prototype, &block)
+      # `CArray.jit_call`: compile the block, read the locals the declaration
+      # named, call.
+      #
+      # Kept per call site rather than per body.  A block literal is a fresh
+      # Proc every time the line runs, but its instruction sequence is the
+      # site's and does not change -- which is the key `read_block` already
+      # caches a block's source under.
+      def call_here (prototype, block)
+        site = RubyVM::InstructionSequence.of(block) if
+          defined?(RubyVM::InstructionSequence)
+        entry = site && call_sites[site]
+        unless entry
+          names = CDeclaration.parameter_names(prototype)
+          if (missing = names.index(nil))
+            raise Unsupported,
+                  "`#{prototype}` gives parameter #{missing + 1} no name, " \
+                  "and a name is what `jit_call` binds by -- it is the local " \
+                  "the call reads"
+          end
+          entry = [function(prototype, declared_parameters: names, &block), names]
+          call_sites[site] = entry if site
+        end
+        compiled, names = entry
+        scope = block.binding
+        compiled.call(*names.map { |local|
+          begin
+            scope.local_variable_get(local)
+          rescue NameError
+            raise Unsupported,
+                  "`#{prototype}` declares `#{local}`, and there is no local " \
+                  "by that name where the call stands. A declaration's " \
+                  "parameter names are what `jit_call` binds to"
+          end
+        })
+      end
+
+      def call_sites
+        @call_sites ||= {}.compare_by_identity
+      end
+
+      def function (prototype, declared_parameters: nil, &block)
         unless block
           raise Unsupported,
                 "a function is compiled from a block, and none was given -- " \
@@ -875,7 +946,8 @@ class CArray
                 "`CArray.jit_extern(#{prototype.inspect})`"
         end
         name, return_type, parameters = CDeclaration.parse(prototype)
-        compile_c_function(prototype, name, return_type, parameters, block)
+        compile_c_function(prototype, name, return_type, parameters, block,
+                           declared_parameters)
       end
 
       private
@@ -907,7 +979,8 @@ class CArray
         "#{PREFIX}#{name || "function"}_#{digest}"
       end
 
-      def compile_c_function (prototype, name, return_type, parameters, block)
+      def compile_c_function (prototype, name, return_type, parameters, block,
+                              declared_parameters = nil)
         node, source, origin = read_block(block)
         # A function this body calls is pasted into it, so which one it is
         # belongs in the key beside the body's own text.  Two blocks spelled
@@ -920,13 +993,13 @@ class CArray
         # the next process as in this one.
         called = called_functions(source, node, block, name)
         key = [source, return_type.text, parameters.map(&:text), name,
-               called.values.map(&:kernel_key)]
+               declared_parameters, called.values.map(&:kernel_key)]
         found = function_registry[key]
         return found if found
         function_registry[key] =
           build_c_function(prototype, name, return_type, parameters,
                       source, node, origin, block, function_symbol(name, key),
-                      called)
+                      called, declared_parameters)
       end
 
       # The compiled functions the block reaches for, by the name it reaches
@@ -975,12 +1048,16 @@ class CArray
       end
 
       def build_c_function (prototype, name, return_type, parameters,
-                       source, node, origin, block, symbol, called = {})
+                       source, node, origin, block, symbol, called = {},
+                       declared_parameters = nil)
         # A function is a function of its parameters.  Whatever else the block
         # reaches for is refused, and the reason differs by what it is -- so
         # the captures are looked at before the body is walked, or the body
         # would raise first and say something less useful.
-        names = block.parameters.map(&:last)
+        # A body written for `jit_call` takes no parameters -- the
+        # declaration named them, and the same names are the locals the call
+        # reads -- so the arity is the declaration's to state.
+        names = declared_parameters || block.parameters.map(&:last)
         unless names.size == parameters.size
           raise Unsupported,
                 "`#{prototype}` names #{parameters.size} " \
@@ -1024,6 +1101,7 @@ class CArray
         # own body, as C does, so the body can call itself.  An anonymous one
         # has nothing to call itself by, and gets no recursion.
         analyzer = Analyzer.new(source, node: node, function: true,
+                                declared_parameters: declared_parameters,
                                 returns: !returns_nothing,
                                 pointers: pointers,
                                 pointer_lengths: pointer_lengths,

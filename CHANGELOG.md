@@ -39,6 +39,21 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `CArray.jit_call(prototype) { ... }` compiles the block as a C
+  function and calls it where it stands, with the locals around it. The
+  declaration's parameter names are the join and do the work twice: they are
+  the body's parameters, so the block declares none, and they name the locals
+  the call reads -- `CArray.jit_call("void (*)(double *out, const double
+  *values, size_t n, size_t window)")` inside a method holding `out`,
+  `values`, `n` and `window`. In C a parameter's name in a prototype is
+  decoration; here it is the whole binding, and a declared name with no local
+  behind it is refused at the call rather than read as nil inside it. What it
+  saves over `jit_function` and a `call` is the argument list, which restates
+  the declaration in an order nothing checks; what it costs is reading those
+  locals through the block's binding, about 0.3 microseconds against a call
+  that costs several. Compiled once per call site, and `clear_registry`
+  reaches those as it reaches the rest.
+
 - New: `CArray::JIT::CFunction#c_source_as(symbol)` hands the compiled C over
   under a symbol the caller picked, for a caller writing it into a file of
   its own rather than letting this compile it -- the symbol this compiler
