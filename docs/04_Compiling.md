@@ -157,7 +157,7 @@ Every kernel has that same signature, which is what lets one Fiddle::Function sh
 
 ### The carray-jit command
 
-Installing the gem provides a small command for looking after the cache. It loads only the compiler and its cache, so it works whether or not CArray and the compiled extension can be loaded -- the CArray version in the environment name is the one RubyGems says a `require` would activate, which is the one a running program would have reported itself.
+Installing the gem provides a small command for looking after the cache. It loads only the compiler and its cache, so it works whether or not CArray itself can be loaded -- the CArray version in the environment name is the one RubyGems says a `require` would activate, which is the one a running program would have reported itself.
 
 ```
 $ carray-jit

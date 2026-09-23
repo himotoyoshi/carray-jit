@@ -127,14 +127,27 @@ class TestBlockSource < Minitest::Test
     assert_equal("[9.0, 9.0, 9.0]", run_without_a_locale(script))
   end
 
+  # RUBYOPT is cleared along with the locale: an `-E` in the developer's would
+  # answer the question this asks.  That takes the load path with it, so it is
+  # passed as flags instead -- this gem's, and whichever CArray the suite is
+  # itself running against, which is a checkout rather than the installed gem
+  # whenever CARRAY_TREE is set.
+  def load_path_flags
+    library = File.expand_path("../lib", __dir__)
+    carray = $LOAD_PATH.select do |path|
+      File.exist?(File.join(path, "carray.rb")) ||
+        Dir.glob(File.join(path, "carray_ext.*")).any?
+    end
+    ([library] + carray).map { |path| "-I#{path}" }
+  end
+
   def run_without_a_locale (script)
     Dir.mktmpdir do |directory|
       path = File.join(directory, "kernel_source.rb")
       File.binwrite(path, script)
-      library = File.expand_path("../lib", __dir__)
       environment = { "LANG" => nil, "LC_ALL" => nil, "LC_CTYPE" => nil,
                       "RUBYOPT" => nil }
-      IO.popen(environment, [RbConfig.ruby, "-I#{library}", path],
+      IO.popen(environment, [RbConfig.ruby, *load_path_flags, path],
                :err => [:child, :out], &:read)
     end
   end

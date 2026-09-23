@@ -36,58 +36,22 @@ def carray_tree_libs
   [extension, library]
 end
 
+# Children see it too.  Several tests run a program in a child process -- the
+# command, the light half that must load without the compiler -- and a child
+# inherits the environment but not the parent's `-I`.  Without this the suite
+# answers for the tree and its children answer for the installed gem, which is
+# the same silence CARRAY_TREE exists to break: it showed up as a child saying
+# a constant was missing that the tree had had all along.
+unless carray_tree_libs.empty?
+  flags = carray_tree_libs.map { |path| "-I#{path}" }.join(" ")
+  ENV["RUBYOPT"] = [flags, ENV["RUBYOPT"]].compact.reject(&:empty?).join(" ")
+end
+
 # The `-I` flags for a `ruby` invocation from here, so a benchmark or a probe
 # reaches the same CArray the suite does.
 def carray_tree_flags
   carray_tree_libs.map { |path| "-I#{path}" }.join(" ")
 end
-
-EXTENSION_DIRECTORY = "ext/carray_jit_access"
-EXTENSION_NAME = "access.#{RbConfig::CONFIG['DLEXT']}"
-# mkmf names the target carray/jit/access so that `gem install` puts it under
-# lib/carray/jit, but it builds the object flat in the extension directory.
-BUILT_EXTENSION = File.join(EXTENSION_DIRECTORY, EXTENSION_NAME)
-INSTALLED_EXTENSION = File.join("lib/carray/jit", EXTENSION_NAME)
-
-EXTENSION_SOURCES = FileList[File.join(EXTENSION_DIRECTORY, "*.{c,h}")] +
-                    [File.join(EXTENSION_DIRECTORY, "extconf.rb")]
-
-# Which CArray the extension was configured against.  The object is compiled
-# against that CArray's carray.h, so switching CARRAY_TREE, or dropping it, has
-# to rebuild -- the sources alone would say nothing had changed, and make does
-# not notice a different include path either.
-CARRAY_STAMP = File.join(EXTENSION_DIRECTORY, "carray.stamp")
-
-def carray_stamp_label
-  CARRAY_TREE ? File.expand_path(CARRAY_TREE) : "installed gem"
-end
-
-carray_stamp = file CARRAY_STAMP do |task|
-  File.write(task.name, carray_stamp_label)
-end
-def carray_stamp.needed?
-  !File.exist?(name) || File.read(name) != carray_stamp_label
-end
-
-file BUILT_EXTENSION => EXTENSION_SOURCES + [CARRAY_STAMP] do
-  # Read before the chdir: CARRAY_TREE is relative to here.
-  flags = carray_tree_flags
-  Dir.chdir(EXTENSION_DIRECTORY) do
-    ruby "#{flags} extconf.rb"
-    sh "make clean"
-    sh "make"
-  end
-end
-
-file INSTALLED_EXTENSION => BUILT_EXTENSION do
-  # Replace rather than overwrite: macOS kills a process that loads a signed
-  # Mach-O whose file was rewritten in place.
-  rm_f INSTALLED_EXTENSION
-  cp BUILT_EXTENSION, INSTALLED_EXTENSION
-end
-
-desc "Build the memory extension"
-task :compile => INSTALLED_EXTENSION
 
 Rake::TestTask.new(:test) do |task|
   task.libs.concat(carray_tree_libs)
@@ -95,7 +59,7 @@ Rake::TestTask.new(:test) do |task|
   task.test_files = FileList["test/test_*.rb"]
   task.warning = false
 end
-task :test => [:compile, :carray_in_use]
+task :test => :carray_in_use
 
 desc "Say which CArray a run here will use"
 task :carray_in_use do
@@ -107,7 +71,7 @@ task :carray_in_use do
 end
 
 desc "Compare compiled kernels against the same loops written in Ruby"
-task :benchmark => :compile do
+task :benchmark do
   ruby "#{carray_tree_flags} -Ilib benchmark/recurrence.rb"
   puts
   ruby "#{carray_tree_flags} -Ilib benchmark/views.rb"
@@ -132,7 +96,7 @@ task :benchmark => :compile do
 end
 
 desc "Run every example"
-task :examples => :compile do
+task :examples do
   Dir[File.expand_path("examples/*/*.rb", __dir__)].sort.each do |example|
     puts "== #{example.split("/")[-2..].join("/")}"
     ruby "#{carray_tree_flags} -Ilib #{example}"
@@ -143,15 +107,6 @@ end
 desc "Show the kernel cache"
 task :cache do
   ruby "#{carray_tree_flags} -Ilib bin/carray-jit status"
-end
-
-desc "Remove build products"
-task :clean do
-  rm_f Dir[File.join(EXTENSION_DIRECTORY, "**/*.{o,#{RbConfig::CONFIG['DLEXT']}}")]
-  rm_f Dir[File.join(EXTENSION_DIRECTORY, "Makefile")]
-  rm_f CARRAY_STAMP
-  rm_rf Dir[File.join(EXTENSION_DIRECTORY, "**/*.dSYM")]
-  rm_f INSTALLED_EXTENSION
 end
 
 task :default => :test
