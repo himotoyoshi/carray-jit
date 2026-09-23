@@ -262,7 +262,10 @@ class TestCFunction < Minitest::Test
   # and a backtrace will show -- behind the prefix, for the reason below.
   def test_a_named_block_function_keeps_its_name
     f = CArray.jit_function("double squared(double)") { |x| x * x }
-    assert_match(/\Acarray_jit_squared_[0-9a-f]{12}\z/, f.name.to_s)
+    # The name the declaration gave, and the name in the object: the second
+    # is the first behind the prefix and a digest of the body.
+    assert_equal(:squared, f.name)
+    assert_match(/\Acarray_jit_squared_[0-9a-f]{12}\z/, f.symbol.to_s)
     assert_match(/^double\ncarray_jit_squared_[0-9a-f]{12} \(double x\)$/,
                  f.c_source)
   end
@@ -397,8 +400,8 @@ class TestCFunction < Minitest::Test
     kernel = CArray.jit_each { out = square.call(a) }
     assert_arrays_bits_equal(a.convert { |v| square.block.call(v) }, out)
 
-    assert_match(/^static double\n#{square.name} \(double x\)$/, kernel.c_source)
-    assert_match(/#{square.name}\(/, kernel.c_source, "called by its symbol")
+    assert_match(/^static double\n#{square.symbol} \(double x\)$/, kernel.c_source)
+    assert_match(/#{square.symbol}\(/, kernel.c_source, "called by its symbol")
     refute_match(/_fn_t/, kernel.c_source,
                  "a pasted body needs no pointer typedef")
     refute_match(/functions\[/, kernel.c_source,
@@ -429,7 +432,7 @@ class TestCFunction < Minitest::Test
     out = CArray.double(4)
     kernel = CArray.jit_for(4) { |i| out[i] = square.call(a[i]) + twin.call(a[i]) }
     assert_arrays_bits_equal(a.convert { |v| 2 * square.block.call(v) }, out)
-    assert_equal(1, kernel.c_source.scan(/^static double\n#{square.name} /).size)
+    assert_equal(1, kernel.c_source.scan(/^static double\n#{square.symbol} /).size)
   end
 
   # A body that can report a failure is pasted too, with the flag as its last
@@ -485,7 +488,7 @@ class TestCFunction < Minitest::Test
     out = CArray.int64(4)
     kernel = CArray.jit_each { out = walk.call(a) }
     assert_equal([100, 150, 183, 208], out.to_a)
-    assert_match(/#{walk.name}\(n - INT64_C\(1\), carray_jit_error\)/,
+    assert_match(/#{walk.symbol}\(n - INT64_C\(1\), carray_jit_error\)/,
                  kernel.c_source)
   end
 
@@ -557,8 +560,8 @@ class TestCFunction < Minitest::Test
   def test_the_called_body_is_pasted_into_the_caller
     twice = CArray.jit_function("double twice(double)") { |x| x + x }
     outer = CArray.jit_function("double (*)(double)") { |x| twice.call(x) }
-    assert_match(/^static double\n#{twice.name}/, outer.c_source)
-    assert_match(/return #{twice.name}\(x\);/, outer.c_source)
+    assert_match(/^static double\n#{twice.symbol}/, outer.c_source)
+    assert_match(/return #{twice.symbol}\(x\);/, outer.c_source)
   end
 
   # The reason the capture is allowed at all: the callee's symbol is in the
@@ -796,8 +799,11 @@ class TestCFunction < Minitest::Test
   def test_each_compiled_function_has_its_own_symbol
     first = CArray.jit_function("double (*)(double)") { |x| x + 1.0 }
     second = CArray.jit_function("double (*)(double)") { |x| x + 2.0 }
-    refute_equal(first.name, second.name)
-    assert_match(/\Acarray_jit_function_[0-9a-f]{12}\z/, first.name.to_s)
+    refute_equal(first.symbol, second.symbol)
+    assert_match(/\Acarray_jit_function_[0-9a-f]{12}\z/, first.symbol.to_s)
+    # Neither was declared with a name, so neither has one to answer with.
+    assert_nil(first.name)
+    assert_nil(second.name)
   end
 
   # ---------- the symbol never takes a name C already knows ----------
@@ -810,15 +816,18 @@ class TestCFunction < Minitest::Test
   def test_a_name_the_c_library_already_has
     f = CArray.jit_function("double sin(double)") { |x| x * x }
     assert_bits_equal(9.0, f.call(3.0))
-    assert_match(/\Acarray_jit_sin_[0-9a-f]{12}\z/, f.name.to_s)
+    # Declared `sin`, and behind the prefix in the object -- which is the
+    # whole point: the declaration may say anything C already says.
+    assert_equal(:sin, f.name)
+    assert_match(/\Acarray_jit_sin_[0-9a-f]{12}\z/, f.symbol.to_s)
     refute_match(/^sin \(/, f.c_source)
   end
 
   def test_every_symbol_is_behind_the_prefix
     named = CArray.jit_function("double squared(double)") { |x| x * x }
     anonymous = CArray.jit_function("double (*)(double)") { |x| x * x * x }
-    assert_match(/\Acarray_jit_squared_[0-9a-f]{12}\z/, named.name.to_s)
-    assert_match(/\Acarray_jit_function_[0-9a-f]{12}\z/, anonymous.name.to_s)
+    assert_match(/\Acarray_jit_squared_[0-9a-f]{12}\z/, named.symbol.to_s)
+    assert_match(/\Acarray_jit_function_[0-9a-f]{12}\z/, anonymous.symbol.to_s)
   end
 
   # ---------- an array parameter keeps what C wrote about it ----------
@@ -945,7 +954,7 @@ class TestCFunction < Minitest::Test
     fact = CArray.jit_function("double fact(double)") { |n|
       n <= 1.0 ? 1.0 : n * fact.call(n - 1.0)
     }
-    symbol = fact.name.to_s
+    symbol = fact.symbol.to_s
     assert_match(/\Acarray_jit_fact_[0-9a-f]{12}\z/, symbol)
     body = fact.c_source.split("*/", 2).last
     assert_includes(body, "#{symbol}(n - 1.0)")

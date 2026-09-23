@@ -84,7 +84,7 @@ class CArray
       # @!attribute [r] c_source
       #   @return [String, nil] the C compiled for a body written here, or
       #     `nil` for one found elsewhere.
-      attr_reader :name, :prototype, :return_type, :parameters, :pointer,
+      attr_reader :name, :symbol, :prototype, :return_type, :parameters, :pointer,
                   :block, :c_source, :origin, :definition, :helpers,
                   # The compiled functions this body calls.  Whoever pastes
                   # the definition has to paste these beside it: it reaches
@@ -96,10 +96,19 @@ class CArray
                   :raise_messages
 
       def initialize (name, prototype, return_type, parameters, pointer,
+                      symbol: nil,
                       block: nil, c_source: nil, origin: nil, error: nil,
                       definition: nil, helpers: nil, takes_error: false,
                       raise_messages: {}, dependencies: [], shim: nil)
+        # The name the declaration gave, which is what a reader wrote and
+        # what an error should say.  It is nil where the declaration gave
+        # none -- `double (*)(double)` names no function.
         @name = name && name.to_sym
+        # The name in the object, which is what a call reaches and what two
+        # functions have to differ by.  For one bound from a library they
+        # are the same; for one compiled here the symbol carries a digest of
+        # the body, so that two bodies declared alike stay apart.
+        @symbol = (symbol || name)&.to_sym
         @prototype = prototype
         @return_type = return_type
         @parameters = parameters
@@ -179,7 +188,13 @@ class CArray
       # the same way.  Splitting the cache costs a compile per body; sharing
       # it would hand back the wrong answer, and would do it quietly.
       def kernel_key
-        compiled? ? [signature, @name] : signature
+        compiled? ? [signature, @symbol] : signature
+      end
+
+      # What to call this in a message: the name its declaration gave, and
+      # the symbol where it gave none.
+      def label
+        @name || @symbol
       end
 
       # @return [Integer] how many arguments the function takes.
@@ -239,7 +254,7 @@ class CArray
         end
         @function ||= Fiddle::Function.new(@pointer, argument_types,
                                            @return_type.fiddle,
-                                           name: @name.to_s)
+                                           name: label.to_s)
         arrays = []
         prepared = arguments.zip(@parameters).map { |argument, type|
           next argument unless type.indexable? && argument.is_a?(CArray)
@@ -465,7 +480,7 @@ class CArray
           # looked up here, and a kernel that pasted the same body looks the
           # same message up under the same code.
           message = @raise_messages[code]
-          raise Error, "#{@name} reported #{code}, which is no failure it " \
+          raise Error, "#{label} reported #{code}, which is no failure it " \
                        "was compiled to report" unless message
           raise RuntimeError, message
         end
@@ -516,7 +531,7 @@ class CArray
       def computation_of (type, role)
         return type.computation unless type.opaque?
         raise Unsupported,
-              "`#{@name}` #{role} `#{type.text}`, which is a slot in the " \
+              "`#{label}` #{role} `#{type.text}`, which is a slot in the " \
               "signature rather than a value a kernel can compute with"
       end
 
@@ -1034,7 +1049,8 @@ class CArray
                                    return_type.computation,
                                    error_parameter: true)
         end
-        CFunction.new(symbol, prototype, return_type, parameters, handle[symbol],
+        CFunction.new(name, prototype, return_type, parameters, handle[symbol],
+                  symbol: symbol,
                   shim: shim_symbol && handle[shim_symbol],
                   block: block, c_source: generator.provenance + c_source,
                   origin: origin, error: error,
