@@ -309,7 +309,7 @@ Reading the *value* still propagates, including in a condition: a branch taken o
 
 And it brings the reference back. A masked kernel written this way can be checked against the same loop written in Ruby, which a kernel relying on implicit propagation cannot be -- `source[i]` hands Ruby an UNDEF, and `UNDEF * 2.0` does not run.
 
-A branch with no `else` writes nothing on the path not taken, so the cell keeps both its value and its mask -- as the same `if` would in Ruby. As an *expression*, `if` still needs an `else`, because there every cell needs a value.
+A branch with no `else` writes nothing on the path not taken, so the cell keeps both its value and its mask -- as the same `if` would in Ruby. What that costs is a conclusion drawn from *not* taking it: `found = -1; if a[i, j] > x then found = j end` leaves `found` at -1 for a row whose only candidate was masked, and reports "no match here" as a value like any other, since nothing was written to carry the mask. Where the difference between "no match" and "nothing to compare" matters, ask about the mask yourself -- `if a[i, j] == UNDEF`, which is a question about the cell rather than about its bytes. As an *expression*, `if` still needs an `else`, because there every cell needs a value.
 
 `next` and `break` work in an inner loop, which is how a search is written:
 
