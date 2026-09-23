@@ -730,11 +730,22 @@ class CArray
         text << "#include <stdlib.h>\n" unless heap_arrays.empty?
         text << "\n"
         unless @address_functions.empty?
-          text << "/* The C functions the block called.  They arrive as\n" \
-                  "   addresses rather than by linkage, so nothing here says\n" \
-                  "   which library they came from. */\n"
-          @address_functions.each_key do |name|
-            text << @address_functions.fetch(name).c_declaration(c_function_type_name(name)) << "\n"
+          if @in_function
+            # A body standing on its own calls a borrowed function by its
+            # name, so what it needs is that function's own declaration --
+            # the one its author wrote -- and a linker.
+            text << "/* Declared where they are called from, and resolved " \
+                    "by the linker\n   or the loader. */\n"
+            @address_functions.each_value do |function|
+              text << "#{function.prototype};\n"
+            end
+          else
+            text << "/* The C functions the block called.  They arrive as\n" \
+                    "   addresses rather than by linkage, so nothing here says\n" \
+                    "   which library they came from. */\n"
+            @address_functions.each_key do |name|
+              text << @address_functions.fetch(name).c_declaration(c_function_type_name(name)) << "\n"
+            end
           end
           text << "\n"
         end
@@ -1165,6 +1176,8 @@ class CArray
       def pasted_closure
         found = {}
         walk = lambda do |function|
+          # A borrowed function has no definition to paste; it is declared.
+          next unless function.pasted?
           next if found[function.symbol]
           found[function.symbol] = function
           (function.dependencies || []).each { |called| walk.call(called) }
@@ -1188,6 +1201,7 @@ class CArray
       end
 
       def paste_definition (function, seen)
+        return "" unless function.pasted?
         return "" if seen[function.symbol]
         seen[function.symbol] = true
         text = +""
@@ -3263,7 +3277,18 @@ class CArray
                           }
           # A pasted body is reached by its symbol; an address by the local
           # the declarations bound it to.
-          called = c_function.pasted? ? c_function.symbol : bare_name(node.name)
+          called = if c_function.pasted?
+                     c_function.symbol
+                   elsif @in_function
+                     # Borrowed, inside a body that has no `functions` buffer
+                     # to take an address in -- so it is called by the name it
+                     # has, declared in the preamble, and the linker or the
+                     # loader resolves it.  `jit_extern` opened the library to
+                     # find it, so by here the symbol is in the process.
+                     c_function.symbol
+                   else
+                     bare_name(node.name)
+                   end
           # And one that can report a failure is handed the slot this kernel
           # is watching -- null under a masked cell, where the value written
           # is out of contract and a division by zero there was not asked

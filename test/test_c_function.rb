@@ -537,13 +537,14 @@ class TestCFunction < Minitest::Test
     assert_match(/reaches `a`, which is an array outside it/, error.message)
   end
 
-  def test_it_may_not_close_over_a_borrowed_function
+  # It may.  A borrowed function was refused here for having only an address
+  # and nowhere in a compiled body to keep one -- but an address is not what
+  # a body needs from it.  It needs the name, which is what a declaration
+  # states and a linker resolves.
+  def test_it_may_close_over_a_borrowed_function
     j0 = @j0
-    error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_function("double (*)(double)") { |x| j0.call(x) + 1.0 }
-    end
-    assert_match(/reaches `j0`, which was bound with `jit_extern`/,
-                 error.message)
+    f = CArray.jit_function("double (*)(double)") { |x| j0.call(x) + 1.0 }
+    assert_in_delta 0.7651976865579666 + 1.0, f.call(1.0), 1e-12
   end
 
   # ---------- one compiled function calling another ----------
@@ -804,6 +805,41 @@ class TestCFunction < Minitest::Test
     # Neither was declared with a name, so neither has one to answer with.
     assert_nil(first.name)
     assert_nil(second.name)
+  end
+
+  # ---------- a borrowed function is called by its name ----------
+
+  # A body compiled here has no `functions` buffer to take an address in,
+  # which is why a borrowed function used to be refused in one.  It does not
+  # need an address: it has a name, and a name is what a linker resolves.
+  # `jit_extern` opened the library to find it, so by the time the body is
+  # compiled the symbol is in the process.
+  def test_a_compiled_body_calls_a_borrowed_function
+    j0 = CArray.jit_extern("double j0(double)")
+    doubled = CArray.jit_function("double doubled(double x)") { |x|
+      j0.call(x) * 2.0
+    }
+    assert_in_delta 0.7651976865579666 * 2.0, doubled.call(1.0), 1e-12
+  end
+
+  def test_the_borrowed_one_is_declared_rather_than_pasted
+    j0 = CArray.jit_extern("double j0(double)")
+    source = CArray.jit_function("double f(double x)") { |x| j0.call(x) }.c_source
+    assert_match(/^double j0\(double\);$/, source)
+    assert_match(/return j0\(x\);/, source)
+    refute_match(/static double\nj0/, source, "nothing to paste")
+    refute_match(/functions\[/, source, "no buffer to take an address in")
+  end
+
+  # A kernel still takes the address through its buffer, which is what it
+  # has and a body has not.
+  def test_a_kernel_still_reaches_it_by_address
+    j0 = CArray.jit_extern("double j0(double)")
+    values = CArray.double(3).seq!(1.0)
+    out = CArray.double(3)
+    kernel = CArray.jit_each { out = j0.call(values) }
+    assert_includes kernel.c_source, "functions["
+    assert_in_delta 0.7651976865579666, out[0], 1e-12
   end
 
   # ---------- the symbol never takes a name C already knows ----------
