@@ -917,7 +917,17 @@ class CArray
                   "and a name is what `jit_call` binds by -- it is the local " \
                   "the call reads"
           end
-          entry = [function(prototype, declared_parameters: names, &block), names]
+          # A compiled function may already exist somewhere other than this
+          # compiler's cache: built ahead of the program and shipped in a
+          # shared object, which is what carray-aot does with these same call
+          # sites.  A provider is asked before anything is compiled and
+          # answers nil for a site that is not its own -- the same position
+          # `jit_extern` puts a function from a library in, said about a call
+          # rather than about a name.
+          compiled = call_provider &&
+                     call_provider.call(prototype, block, names)
+          compiled ||= function(prototype, declared_parameters: names, &block)
+          entry = [compiled, names]
           call_sites[site] = entry if site
         end
         compiled, names = entry
@@ -937,6 +947,19 @@ class CArray
       def call_sites
         @call_sites ||= {}.compare_by_identity
       end
+
+      # Asked at a `jit_call` site before anything is compiled, and answering
+      # nil means "not mine, compile it".  What it is handed is the
+      # prototype, the block -- whose binding says which method and which
+      # module the site is in -- and the names the declaration gave.  What it
+      # answers is anything that responds to `call`.
+      #
+      # There is one client and it is carray-aot, which builds these same
+      # sites into a shared object ahead of the program; a machine running
+      # that gem then reaches no compiler.  Left here rather than patched in
+      # from there, because a gem reaching into another's method to change
+      # what it does is the arrangement that breaks quietly.
+      attr_accessor :call_provider
 
       def function (prototype, declared_parameters: nil, &block)
         unless block

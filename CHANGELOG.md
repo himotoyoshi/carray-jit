@@ -39,6 +39,16 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `CArray::JIT.call_provider` is asked at a `jit_call` site before
+  anything is compiled, and answering `nil` means "not mine, compile it". It
+  is handed the prototype, the block -- whose binding says which method and
+  which module the site is in -- and the names the declaration gave, and
+  answers anything that responds to `call`. The one client is carray-aot,
+  which builds these same sites into a shared object ahead of the program so
+  that a machine running that gem reaches no compiler; it is the position
+  `jit_extern` puts a function from a library in, said about a call rather
+  than about a name.
+
 - New: `CArray.jit_call(prototype) { ... }` compiles the block as a C
   function and calls it where it stands, with the locals around it. The
   declaration's parameter names are the join and do the work twice: they are

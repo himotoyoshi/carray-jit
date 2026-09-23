@@ -90,6 +90,58 @@ class TestJitCall < Minitest::Test
     assert_equal 1, CArray::JIT.send(:function_registry).size
   end
 
+  # ---------- a provider may answer instead ----------
+
+  # A compiled function may already exist somewhere other than this
+  # compiler's cache -- built ahead of the program and shipped, which is
+  # what carray-aot does with these same sites.
+  def test_a_provider_is_asked_before_anything_is_compiled
+    asked = []
+    answer = Struct.new(:calls) do
+      def call (*arguments) ; self.calls += 1 ; :answered ; end
+    end.new(0)
+    with_provider(lambda { |prototype, block, names|
+      asked << [prototype, block.binding.eval("__method__"), names]
+      answer
+    }) do
+      n = 4
+      out = CArray.double(4)
+      result = CArray.jit_call("void (*)(double *out, size_t n)") {
+        n.times { |i| out[i] = 1.0 }
+      }
+      assert_equal :answered, result
+      assert_equal 1, answer.calls
+      assert_equal 0, CArray::JIT.send(:function_registry).size
+    end
+    assert_equal 1, asked.size
+    _, method, names = asked.first
+    assert_equal :test_a_provider_is_asked_before_anything_is_compiled, method
+    assert_equal [:out, :n], names
+  end
+
+  # nil means the site is not the provider's, and it compiles as it would
+  # have.
+  def test_a_provider_answering_nil_leaves_the_site_alone
+    with_provider(lambda { |_, _, _| nil }) do
+      out = CArray.double(3)
+      n = 3
+      CArray.jit_call("void (*)(double *out, size_t n)") {
+        n.times { |i| out[i] = i * 1.0 }
+      }
+      assert_equal [0.0, 1.0, 2.0], out.to_a
+    end
+  end
+
+  def with_provider (provider)
+    CArray::JIT.clear_registry
+    was = CArray::JIT.call_provider
+    CArray::JIT.call_provider = provider
+    yield
+  ensure
+    CArray::JIT.call_provider = was
+    CArray::JIT.clear_registry
+  end
+
   # ---------- what it refuses ----------
 
   def test_a_declaration_with_an_unnamed_parameter
