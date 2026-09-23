@@ -630,6 +630,30 @@ class CArray
       end
     end
 
+    # `prev, cur = cur, prev + cur`
+    #
+    # Ruby settles every value on the right before it writes any of them, so
+    # the temporaries below are the statement rather than a way of writing
+    # it: without them the line above would write `prev` and then read the
+    # new one back while working out `cur`, which is the one thing the
+    # spelling exists to prevent.
+    #
+    # Held as the statements it became -- one assignment to a name of its own
+    # per value, in the order they were written, and then the writes.  So
+    # everything downstream reads ordinary assignments and writes: the types,
+    # the masks a local carries, the C names, the order the body is swept in.
+    # Nothing here has to know that a parallel assignment is what they were.
+    class ParallelAssignment < Node
+      attr_reader :statements
+      def initialize (statements, location = nil)
+        super(location)
+        @statements = statements
+      end
+      def children
+        @statements
+      end
+    end
+
     # A cell of an array: out[i, j] = ...
     #
     # Writes are always at the cell the loop is on.  Writing elsewhere would

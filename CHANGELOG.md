@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: a parallel assignment is in the subset -- `a, b = b, a`, and the
+  `a, b = b, a + b` a recurrence advances by. Every value on the right is
+  settled before anything on the left is written, as in Ruby, so the
+  temporary that spelling saves no longer has to be written by hand. A cell
+  is a target as much as a name is (`a[i], a[j] = a[j], a[i]`), each value
+  keeps its own type and carries its mask. The readings that take a single
+  value apart are refused by name: `a, b = f(x)`, `a, b = [1, 2]`,
+  `a, *rest = ...`, `a, (b, c) = ...`, and a count that does not match.
+
 - Change: the docs now say what a branch not taken costs under a mask. A
   branch decided by a missing cell masks what it writes; taking the other
   path writes nothing, so a conclusion reached that way -- `found` left at
