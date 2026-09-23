@@ -1,4 +1,6 @@
 require_relative "test_helper"
+require "shellwords"
+require "tmpdir"
 
 # `jit_call` compiles the block as a C function and calls it, here, with the
 # locals around it.
@@ -140,6 +142,50 @@ class TestJitCall < Minitest::Test
   ensure
     CArray::JIT.call_provider = was
     CArray::JIT.clear_registry
+  end
+
+  # ---------- the compiler arrives only when it is needed ----------
+
+  # Defining `jit_call` needs the declaration's parser and nothing else.  A
+  # program whose sites are all answered by a provider -- one built ahead of
+  # it by carray-jit-aot -- never loads the compiler at all, which is the
+  # whole of what `carray/jit/call` is for.
+  def test_the_light_half_defines_the_method_without_the_compiler
+    loaded = `#{RbConfig.ruby} -I#{File.expand_path("../lib", __dir__)} -e #{
+      Shellwords.escape('require "carray/jit/call"; ' \
+                        'print CArray.respond_to?(:jit_call), " ", ' \
+                        '!!defined?(CArray::JIT::CGenerator)')}`
+    assert_equal "true false", loaded
+  end
+
+  # And it arrives at the first site nothing answers.
+  def test_the_compiler_arrives_when_a_site_is_not_answered
+    script = <<~RUBY
+      require "carray/jit/call"
+      answered = Object.new
+      def answered.call (*a) ; :ok ; end
+      CArray::JIT.call_provider = lambda { |*| answered }
+      def one ; n = 1 ; out = CArray.double(1)
+        CArray.jit_call("void (*)(double *out, size_t n)") { n.times { |i| out[i] = 0.0 } }
+      end
+      one
+      print !!defined?(CArray::JIT::CGenerator), " "
+      CArray::JIT.call_provider = nil
+      def two ; n = 1 ; out = CArray.double(1)
+        CArray.jit_call("void (*)(double *out, size_t n)") { n.times { |i| out[i] = 0.0 } }
+        out
+      end
+      two
+      print !!defined?(CArray::JIT::CGenerator)
+    RUBY
+    path = File.join(Dir.tmpdir, "carray_jit_lazy_#{Process.pid}.rb")
+    File.write(path, script)
+    begin
+      assert_equal "false true",
+                   `#{RbConfig.ruby} -I#{File.expand_path("../lib", __dir__)} #{path}`
+    ensure
+      File.delete(path) if File.exist?(path)
+    end
   end
 
   # ---------- what it refuses ----------

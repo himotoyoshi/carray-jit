@@ -926,7 +926,14 @@ class CArray
           # rather than about a name.
           compiled = call_provider &&
                      call_provider.call(prototype, block, names)
-          compiled ||= function(prototype, declared_parameters: names, &block)
+          unless compiled
+            # Nothing answered, so this one is compiled -- and the compiler
+            # is loaded here rather than beside the method, so a program
+            # whose sites were all answered never loads it.  `require` is
+            # idempotent and this runs once per site.
+            require "carray/jit"
+            compiled = function(prototype, declared_parameters: names, &block)
+          end
           entry = [compiled, names]
           call_sites[site] = entry if site
         end

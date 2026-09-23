@@ -52,6 +52,14 @@ version you have and a newer one.
   links the library the usual way: one that is not linked by default is the
   caller's to add.
 
+- Change: `require "carray/jit/call"` defines `CArray.jit_call` without
+  loading the compiler, and the compiler is required at the first call site
+  no provider answers. A program whose sites were all built ahead of it --
+  by carray-jit-aot -- never loads the analyzer, the generator or the cache
+  at all, where before it loaded them and reached none of them.
+  `require "carray/jit"` loads everything as it did, and a program that
+  knows nothing about this sees no difference.
+
 - New: `CArray::JIT.call_provider` is asked at a `jit_call` site before
   anything is compiled, and answering `nil` means "not mine, compile it". It
   is handed the prototype, the block -- whose binding says which method and
