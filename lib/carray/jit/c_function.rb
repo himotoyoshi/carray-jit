@@ -75,6 +75,20 @@ class CArray
     # flag, no library path at compile time, and a compiled kernel that does
     # not depend on which library the function came from -- so `f.call(a)`
     # compiles once and serves every function of that signature.
+    # The namespace every symbol this compiler writes sits in, and that is
+    # not tidiness.  A name the C already knows is the dangerous case, and
+    # the dangerous case is the one that does *not* fail: `double
+    # sin(double)` matches math.h's declaration, so the generated file
+    # defines libm's `sin` and the shared object exports it -- where symbols
+    # are interposable, that replaces sine for whatever loads it later.  A
+    # mismatched signature is a compile error and would have been noticed;
+    # this one would not.
+    #
+    # Here rather than beside `function_symbol`, which writes the names,
+    # because `CFunction#c_source_as` has to refuse one as well: a caller
+    # naming its own symbol may not name one in here.
+    PREFIX = "carray_jit_"
+
     class CFunction
 
       # @!attribute [r] name
@@ -195,6 +209,47 @@ class CArray
       # the symbol where it gave none.
       def label
         @name || @symbol
+      end
+
+      # The C this was compiled from, under a symbol of the caller's
+      # choosing.
+      #
+      # For a caller writing the C into a file of its own rather than letting
+      # this compile it: the symbol here carries a digest of the body, which
+      # is right for an object in a cache and wrong for one in a repository,
+      # where the same build has to give the same name every time.
+      #
+      # It is a rename rather than a second run of the generator, and that is
+      # exact rather than close enough: the symbol is the only thing in the
+      # generated file that the choice of symbol decides.  Two compilations
+      # of one block under two declared names differ in nothing else once
+      # both symbols are levelled, which the suite checks.
+      #
+      # The caller owns the name it picks, and with it the one hazard the
+      # generator's own prefix exists to close: a body declared `sin`
+      # emitted as `sin` defines libm's, and the object exports it.  What is
+      # refused here is a name C cannot spell, and the generator's own
+      # namespace -- an object built under `carray_jit_...` would answer to
+      # a symbol a cached kernel is entitled to.
+      def c_source_as (symbol)
+        symbol = symbol.to_s
+        unless @c_source
+          raise Unsupported,
+                "`#{label}` was bound from a library rather than compiled " \
+                "here, so there is no C of its own to write out"
+        end
+        unless symbol =~ /\A[A-Za-z_][A-Za-z0-9_]*\z/
+          raise Unsupported,
+                "`#{symbol}` is not a C identifier, so nothing could be " \
+                "defined under it"
+        end
+        if symbol.start_with?(PREFIX)
+          raise Unsupported,
+                "`#{symbol}` is in this compiler's own namespace " \
+                "(`#{PREFIX}`), where a cached kernel is entitled to the " \
+                "name; pick one of your own"
+        end
+        @c_source.gsub(@symbol.to_s, symbol)
       end
 
       # @return [Integer] how many arguments the function takes.
@@ -844,14 +899,8 @@ class CArray
       # see one name for all of them.  So an anonymous one carries its own
       # digest, and a named one carries the name it was given.
       #
-      # Always behind a prefix, though, and that is not tidiness.  A name the
-      # C already knows is the dangerous case, and the dangerous case is the
-      # one that does *not* fail: `double sin(double)` matches math.h's
-      # declaration, so the generated file defines libm's `sin` and the
-      # shared object exports it -- where symbols are interposable, that
-      # replaces sine for whatever loads it later.  A mismatched signature is
-      # a compile error and would have been noticed; this one would not.
-      PREFIX = "carray_jit_"
+      # Always behind `PREFIX`, though, for the reason stated where it is
+      # defined.
 
       def function_symbol (name, key)
         digest = Digest::SHA256.hexdigest(key.inspect)[0, 12]

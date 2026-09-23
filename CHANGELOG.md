@@ -39,6 +39,16 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- New: `CArray::JIT::CFunction#c_source_as(symbol)` hands the compiled C over
+  under a symbol the caller picked, for a caller writing it into a file of
+  its own rather than letting this compile it -- the symbol this compiler
+  writes carries a digest of the body, which is right for an object in a
+  cache and wrong for one committed to a repository. A name C cannot spell
+  and a name in this compiler's own `carray_jit_` namespace are refused; a
+  name the C library already has is the caller's to avoid, since the prefix
+  that closes that hazard is what is being replaced. A function bound with
+  `jit_extern` has no C of its own and says so.
+
 - Fix: a loop whose bound is an unsigned parameter -- `size_t n` and its kin
   -- runs the passes Ruby runs. The counter is an `int64_t` and the bound was
   compared against it uncast, so C converted the *counter* to unsigned
