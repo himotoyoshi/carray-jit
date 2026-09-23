@@ -39,6 +39,25 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Fix: a loop whose bound is an unsigned parameter -- `size_t n` and its kin
+  -- runs the passes Ruby runs. The counter is an `int64_t` and the bound was
+  compared against it uncast, so C converted the *counter* to unsigned
+  instead: `(-3...n).each` over `n = 4` ran no passes where Ruby runs seven,
+  and answered without saying anything. A count that never goes below zero
+  was unaffected, which is every `n.times`. The cast is written down now, so
+  the generated C also compiles clean where it carried `-Wsign-compare`
+  before.
+
+- Change: `CArray::JIT::CFunction#name` answers the name the declaration gave
+  -- `:square` for `CArray.jit_function("double square(double x)")` -- and
+  the new `#symbol` answers the name in the object, which for a compiled
+  function carries a digest of the body. It used to answer whichever of the
+  two its constructor was handed: the declared name for a function bound with
+  `jit_extern`, the symbol for one compiled from a block. Code reading
+  `#name` to reach or paste a function wants `#symbol`; code putting it in a
+  message wants `#name`, which is `nil` where the declaration named no
+  function. `#to_s` now prints the declaration rather than the symbol.
+
 - New: a parallel assignment is in the subset -- `a, b = b, a`, and the
   `a, b = b, a + b` a recurrence advances by. Every value on the right is
   settled before anything on the left is written, as in Ruby, so the

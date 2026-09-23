@@ -1165,8 +1165,8 @@ class CArray
       def pasted_closure
         found = {}
         walk = lambda do |function|
-          next if found[function.name]
-          found[function.name] = function
+          next if found[function.symbol]
+          found[function.symbol] = function
           (function.dependencies || []).each { |called| walk.call(called) }
         end
         @pasted_functions.each_value { |function| walk.call(function) }
@@ -1188,8 +1188,8 @@ class CArray
       end
 
       def paste_definition (function, seen)
-        return "" if seen[function.name]
-        seen[function.name] = true
+        return "" if seen[function.symbol]
+        seen[function.symbol] = true
         text = +""
         (function.dependencies || []).each do |called|
           text << paste_definition(called, seen)
@@ -3111,11 +3111,30 @@ class CArray
       # most of these on its own, but writing them down is what makes the
       # dumped source say where the type changed -- and `int64_t` to
       # `double _Complex` is a conversion worth seeing.
+      #
+      # `int64` and `uint64` are the exception the rank cannot express.
+      # They are the same width and differ only in sign, so the rank puts
+      # one above the other and a `uint64` reaching an `int64` context is a
+      # step *down* it -- left uncast, on the reasoning that C would do it
+      # anyway.  C does not: in `i < n` with `i` an `int64_t` and `n` a
+      # `size_t`, the conversion C performs is on the other operand, and a
+      # loop counting down from -1 then runs against a bound of 2**64 - 1.
+      # The compiler says so as `-Wsign-compare`, which is the warning every
+      # generated loop over a `size_t` extent carried.
       def widen (text, precedence, from, to)
         here, there = NUMERIC_RANK[from], NUMERIC_RANK[to]
-        return [text, precedence] if here.nil? || there.nil? || there <= here
+        return [text, precedence] if here.nil? || there.nil?
+        unless there > here || crosses_sign?(from, to)
+          return [text, precedence]
+        end
         ["(#{COMPUTATION_C_TYPES.fetch(to)})" \
          "#{parenthesize(text, precedence, LEAF_PRECEDENCE)}", UNARY_PRECEDENCE]
+      end
+
+      def crosses_sign? (from, to)
+        from != to &&
+          TypeAssignment::INTEGER_TYPES.include?(from) &&
+          TypeAssignment::INTEGER_TYPES.include?(to)
       end
 
       def parenthesize (text, precedence, needed)
@@ -3244,7 +3263,7 @@ class CArray
                           }
           # A pasted body is reached by its symbol; an address by the local
           # the declarations bound it to.
-          called = c_function.pasted? ? c_function.name : bare_name(node.name)
+          called = c_function.pasted? ? c_function.symbol : bare_name(node.name)
           # And one that can report a failure is handed the slot this kernel
           # is watching -- null under a masked cell, where the value written
           # is out of contract and a division by zero there was not asked
