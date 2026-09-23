@@ -18,7 +18,6 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir[
     "lib/**/*.rb",
-    "ext/**/*.{c,h,rb}",
     "bin/*",
     "examples/**/*.rb",
     "examples/README.md",
@@ -32,7 +31,6 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.bindir        = "bin"
   spec.executables   = ["carray-jit"]
-  spec.extensions    = ["ext/carray_jit_access/extconf.rb"]
 
   # A kernel reaches CArray's C by address, so the ceiling is the next minor.
   spec.add_dependency "carray", ">= 3.0.2", "< 3.1"

@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: this gem no longer builds a C extension, so installing it needs no
+  compiler for itself -- one is still needed at run time to compile a kernel.
+  The addressing it used to carry is `CArray::AddressBasis`, in carray, which
+  is where the knowledge about carray's views belonged; `CArray::JIT::Access`
+  remains as an alias for this release. carray 3.0.2 or newer is required,
+  which the gemspec already asked for.
+
 - Change: a body compiled with `CArray.jit_function` or `CArray.jit_call` may
   call a function bound with `jit_extern`. It was refused -- a borrowed
   function is only an address, and a compiled body has no `functions` buffer
