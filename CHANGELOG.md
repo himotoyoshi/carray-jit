@@ -39,6 +39,19 @@ version you have and a newer one.
 
 ## 0.1.3 (unreleased)
 
+- Change: a body compiled with `CArray.jit_function` or `CArray.jit_call` may
+  call a function bound with `jit_extern`. It was refused -- a borrowed
+  function is only an address, and a compiled body has no `functions` buffer
+  to take one in -- but an address is not what a body needs from it. It needs
+  the name, which is what the declaration states and what a linker or a
+  loader resolves; `jit_extern` opened the library to find the function, so
+  the symbol is in the process by the time the body is compiled. The
+  generated file declares it (`double j0(double);`) and calls it by name. A
+  kernel is unchanged and still takes the address through its buffer, which
+  is what a kernel has and a body has not. A file built ahead of the program
+  links the library the usual way: one that is not linked by default is the
+  caller's to add.
+
 - New: `CArray::JIT.call_provider` is asked at a `jit_call` site before
   anything is compiled, and answering `nil` means "not mine, compile it". It
   is handed the prototype, the block -- whose binding says which method and

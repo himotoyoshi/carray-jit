@@ -1035,7 +1035,11 @@ class CArray
         binding = binding_of(block)
         names.each_with_object({}) do |captured, found|
           value = captured_value(captured, binding)
-          found[captured] = value if value.is_a?(CFunction) && value.pasted?
+          # A function compiled here is pasted into this one; one bound from
+          # a library is declared and called by its name, which is what it
+          # has and what a linker resolves.  Both are functions this body
+          # calls, so both are here.
+          found[captured] = value if value.is_a?(CFunction)
         end
       end
 
@@ -1279,18 +1283,9 @@ class CArray
         return if captured.empty?
         name = captured.first
         value = captured_value(name, binding_of(block))
-        if value.is_a?(CFunction)
-          # A function compiled here is pasted into this one, so it is no
-          # longer a capture at all -- it never reaches the list above.  One
-          # borrowed from a library is only an address, and an address is
-          # what a compiled object has nowhere to keep: a kernel is handed
-          # its own at call time, and a function has no such moment.
-          raise Unsupported,
-                "this function reaches `#{name}`, which was bound with " \
-                "`jit_extern` and so is only an address; a compiled function " \
-                "has nowhere to keep one. Take it as a parameter, or compile " \
-                "the body here with `CArray.jit_function`"
-        end
+        # A CFunction never reaches here: `called_functions` took both
+        # kinds above -- compiled ones to paste, borrowed ones to declare and
+        # call by name -- so neither is a capture by the time this runs.
         if value.is_a?(CArray::Rng)
           # A generator has state, and a compiled function has nowhere to
           # keep one -- the same reason a borrowed address is refused above.
