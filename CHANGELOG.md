@@ -48,6 +48,14 @@ version you have and a newer one.
   value apart are refused by name: `a, b = f(x)`, `a, b = [1, 2]`,
   `a, *rest = ...`, `a, (b, c) = ...`, and a count that does not match.
 
+- Change: the docs now say what a compare-exchange costs under a mask. A
+  swap writes two cells where an ordinary assignment writes one, and a sort
+  runs one over every cell repeatedly, so a single missing cell spreads
+  across the row -- the ordinary rule for a branch decided by a missing
+  cell, at an unusually high gain. A sort written by hand is not refused
+  the way `sort` on a local array is, so ask `a[i] == UNDEF` first and
+  decide it.
+
 - Change: the docs now say what a branch not taken costs under a mask. A
   branch decided by a missing cell masks what it writes; taking the other
   path writes nothing, so a conclusion reached that way -- `found` left at

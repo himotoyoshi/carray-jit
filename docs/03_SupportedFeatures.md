@@ -85,7 +85,7 @@ A cell is a target as much as a name is, which is the swap a sort is written wit
 CArray.jit_for(n / 2) { |i| a[i], a[n - 1 - i] = a[n - 1 - i], a[i] }
 ```
 
-Each value keeps its own type, as it would on a line of its own -- `counts[i], parts[i] = i * 2, i / 4.0` writes an integer and a double -- and a value carries its mask to the name it is written to, the way an ordinary assignment does.
+Each value keeps its own type, as it would on a line of its own -- `counts[i], parts[i] = i * 2, i / 4.0` writes an integer and a double -- and a value carries its mask to the name it is written to, the way an ordinary assignment does. A swap under a branch writes two cells rather than one, which is worth reading about before sorting masked data: see [Masks](#masks).
 
 **One value per name, written out.** Ruby's other readings all rest on taking one value apart, and nothing in a kernel is a value that can be taken apart, so each is refused by name rather than read as the first: `a, b = f(x)` and `a, b = [1, 2]` spread a single value, `a, *rest =` and `= 1, *xs` ask for however many are left over, `a, (b, c) =` unpacks again one level down, and a count that does not match says which way round it did not and what Ruby would have done about it.
 
@@ -555,6 +555,28 @@ The value under a masked cell is **out of contract**: a kernel may compute anyth
 One thing cannot simply be computed and discarded: an integer division by a zero that sits under a masked cell. CArray's own kernels skip masked cells and so never reach their divide-by-zero check; a branchless kernel divides anyway, so the report is gated on the mask.
 
 Where a kernel leaves the masking implicit, the reference is CArray's operators rather than a Ruby loop: `source[i]` hands Ruby an `UNDEF`, and `UNDEF * 2.0` does not run. A kernel that says `== UNDEF` outright is a Ruby loop again, and is checked as one.
+
+**A compare-exchange spreads a mask further than anything else does.** A branch decided by a missing cell masks what it writes, which is the rule everywhere; a swap writes two cells rather than one, and a sort runs compare-exchange over every cell again and again. So one missing cell does not stay one:
+
+```ruby
+row = CA_DOUBLE([[5, 1, 4, 2, 3]])
+row[0, 2] = UNDEF
+
+CArray.jit_for(1) { |i|                       # a bubble sort over the row
+  4.times { |p|
+    (0...4).each { |j|
+      if row[i, j] > row[i, j + 1]
+        row[i, j], row[i, j + 1] = row[i, j + 1], row[i, j]
+      end
+    }
+  }
+}
+row.to_a                            #=> [[1.0, UNDEF, UNDEF, UNDEF, UNDEF]]
+```
+
+Nothing here is wrong: every comparison that read the missing cell was decided by bytes that mean nothing, so both cells it exchanged are marked, and the next pass compares those. It is the ordinary rule with an unusually high gain.
+
+This is the question `sum`, `min`, `max` and `sort` refuse to answer for a local array -- pass over a missing cell, gather it at the end, or count it where a median counts -- except that a sort written by hand is not refused. It runs, and answers a row of `UNDEF`. Decide it before the comparison, with `if row[i, j] == UNDEF`, which asks about the cell rather than about its bytes.
 
 A view that reinterprets the element size (`refer(CA_INT32, ...)` over a float64 array) is refused when it carries a mask: it gets a mask of its own shape, but one of those mask cells covers a fraction of a parent cell, so writing one marks its neighbour, and a per-cell kernel cannot express that.
 
