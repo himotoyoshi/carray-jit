@@ -90,10 +90,9 @@ checked against anything; a script can be run.
 ## Sending a fix
 
 Ruby 3.2 or later, a C compiler, and CArray in the range the gemspec
-declares. Build and test:
+declares. There is nothing to build here -- the gem is Ruby alone:
 
 ```sh
-rake compile     # build the small memory extension in place
 rake test        # every test suite
 rake benchmark   # compiled kernels against the same loops in Ruby
 rake examples    # run every example
