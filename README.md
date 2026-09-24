@@ -8,7 +8,7 @@ The block is read with Prism, translated to C if it falls inside that subset, co
 
 ## Status
 
-0.1.2 is the current release, and it still moves: behaviour can change between releases — see [CHANGELOG.md](CHANGELOG.md). A companion gem to CArray, it follows CArray's surface, which is not settled until CArray 3.1.
+0.1.3 is the current release, and it still moves: behaviour can change between releases — see [CHANGELOG.md](CHANGELOG.md). A companion gem to CArray, it follows CArray's surface, which is not settled until CArray 3.1.
 
 ## Features
 
@@ -35,7 +35,7 @@ gem "carray-jit"
 Requires:
 
 - Ruby >= 3.2
-- CArray >= 3.0.1, < 3.1
+- CArray >= 3.0.2, < 3.1
 - A C compiler
 - Prism and Fiddle (both ship with Ruby; Fiddle is a bundled gem)
 
@@ -82,7 +82,7 @@ Bug reports and feature requests are welcome — please open an issue.
 
 ## Credits
 
-carray-jit was designed and reviewed by a human developer; the implementation was produced in collaboration with AI coding tools.
+carray-jit is created and maintained by himotoyoshi. The author provided the design; the implementation was written with AI coding tools and has been verified primarily through the test suite and practical use.
 
 ## License
 
