@@ -37,35 +37,7 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.3 (unreleased)
-
-- Change: this gem no longer builds a C extension, so installing it needs no
-  compiler for itself -- one is still needed at run time to compile a kernel.
-  The addressing it used to carry is `CArray::AddressBasis`, in carray, which
-  is where the knowledge about carray's views belonged; `CArray::JIT::Access`
-  remains as an alias for this release. carray 3.0.2 or newer is required,
-  which the gemspec already asked for.
-
-- Change: a body compiled with `CArray.jit_function` or `CArray.jit_call` may
-  call a function bound with `jit_extern`. It was refused -- a borrowed
-  function is only an address, and a compiled body has no `functions` buffer
-  to take one in -- but an address is not what a body needs from it. It needs
-  the name, which is what the declaration states and what a linker or a
-  loader resolves; `jit_extern` opened the library to find the function, so
-  the symbol is in the process by the time the body is compiled. The
-  generated file declares it (`double j0(double);`) and calls it by name. A
-  kernel is unchanged and still takes the address through its buffer, which
-  is what a kernel has and a body has not. A file built ahead of the program
-  links the library the usual way: one that is not linked by default is the
-  caller's to add.
-
-- Change: `require "carray/jit/call"` defines `CArray.jit_call` without
-  loading the compiler, and the compiler is required at the first call site
-  no provider answers. A program whose sites were all built ahead of it --
-  by carray-jit-aot -- never loads the analyzer, the generator or the cache
-  at all, where before it loaded them and reached none of them.
-  `require "carray/jit"` loads everything as it did, and a program that
-  knows nothing about this sees no difference.
+## 0.1.3
 
 - New: `CArray::JIT.call_provider` is asked at a `jit_call` site before
   anything is compiled, and answering `nil` means "not mine, compile it". It
@@ -102,25 +74,6 @@ version you have and a newer one.
   that closes that hazard is what is being replaced. A function bound with
   `jit_extern` has no C of its own and says so.
 
-- Fix: a loop whose bound is an unsigned parameter -- `size_t n` and its kin
-  -- runs the passes Ruby runs. The counter is an `int64_t` and the bound was
-  compared against it uncast, so C converted the *counter* to unsigned
-  instead: `(-3...n).each` over `n = 4` ran no passes where Ruby runs seven,
-  and answered without saying anything. A count that never goes below zero
-  was unaffected, which is every `n.times`. The cast is written down now, so
-  the generated C also compiles clean where it carried `-Wsign-compare`
-  before.
-
-- Change: `CArray::JIT::CFunction#name` answers the name the declaration gave
-  -- `:square` for `CArray.jit_function("double square(double x)")` -- and
-  the new `#symbol` answers the name in the object, which for a compiled
-  function carries a digest of the body. It used to answer whichever of the
-  two its constructor was handed: the declared name for a function bound with
-  `jit_extern`, the symbol for one compiled from a block. Code reading
-  `#name` to reach or paste a function wants `#symbol`; code putting it in a
-  message wants `#name`, which is `nil` where the declaration named no
-  function. `#to_s` now prints the declaration rather than the symbol.
-
 - New: a parallel assignment is in the subset -- `a, b = b, a`, and the
   `a, b = b, a + b` a recurrence advances by. Every value on the right is
   settled before anything on the left is written, as in Ruby, so the
@@ -129,215 +82,6 @@ version you have and a newer one.
   keeps its own type and carries its mask. The readings that take a single
   value apart are refused by name: `a, b = f(x)`, `a, b = [1, 2]`,
   `a, *rest = ...`, `a, (b, c) = ...`, and a count that does not match.
-
-- Change: the docs now say what a compare-exchange costs under a mask. A
-  swap writes two cells where an ordinary assignment writes one, and a sort
-  runs one over every cell repeatedly, so a single missing cell spreads
-  across the row -- the ordinary rule for a branch decided by a missing
-  cell, at an unusually high gain. A sort written by hand is not refused
-  the way `sort` on a local array is, so ask `a[i] == UNDEF` first and
-  decide it.
-
-- Change: the docs now say what a branch not taken costs under a mask. A
-  branch decided by a missing cell masks what it writes; taking the other
-  path writes nothing, so a conclusion reached that way -- `found` left at
-  -1 for a row whose only candidate was masked -- is reported as an ordinary
-  value. Ask about the mask with `a[i] == UNDEF` where that matters.
-
-- Change: a keyword in value position is named as it was written --
-  `unless` in `CArray.jit_map { unless a > 1.0 then ... end }` says
-  "`unless` -- write it as `if` with the condition negated", where it said
-  "unsupported expression Unless". Statement position already did.
-
-- Change: the refusal for a `CArray.jit_stencil` writing into a view of an
-  array it reads says that the two are views of one array and that the test
-  is the storage rather than the cells, so two slabs that share none are
-  refused too, and names the copy to read from. It said a stencil writes
-  into an array of its own, which of two slabs is not true.
-
-- Change: an indexed kernel (`CArray.jit_for` and the rest) refuses an
-  operand it cannot walk -- a gather, a lazy array -- that is a view of an
-  array the same kernel writes, naming `a[order[i]]` as the spelling that
-  means something. Such an operand is copied before the loop and put back
-  after it, so the loop read cells that had stopped being current and a
-  direct write to the same array was dropped at the end.
-
-- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that reads a view of an
-  array it also writes -- two blocks that share cells, a transpose written
-  over itself, a gather held in `g` and written back as `src = g + 1.0` --
-  reads the values the expression started with, as Ruby and CArray's own
-  operators do. Such an operand was read as the pass went, so it came back
-  holding the kernel's own output: `hi = lo * 2.0` over overlapping blocks
-  gave all zeros, and a gather over 20000 cells was wrong in 8192 of them.
-  It is copied once before the loop instead. `a = a + 1.0`, and views that
-  share a root without sharing a cell, are untouched.
-
-- Change: the refusal for a block whose source cannot be read names
-  `RubyVM.keep_script_lines = true` and `CArray::JIT.compile`, which takes a
-  kernel as text. It named `source:`, which is a keyword no entry point
-  takes; the guide said the same.
-
-- Change: an extent that counts down as a `Range` -- `(n-2)..0` -- raises
-  `CArray::JIT::Unsupported` naming `(n-2).step(0, -1)`, the spelling Ruby
-  iterates backwards with. Ruby gives such a Range no elements, so the
-  kernel ran no passes and said nothing, which is what the guide says this
-  refusal exists to prevent. An empty range whose ends agree (`0...0`) is a
-  count of zero as before.
-
-- Change: `CArray#jit_init` given a block that takes a splat or an optional
-  parameter says so, where it said "the block names -1 indices".
-
-- Change: `CArray.jit_contract` refuses an index that stands inside a
-  subscript the kernel works out -- `a[i, idx[k]] * v[k]` -- saying that a
-  contraction counts positions and this one is a position of `idx`. It was
-  read as an index appearing once, so the sum the notation asks for did not
-  happen and the result came back a whole matrix. Write such a gather with
-  `CArray.jit_for`.
-
-- Change: a local assigned before the summand of a `CArray.jit_contract`
-  block is refused saying so -- a contraction is one expression, which is
-  why it takes no local array either. It was refused as "`u` is read before
-  it is assigned", about a local assigned on the line above.
-
-- Fix: `CArray.jit_contract` takes a summand that calls a function made with
-  `CArray.jit_function` or `CArray.jit_extern`, which the docs say it does;
-  it was refused as an unsupported method. What the function hands back
-  types the result the contraction is collected into.
-
-- Fix: a cell of a local array written under an `if` or a `while` whose
-  condition read a missing cell is masked, as a plain local and a cell of an
-  array now are. It was left present deliberately; the rule the docs give
-  for it is the one the other two keep.
-
-- Fix: a local assigned under an `if` or a `while` whose condition read a
-  missing cell is masked, as a cell written there already was. It came back
-  a number like any other, so `found = -1; ...; if a[i, j] > x then found =
-  j end; out[i] = found` reported a position found under a mask. A condition
-  that asks about the mask itself (`a[i] == UNDEF`) still masks nothing.
-
-- Change: a cache directory owned by another user is refused, as one other
-  users can write to already was; everything in it is `dlopen`ed. A cache
-  root that is a symlink is followed as before, and the owner of the
-  directory it lands on is what is asked about. Set `CARRAY_JIT_CACHE` to a
-  directory of your own where this refuses.
-
-- Fix: a build no longer fails with "could not load freshly compiled" when
-  another process evicts its object in the moment between the build and the
-  load. It opens the object before publishing it to the cache. Reachable
-  where `CARRAY_JIT_CACHE_LIMIT` is smaller than the number of processes
-  building at once: with five of them, a limit of 2 lost every one.
-
-- Fix: a build whose compile fails leaves no `.c` behind in the cache. Such
-  a file was never looked up -- a cache hit is an object -- and eviction
-  passes over it, so one stayed for good, and one more for every kernel of
-  every run against a toolchain that cannot compile.
-
-- Change: a compiler this process cannot find -- `CARRAY_JIT_CC` naming
-  something that is not there -- raises `CArray::JIT::CompilationError`
-  saying so and naming the variable, where it raised `Errno::ENOENT` from
-  the spawn with the program name and nothing else.
-
-- Fix: two threads of one process compiling at the same time no longer
-  raise `Errno::ENOENT`; three threads in four did. A build now takes a lock
-  for the length of the compile, so the second thread finds the object the
-  first one left and reuses it rather than building its own. Compiling two
-  different kernels in two threads is that much less parallel -- four of
-  them took 970 ms here against 800.
-
-- Change: the docs now say that a negative Float to a fractional power is
-  `NaN`, as `pow` and CArray answer, where Ruby answers a Complex. This was
-  already the behaviour; a whole-number exponent or a non-negative base is
-  Ruby's number.
-
-- Change: the docs now say that an Integer compared with a Float is
-  compared as two doubles, as CArray compares them, so past 2^53 the answer
-  can differ from Ruby's exact comparison. This was already the behaviour;
-  below 2^53 nothing differs.
-
-- Change: the docs now say that `Math.sqrt`, `log`, `log2`, `log10`, `asin`,
-  `acos`, `acosh` and `atanh` answer `NaN` outside their domain, as `math.h`
-  does, where Ruby raises `Math::DomainError`, and that `Math.sqrt(-0.0)` is
-  `-0.0`. This was already the behaviour. `Math.gamma` still raises as Ruby
-  does. Test the argument in the block where it may leave the domain.
-
-- Fix: multiplying two Complex numbers, or a real number by a Complex
-  (`x * z`), gives Ruby's answer where an infinity meets a zero:
-  `0.0 * Complex(Float::INFINITY, 0.0)` is `0.0+0.0i`, where it was
-  `NaN+NaN*i`. Finite products are unchanged, `cmplx64` included, and
-  `z * x` still scales each part as it did.
-
-- Fix: `%` by a float zero raises `ZeroDivisionError`, as Ruby's does --
-  `x % 0.0`, `x % -0.0`, an integer cell `% 0.0` -- in a kernel and in a
-  `CArray.jit_function` alike. It answered `NaN`, which is what CArray's `%`
-  answers and not what the docs promised. A float `/` by zero is still an
-  infinity, as it is in Ruby.
-
-- Change: arithmetic between two booleans -- `flag[i] * flag[i]`, `+`, `-`,
-  `/`, `%` -- raises `CArray::JIT::Unsupported` where the operator stands,
-  as `true * true` raises in Ruby. Used as a condition it compiled and ran.
-  `&`, `|` and `^` on booleans are unchanged.
-
-- Fix: `min(w)` and `max(w)` over a floating local array keep the first of
-  two cells that compare equal, as CArray's `min` and `max` do, so `0.0`
-  and `-0.0` come back in the order they stood; which zero came back was
-  left to the C library. NaN is still skipped, and an array of nothing but
-  NaN still answers `NaN`.
-
-- Fix: `floor`, `ceil`, `round`, `truncate` and `to_i` on a Float raise
-  `FloatDomainError` for a NaN or an infinity, as Ruby does, and `RangeError`
-  for a result past int64; they gave a clamped or arbitrary number. Written
-  straight into a float cell, or returned from a `CArray.jit_function`
-  declared `double`, the result is Ruby's however large -- `1e20.floor` is
-  `1e20`. A loop doing little but rounding runs slower for the check.
-
-- Fix: `.abs` on an integer compiles in `CArray.jit_for`, `CArray.jit_map`,
-  `CArray.jit_function` and the other entry points; it raised
-  `CArray::JIT::CompilationError` unless the kernel also allocated a local
-  array. `(-2**63).abs` in an int64 wraps to itself, as other int64
-  overflow does. Float and complex `.abs` are unchanged.
-
-- Change: a subscript that walks with one index and adds another --
-  `a[i + r]`, `r` an inner loop's index -- is refused as the block is read,
-  with a message that says so and that the sum put in a local first
-  (`k = i + r`, then `a[k]`) is checked at each cell and runs. It was
-  refused at the call, for a reason about an inner loop's range. The
-  exception is `CArray::JIT::Unsupported`, as it was.
-
-- Change: a `CArray.jit_function` body that subscripts a pointer parameter
-  with a literal outside the length its declaration gave -- `v[7]` or
-  `v[-1]` against `double v[2]` -- raises `CArray::JIT::Unsupported` as the
-  body is read. It compiled, and wrote or read past what the caller was
-  held to. A computed subscript, and any subscript on a pointer declared
-  without a length, are unchecked as before.
-
-- Fix: an inner loop stepping by more than one over a start written over
-  another index -- `2.times { |p| (p...8).step(3) { |k| ... } }` -- is held
-  to the cells every pass reaches, not only the pass from the earliest
-  start. A subscript one pass took past the end of an array was let through
-  and written; it is now refused as the call is prepared. A step of one, and
-  a start that does not move, are read as before.
-
-- Fix: a local array whose shape is written over captured integers --
-  `CArray.double(n, m)` -- raises `ArgumentError` when its lengths each fit
-  but their product does not count in bytes. Such a product wrapped to a
-  small number, the kernel allocated that, and subscripts in range on every
-  axis wrote past it. A shape of one axis, or of lengths whose product
-  fits, is unaffected.
-
-- Fix: `CArray::JIT.clear_registry` now forgets the functions
-  `CArray.jit_function` compiled, as it already did kernels, so the next
-  call reads them back from the cache on disk.
-
-- Fix: a block run through `eval` -- in a console, or from code that builds
-  its kernels as text -- no longer stays in memory for the life of the
-  process once nothing refers to it. On Ruby 3.2 it still does.
-
-- Fix: a kernel over a masked array read and wrote the wrong cells of its
-  mask, and on a large enough array wrote past the end of it, when an
-  unmasked operand whose number of axes differs from the kernel's -- a row
-  added across a grid, or a contraction's operand -- sorted by name before
-  the masked one. Kernels whose operands all share the kernel's rank, and
-  kernels over no masked array, were not affected.
 
 - New: a local array may be larger than a stack frame should hold, and its
   shape may be written over an integer the block captured --
@@ -374,13 +118,6 @@ version you have and a newer one.
   at all. A kernel that carries no masks emits what it emitted before, and a
   compiled function's body carries none at all.
 
-- Change: `min(w)` and `max(w)` over a floating local array answer `NaN` when
-  every cell is `NaN`, where they answered `Infinity` and `-Infinity`. This
-  follows CArray 3.0.2, which made the same change to its own `min` and `max`;
-  the gemspec already asks for that version. An array holding at least one
-  number answers as before, a `NaN` still losing to any number, and an integer
-  local array is unchanged.
-
 - New: an inner loop's range may be written over another index --
   `3.times { |p| (p+1...3).each { |r| ... } }`, the shape a triangular loop
   takes -- where that index is one of the loops around it. Forward
@@ -394,33 +131,6 @@ version you have and a newer one.
   never makes, the message says which index the range was written over and
   that it was read at its widest. A range over a local variable, a sibling
   loop's index or a deeper one is still refused.
-
-- Fix: a local array indexed by an inner loop whose range is not known until
-  the kernel runs -- a bound that is a captured integer, and now a range
-  written over another index -- is checked where the cell is reached. Such a
-  subscript was checked nowhere: the check that reads the loop's range could
-  not settle it, and the check at the access did not cover an index, so a
-  write past the end of the array went into the block's stack frame. It now
-  raises `IndexError` as every other unsettled subscript does.
-
-- Fix: in a `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil`
-  block, an array handed to a C function whole -- and read in no other way --
-  is no longer lined up with the operands. One whose length differed from
-  theirs used to fail with `broadcast_to: cannot broadcast axis 0`, which
-  named an axis and said nothing about the call it was written for; a set of
-  weights four cells long may now stand beside a thousand cells of operand.
-  What decides which arrays those are is the declaration, not the spelling: a
-  parameter taking a number by value reads the cell, so that array is walked
-  and lines up as before, and an array both read by cell and handed over is
-  an operand too.
-
-- Change: a `CArray.jit_each` or `CArray.jit_map` block whose *only* array is
-  handed to a C function whole is now refused, naming the array and saying
-  that it does not settle how many cells there are to compute.
-  `CArray.jit_map { DOT4.call(w, w) }` used to answer an array as long as `w`
-  -- a length that came from an array nobody walks -- and the same block under
-  `jit_each` failed inside Fiddle with `unknown symbol "ca_call_cslab_0_r"`.
-  `CArray.jit_for` with a count takes these, as it always did.
 
 - New: a local array may have more than one axis --
   `CArray.double(3, 4)`, `CArray.new(:float64, [2, 3, 4])` -- in any of the
@@ -510,43 +220,6 @@ version you have and a newer one.
   `CArray::Int64.empty`), which are refused with the carray spelling named.
   Note `CArray.float` is float32 and `CArray.complex` is cmplx64.
 
-- Change: a block parameter that names a loop index is refused when the
-  generated C already uses that name for a captured array (`p_a`, `m_a`,
-  `a_s0`, `a_ms0` or `a_n0` for an array `a`), or when it contains `__` or
-  starts with `carray_jit_`. Rename the index.
-
-- Fix: a local in a kernel or `jit_function` body, or a captured variable
-  starting `carray_jit_`, may be given a name the generated C also uses -- a
-  kernel parameter such as `error`, a C keyword such as `int`, `a_n0` beside a
-  captured array `a`, or a name containing `__`. It failed to compile, raised
-  an `IndexError` for an index in range, or shared its value with another
-  name; it is now renamed in the generated C only.
-
-- Change: a kernel or `jit_function` body that reads a local after an inner
-  loop's block in which the local was first assigned, or after a `while` in
-  which it was first assigned, is refused with a message naming the local.
-  These did not compile before either, failing in the C compiler instead.
-  Give the local a value before the loop.
-
-- Fix: two inner loops in one kernel or `jit_function` body may assign a
-  local of the same name, at one type or two, and a local assigned inside a
-  `while` may be read after it when it was also assigned before it. The
-  first failed in the C compiler or was refused as changing type; the second
-  failed in the C compiler.
-
-- Fix: a loop in a `jit_function` body, and a `while` or inner loop in a
-  kernel whose body held the kernel's first way to fail, kept running after
-  an integer division by zero, a computed index out of range, `clamp` or
-  `Math.gamma` had reported a failure -- so a `while` decided by the value
-  handed back could run forever. Such a loop now leaves at the head of its
-  next pass, and the call raises as it already did.
-
-- Change: `CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are this
-  gem's alone. From CArray 3.0.2 they are not defined until
-  `require "carray/jit"` has run, so a program that calls one without it gets
-  `NoMethodError` rather than CArray's `NotImplementedError`. With the gem
-  required nothing changes, against any CArray this gem accepts.
-
 - New: `CArray#jit_init` fills an array from a formula over its indices, with
   the block compiled: `CArray.int32(1000, 1000).jit_init { |i, j| (i + j) % 2 }`
   is what the constructor block `CArray.int32(n, n) { |i, j| ... }` says,
@@ -583,15 +256,6 @@ version you have and a newer one.
   order, so where that has to be settled, fill an array with
   `CArray#random!` before the call.
 
-- Fix: `CArray.jit_each` and `CArray.jit_map` no longer refuse a block that
-  hands a one-cell array to a C function. Those entries line their operands up
-  with the expression's shape, and an array passed to a pointer parameter was
-  lined up with the rest -- so a one-cell array holding state came back
-  stretched and read-only, and the copy-back after the call raised `can not
-  modify read-only array`. An array handed over by address is passed whole
-  rather than walked, so it is left as it is now. `jit_for` was never
-  affected, and a `CScalar` was affected the same way an array was.
-
 - New: `CFunction#watching`, and `#clear_error` / `#report_error` beside it,
   for the window in which a compiled function's address is lent to a C
   library. `#call` answers for one call; a library given `#pointer` calls as
@@ -599,16 +263,6 @@ version you have and a newer one.
   before that and raises what the body reported after it. A failure inside
   the block outranks the library's own complaint about the stand-in it was
   handed. Windows nest, and a `#call` made inside one leaves it armed.
-
-- Change: a compiled function whose body has failed does no more work until
-  its flag is put down again -- it returns 0 without running, and one
-  declared `void` leaves its out-parameters alone. Before, it reported the
-  first failure and then answered normally, so a library that kept calling
-  could converge on values it was no longer entitled to. Nothing changes for
-  a caller using `#call`, which puts the flag down for each call; a caller
-  holding `#pointer` opens a window with `#watching` or `#clear_error`. A
-  kernel is unaffected: it is handed its own error slot and never reaches
-  this flag.
 
 - New: `Math.gamma`, which is not `tgamma` and is not lowered to one: Ruby's
   answer is tgamma with a table of exact values in front of it for a whole
@@ -626,14 +280,6 @@ version you have and a newer one.
   and so gets `erff`, as it gets `sinf`. There is no postfix `x.erf`:
   `CArray::CoreExtensions` does not provide one, and this compiles the
   refinement's names rather than inventing them.
-
-- Change: the three names left in Ruby's `Math` say why they are not lowered
-  rather than saying that C has no counterpart, which was untrue of all of
-  them -- `lgamma`, `frexp` and `ldexp` all exist. `Math.lgamma` and
-  `Math.frexp` each answer with a pair, and a cell holds one number;
-  `Math.ldexp` takes an exponent where a math call here computes every
-  argument in the type of its result. A name Ruby's `Math` does not have says
-  that instead of guessing at a reason.
 
 - New: `x.clamp(low, high)`, which answers the value or whichever bound it
   ran past. The value and both bounds have to be one class: Ruby hands back
@@ -662,25 +308,6 @@ version you have and a newer one.
   callable from a kernel but not from Ruby -- there is no source here to
   compile an entry point beside -- and says so.
 
-- Fix: a captured Integer above 2**63-1 reaches a kernel whole. It was packed
-  into the int64 slot the kernel reads its integers from, which took the value
-  modulo the width and said nothing: `big / 3`, `big > 100` and `big * 1.0`
-  answered from a negative number, while `+` and `*` came out right and hid it.
-  Such a capture is a uint64 now -- the width CArray has for those values --
-  and a value neither an int64 nor a uint64 holds is refused where the capture
-  is read, naming the value.
-
-- Change: a captured Integer above 2**63-1 meeting an integer is refused,
-  where before it was absorbed into that integer's width and computed from a
-  wrapped value. CArray refuses the same expression whatever the array's own
-  type is -- `CArray.uint64(1) { 5 } + 2**63` raises `bignum too big to
-  convert into 'long long'` -- and this follows it: a bare Integer brings no
-  width, and the message names `CScalar.uint64() { big }`, which a kernel reads
-  as the one-cell array it is. A Float or a Complex on the other side is
-  unaffected, and so is a capture that fits an int64. A loop that adds such a
-  capture to an accumulator is refused for the same reason: state the width
-  once with a CScalar, for the seed and for the value.
-
 - New: a `jit_function` body may take an unsigned 64-bit value by parameter --
   `CArray.jit_function("size_t stride(size_t n, size_t width)") { |n, w| n * w }`
   -- where before only a pointer to one could be taken. The value arrives
@@ -688,12 +315,6 @@ version you have and a newer one.
   as CArray's own `uint64` operators wrap. A kernel's captured scalars are
   unchanged: those travel in the kernel's own buffers, which carry doubles,
   int64s and complexes.
-
-- Fix: a C declaration written with `ptrdiff_t` compiles. `size_t` and the
-  other `<stddef.h>` names have read since 0.1.0, but the C generated for a
-  body that took one declared no such type, so `CArray.jit_function("ptrdiff_t
-  (*)(ptrdiff_t)")` failed in the C compiler with `unknown type name`.
-  `size_t` was unaffected, by luck rather than by design.
 
 - New: `x.nan?` and `x.finite?`, which compile to C's `isnan` and `isfinite`
   and answer what Ruby answers. `nan?` is a Float's question: an Integer and
@@ -714,12 +335,6 @@ version you have and a newer one.
   written `total += values[j]` is still split. `||=` and `&&=` are refused,
   being about whether a value is nil or false rather than about arithmetic.
 
-- Change: a statement outside the subset is named as it was written --
-  ``got `unless` -- write it as `if` with the condition negated`` rather than
-  `got Unless`, which was this compiler's reading of it and not anything
-  anyone typed. The list of what a body may hold was written out in two
-  places and they had come apart; it is one place now.
-
 - New: an inner loop counts by a stride, written the way an extent writes
   one: `(n-1).step(0, -1) { |k| ... }` is a downward sweep and
   `(0...n).step(2) { |k| ... }` a stride of two. `step` includes the index it
@@ -732,13 +347,6 @@ version you have and a newer one.
   is split into partial sums only for a loop counting by one; a stride keeps
   the serial chain, and so keeps Ruby's order. `downto`, `upto` and
   `reverse_each` are refused by name, naming `step` as what to write.
-
-- Fix: two inner loops in one body may both be written `{ |k| ... }`. They
-  are one name in the block and were one index here, so the second loop's
-  range replaced the first's and a reach was checked against the wrong one --
-  `a[k-1]` in a loop from 1 was refused for starting at 0 once a later loop
-  started there. Each loop now counts in an identifier of its own, and the
-  messages go on speaking the name the block wrote.
 
 - New: an inner loop's index may address a write, so a cell can be given a
   row of workspace -- `(0...width).each { |k| work[i, k] = ... }` fills it,
@@ -769,15 +377,47 @@ version you have and a newer one.
   may be a constant as well as a local, which is what lets a method reach
   one: `def` closes over nothing.
 
-- Fix: a block holding a character outside ASCII no longer raises. The file a
-  block sits in was read with `File.read`, which uses
-  `Encoding.default_external` -- a setting that has nothing to do with a
-  source's encoding: on a machine with no locale set it is US-ASCII, and the
-  file came back as its own bytes under a tag that the first `rstrip` on a
-  line holding a comment in Japanese raised on. The file is now read as bytes
-  and given the encoding the parser gave it: UTF-8, or what a `coding` magic
-  comment names on the first line or on the second where a shebang takes the
-  first.
+- New: `CArray::JIT.contraction_of` returns the number that multiplies the
+  product as `:scale`, which is 1 where there is none, so
+  `a[i,k] * b[k,j] * 2.0` comes back as its two terms and 2.0 rather than as
+  nil. A number is not a term -- it has no indices and no cell -- but it is
+  not a reason to give up on the terms either, and a caller that takes them
+  apart puts it back. Written out or closed over is the same number; anything
+  a name holds that is not a Numeric is still nil. This shipped in 0.1.2,
+  whose entry describes the same two methods without mentioning it.
+
+- Change: this gem no longer builds a C extension, so installing it needs no
+  compiler for itself -- one is still needed at run time to compile a kernel.
+  The addressing it used to carry is `CArray::AddressBasis`, in carray, which
+  is where the knowledge about carray's views belonged; `CArray::JIT::Access`
+  remains as an alias for this release. carray 3.0.2 or newer is required,
+  which the gemspec already asked for.
+
+- Change: `CArray.jit_for`, `CArray.jit_each` and `CArray.jit_map` are this
+  gem's alone. From CArray 3.0.2 they are not defined until
+  `require "carray/jit"` has run, so a program that calls one without it gets
+  `NoMethodError` rather than CArray's `NotImplementedError`. With the gem
+  required nothing changes, against any CArray this gem accepts.
+
+- Change: `CArray::JIT::CFunction#name` answers the name the declaration gave
+  -- `:square` for `CArray.jit_function("double square(double x)")` -- and
+  the new `#symbol` answers the name in the object, which for a compiled
+  function carries a digest of the body. It used to answer whichever of the
+  two its constructor was handed: the declared name for a function bound with
+  `jit_extern`, the symbol for one compiled from a block. Code reading
+  `#name` to reach or paste a function wants `#symbol`; code putting it in a
+  message wants `#name`, which is `nil` where the declaration named no
+  function. `#to_s` now prints the declaration rather than the symbol.
+
+- Change: a compiled function whose body has failed does no more work until
+  its flag is put down again -- it returns 0 without running, and one
+  declared `void` leaves its out-parameters alone. Before, it reported the
+  first failure and then answered normally, so a library that kept calling
+  could converge on values it was no longer entitled to. Nothing changes for
+  a caller using `#call`, which puts the flag down for each call; a caller
+  holding `#pointer` opens a window with `#watching` or `#clear_error`. A
+  kernel is unaffected: it is handed its own error slot and never reaches
+  this flag.
 
 - Change: naming a contraction's axes now replaces the convention rather than
   adding a clause to it. `CArray.jit_contract(:i, :j) { ... }` names all of
@@ -797,14 +437,375 @@ version you have and a newer one.
   short of the result rather than an index to sum, and the left-hand side is
   the one place that can be seen. The message says so in those terms now.
 
-- New: `CArray::JIT.contraction_of` returns the number that multiplies the
-  product as `:scale`, which is 1 where there is none, so
-  `a[i,k] * b[k,j] * 2.0` comes back as its two terms and 2.0 rather than as
-  nil. A number is not a term -- it has no indices and no cell -- but it is
-  not a reason to give up on the terms either, and a caller that takes them
-  apart puts it back. Written out or closed over is the same number; anything
-  a name holds that is not a Numeric is still nil. This shipped in 0.1.2,
-  whose entry describes the same two methods without mentioning it.
+- Change: `min(w)` and `max(w)` over a floating local array answer `NaN` when
+  every cell is `NaN`, where they answered `Infinity` and `-Infinity`. This
+  follows CArray 3.0.2, which made the same change to its own `min` and `max`;
+  the gemspec already asks for that version. An array holding at least one
+  number answers as before, a `NaN` still losing to any number, and an integer
+  local array is unchanged.
+
+- Change: `CArray.jit_contract` refuses an index that stands inside a
+  subscript the kernel works out -- `a[i, idx[k]] * v[k]` -- saying that a
+  contraction counts positions and this one is a position of `idx`. It was
+  read as an index appearing once, so the sum the notation asks for did not
+  happen and the result came back a whole matrix. Write such a gather with
+  `CArray.jit_for`.
+
+- Change: an indexed kernel (`CArray.jit_for` and the rest) refuses an
+  operand it cannot walk -- a gather, a lazy array -- that is a view of an
+  array the same kernel writes, naming `a[order[i]]` as the spelling that
+  means something. Such an operand is copied before the loop and put back
+  after it, so the loop read cells that had stopped being current and a
+  direct write to the same array was dropped at the end.
+
+- Change: arithmetic between two booleans -- `flag[i] * flag[i]`, `+`, `-`,
+  `/`, `%` -- raises `CArray::JIT::Unsupported` where the operator stands,
+  as `true * true` raises in Ruby. Used as a condition it compiled and ran.
+  `&`, `|` and `^` on booleans are unchanged.
+
+- Change: a captured Integer above 2**63-1 meeting an integer is refused,
+  where before it was absorbed into that integer's width and computed from a
+  wrapped value. CArray refuses the same expression whatever the array's own
+  type is -- `CArray.uint64(1) { 5 } + 2**63` raises `bignum too big to
+  convert into 'long long'` -- and this follows it: a bare Integer brings no
+  width, and the message names `CScalar.uint64() { big }`, which a kernel reads
+  as the one-cell array it is. A Float or a Complex on the other side is
+  unaffected, and so is a capture that fits an int64. A loop that adds such a
+  capture to an accumulator is refused for the same reason: state the width
+  once with a CScalar, for the seed and for the value.
+
+- Change: a `CArray.jit_each` or `CArray.jit_map` block whose *only* array is
+  handed to a C function whole is now refused, naming the array and saying
+  that it does not settle how many cells there are to compute.
+  `CArray.jit_map { DOT4.call(w, w) }` used to answer an array as long as `w`
+  -- a length that came from an array nobody walks -- and the same block under
+  `jit_each` failed inside Fiddle with `unknown symbol "ca_call_cslab_0_r"`.
+  `CArray.jit_for` with a count takes these, as it always did.
+
+- Change: a block parameter that names a loop index is refused when the
+  generated C already uses that name for a captured array (`p_a`, `m_a`,
+  `a_s0`, `a_ms0` or `a_n0` for an array `a`), or when it contains `__` or
+  starts with `carray_jit_`. Rename the index.
+
+- Change: a `CArray.jit_function` body that subscripts a pointer parameter
+  with a literal outside the length its declaration gave -- `v[7]` or
+  `v[-1]` against `double v[2]` -- raises `CArray::JIT::Unsupported` as the
+  body is read. It compiled, and wrote or read past what the caller was
+  held to. A computed subscript, and any subscript on a pointer declared
+  without a length, are unchecked as before.
+
+- Change: an extent that counts down as a `Range` -- `(n-2)..0` -- raises
+  `CArray::JIT::Unsupported` naming `(n-2).step(0, -1)`, the spelling Ruby
+  iterates backwards with. Ruby gives such a Range no elements, so the
+  kernel ran no passes and said nothing, which is what the guide says this
+  refusal exists to prevent. An empty range whose ends agree (`0...0`) is a
+  count of zero as before.
+
+- Change: a body compiled with `CArray.jit_function` or `CArray.jit_call` may
+  call a function bound with `jit_extern`. It was refused -- a borrowed
+  function is only an address, and a compiled body has no `functions` buffer
+  to take one in -- but an address is not what a body needs from it. It needs
+  the name, which is what the declaration states and what a linker or a
+  loader resolves; `jit_extern` opened the library to find the function, so
+  the symbol is in the process by the time the body is compiled. The
+  generated file declares it (`double j0(double);`) and calls it by name. A
+  kernel is unchanged and still takes the address through its buffer, which
+  is what a kernel has and a body has not. A file built ahead of the program
+  links the library the usual way: one that is not linked by default is the
+  caller's to add.
+
+- Change: `require "carray/jit/call"` defines `CArray.jit_call` without
+  loading the compiler, and the compiler is required at the first call site
+  no provider answers. A program whose sites were all built ahead of it --
+  by carray-jit-aot -- never loads the analyzer, the generator or the cache
+  at all, where before it loaded them and reached none of them.
+  `require "carray/jit"` loads everything as it did, and a program that
+  knows nothing about this sees no difference.
+
+- Change: a subscript that walks with one index and adds another --
+  `a[i + r]`, `r` an inner loop's index -- is refused as the block is read,
+  with a message that says so and that the sum put in a local first
+  (`k = i + r`, then `a[k]`) is checked at each cell and runs. It was
+  refused at the call, for a reason about an inner loop's range. The
+  exception is `CArray::JIT::Unsupported`, as it was.
+
+- Change: a kernel or `jit_function` body that reads a local after an inner
+  loop's block in which the local was first assigned, or after a `while` in
+  which it was first assigned, is refused with a message naming the local.
+  These did not compile before either, failing in the C compiler instead.
+  Give the local a value before the loop.
+
+- Change: a local assigned before the summand of a `CArray.jit_contract`
+  block is refused saying so -- a contraction is one expression, which is
+  why it takes no local array either. It was refused as "`u` is read before
+  it is assigned", about a local assigned on the line above.
+
+- Change: the refusal for a `CArray.jit_stencil` writing into a view of an
+  array it reads says that the two are views of one array and that the test
+  is the storage rather than the cells, so two slabs that share none are
+  refused too, and names the copy to read from. It said a stencil writes
+  into an array of its own, which of two slabs is not true.
+
+- Change: the refusal for a block whose source cannot be read names
+  `RubyVM.keep_script_lines = true` and `CArray::JIT.compile`, which takes a
+  kernel as text. It named `source:`, which is a keyword no entry point
+  takes; the guide said the same.
+
+- Change: `CArray#jit_init` given a block that takes a splat or an optional
+  parameter says so, where it said "the block names -1 indices".
+
+- Change: a keyword in value position is named as it was written --
+  `unless` in `CArray.jit_map { unless a > 1.0 then ... end }` says
+  "`unless` -- write it as `if` with the condition negated", where it said
+  "unsupported expression Unless". Statement position already did.
+
+- Change: a statement outside the subset is named as it was written --
+  ``got `unless` -- write it as `if` with the condition negated`` rather than
+  `got Unless`, which was this compiler's reading of it and not anything
+  anyone typed. The list of what a body may hold was written out in two
+  places and they had come apart; it is one place now.
+
+- Change: the three names left in Ruby's `Math` say why they are not lowered
+  rather than saying that C has no counterpart, which was untrue of all of
+  them -- `lgamma`, `frexp` and `ldexp` all exist. `Math.lgamma` and
+  `Math.frexp` each answer with a pair, and a cell holds one number;
+  `Math.ldexp` takes an exponent where a math call here computes every
+  argument in the type of its result. A name Ruby's `Math` does not have says
+  that instead of guessing at a reason.
+
+- Change: a compiler this process cannot find -- `CARRAY_JIT_CC` naming
+  something that is not there -- raises `CArray::JIT::CompilationError`
+  saying so and naming the variable, where it raised `Errno::ENOENT` from
+  the spawn with the program name and nothing else.
+
+- Change: a cache directory owned by another user is refused, as one other
+  users can write to already was; everything in it is `dlopen`ed. A cache
+  root that is a symlink is followed as before, and the owner of the
+  directory it lands on is what is asked about. Set `CARRAY_JIT_CACHE` to a
+  directory of your own where this refuses.
+
+- Change: the docs now say what a compare-exchange costs under a mask. A
+  swap writes two cells where an ordinary assignment writes one, and a sort
+  runs one over every cell repeatedly, so a single missing cell spreads
+  across the row -- the ordinary rule for a branch decided by a missing
+  cell, at an unusually high gain. A sort written by hand is not refused
+  the way `sort` on a local array is, so ask `a[i] == UNDEF` first and
+  decide it.
+
+- Change: the docs now say what a branch not taken costs under a mask. A
+  branch decided by a missing cell masks what it writes; taking the other
+  path writes nothing, so a conclusion reached that way -- `found` left at
+  -1 for a row whose only candidate was masked -- is reported as an ordinary
+  value. Ask about the mask with `a[i] == UNDEF` where that matters.
+
+- Change: the docs now say that a negative Float to a fractional power is
+  `NaN`, as `pow` and CArray answer, where Ruby answers a Complex. This was
+  already the behaviour; a whole-number exponent or a non-negative base is
+  Ruby's number.
+
+- Change: the docs now say that an Integer compared with a Float is
+  compared as two doubles, as CArray compares them, so past 2^53 the answer
+  can differ from Ruby's exact comparison. This was already the behaviour;
+  below 2^53 nothing differs.
+
+- Change: the docs now say that `Math.sqrt`, `log`, `log2`, `log10`, `asin`,
+  `acos`, `acosh` and `atanh` answer `NaN` outside their domain, as `math.h`
+  does, where Ruby raises `Math::DomainError`, and that `Math.sqrt(-0.0)` is
+  `-0.0`. This was already the behaviour. `Math.gamma` still raises as Ruby
+  does. Test the argument in the block where it may leave the domain.
+
+- Fix: a loop whose bound is an unsigned parameter -- `size_t n` and its kin
+  -- runs the passes Ruby runs. The counter is an `int64_t` and the bound was
+  compared against it uncast, so C converted the *counter* to unsigned
+  instead: `(-3...n).each` over `n = 4` ran no passes where Ruby runs seven,
+  and answered without saying anything. A count that never goes below zero
+  was unaffected, which is every `n.times`. The cast is written down now, so
+  the generated C also compiles clean where it carried `-Wsign-compare`
+  before.
+
+- Fix: a `CArray.jit_each` or `CArray.jit_map` pass that reads a view of an
+  array it also writes -- two blocks that share cells, a transpose written
+  over itself, a gather held in `g` and written back as `src = g + 1.0` --
+  reads the values the expression started with, as Ruby and CArray's own
+  operators do. Such an operand was read as the pass went, so it came back
+  holding the kernel's own output: `hi = lo * 2.0` over overlapping blocks
+  gave all zeros, and a gather over 20000 cells was wrong in 8192 of them.
+  It is copied once before the loop instead. `a = a + 1.0`, and views that
+  share a root without sharing a cell, are untouched.
+
+- Fix: `CArray.jit_contract` takes a summand that calls a function made with
+  `CArray.jit_function` or `CArray.jit_extern`, which the docs say it does;
+  it was refused as an unsupported method. What the function hands back
+  types the result the contraction is collected into.
+
+- Fix: a cell of a local array written under an `if` or a `while` whose
+  condition read a missing cell is masked, as a plain local and a cell of an
+  array now are. It was left present deliberately; the rule the docs give
+  for it is the one the other two keep.
+
+- Fix: a local assigned under an `if` or a `while` whose condition read a
+  missing cell is masked, as a cell written there already was. It came back
+  a number like any other, so `found = -1; ...; if a[i, j] > x then found =
+  j end; out[i] = found` reported a position found under a mask. A condition
+  that asks about the mask itself (`a[i] == UNDEF`) still masks nothing.
+
+- Fix: a build no longer fails with "could not load freshly compiled" when
+  another process evicts its object in the moment between the build and the
+  load. It opens the object before publishing it to the cache. Reachable
+  where `CARRAY_JIT_CACHE_LIMIT` is smaller than the number of processes
+  building at once: with five of them, a limit of 2 lost every one.
+
+- Fix: a build whose compile fails leaves no `.c` behind in the cache. Such
+  a file was never looked up -- a cache hit is an object -- and eviction
+  passes over it, so one stayed for good, and one more for every kernel of
+  every run against a toolchain that cannot compile.
+
+- Fix: two threads of one process compiling at the same time no longer
+  raise `Errno::ENOENT`; three threads in four did. A build now takes a lock
+  for the length of the compile, so the second thread finds the object the
+  first one left and reuses it rather than building its own. Compiling two
+  different kernels in two threads is that much less parallel -- four of
+  them took 970 ms here against 800.
+
+- Fix: multiplying two Complex numbers, or a real number by a Complex
+  (`x * z`), gives Ruby's answer where an infinity meets a zero:
+  `0.0 * Complex(Float::INFINITY, 0.0)` is `0.0+0.0i`, where it was
+  `NaN+NaN*i`. Finite products are unchanged, `cmplx64` included, and
+  `z * x` still scales each part as it did.
+
+- Fix: `%` by a float zero raises `ZeroDivisionError`, as Ruby's does --
+  `x % 0.0`, `x % -0.0`, an integer cell `% 0.0` -- in a kernel and in a
+  `CArray.jit_function` alike. It answered `NaN`, which is what CArray's `%`
+  answers and not what the docs promised. A float `/` by zero is still an
+  infinity, as it is in Ruby.
+
+- Fix: `min(w)` and `max(w)` over a floating local array keep the first of
+  two cells that compare equal, as CArray's `min` and `max` do, so `0.0`
+  and `-0.0` come back in the order they stood; which zero came back was
+  left to the C library. NaN is still skipped, and an array of nothing but
+  NaN still answers `NaN`.
+
+- Fix: `floor`, `ceil`, `round`, `truncate` and `to_i` on a Float raise
+  `FloatDomainError` for a NaN or an infinity, as Ruby does, and `RangeError`
+  for a result past int64; they gave a clamped or arbitrary number. Written
+  straight into a float cell, or returned from a `CArray.jit_function`
+  declared `double`, the result is Ruby's however large -- `1e20.floor` is
+  `1e20`. A loop doing little but rounding runs slower for the check.
+
+- Fix: `.abs` on an integer compiles in `CArray.jit_for`, `CArray.jit_map`,
+  `CArray.jit_function` and the other entry points; it raised
+  `CArray::JIT::CompilationError` unless the kernel also allocated a local
+  array. `(-2**63).abs` in an int64 wraps to itself, as other int64
+  overflow does. Float and complex `.abs` are unchanged.
+
+- Fix: an inner loop stepping by more than one over a start written over
+  another index -- `2.times { |p| (p...8).step(3) { |k| ... } }` -- is held
+  to the cells every pass reaches, not only the pass from the earliest
+  start. A subscript one pass took past the end of an array was let through
+  and written; it is now refused as the call is prepared. A step of one, and
+  a start that does not move, are read as before.
+
+- Fix: a local array whose shape is written over captured integers --
+  `CArray.double(n, m)` -- raises `ArgumentError` when its lengths each fit
+  but their product does not count in bytes. Such a product wrapped to a
+  small number, the kernel allocated that, and subscripts in range on every
+  axis wrote past it. A shape of one axis, or of lengths whose product
+  fits, is unaffected.
+
+- Fix: `CArray::JIT.clear_registry` now forgets the functions
+  `CArray.jit_function` compiled, as it already did kernels, so the next
+  call reads them back from the cache on disk.
+
+- Fix: a block run through `eval` -- in a console, or from code that builds
+  its kernels as text -- no longer stays in memory for the life of the
+  process once nothing refers to it. On Ruby 3.2 it still does.
+
+- Fix: a kernel over a masked array read and wrote the wrong cells of its
+  mask, and on a large enough array wrote past the end of it, when an
+  unmasked operand whose number of axes differs from the kernel's -- a row
+  added across a grid, or a contraction's operand -- sorted by name before
+  the masked one. Kernels whose operands all share the kernel's rank, and
+  kernels over no masked array, were not affected.
+
+- Fix: a local array indexed by an inner loop whose range is not known until
+  the kernel runs -- a bound that is a captured integer, and now a range
+  written over another index -- is checked where the cell is reached. Such a
+  subscript was checked nowhere: the check that reads the loop's range could
+  not settle it, and the check at the access did not cover an index, so a
+  write past the end of the array went into the block's stack frame. It now
+  raises `IndexError` as every other unsettled subscript does.
+
+- Fix: in a `CArray.jit_each`, `CArray.jit_map` or `CArray.jit_stencil`
+  block, an array handed to a C function whole -- and read in no other way --
+  is no longer lined up with the operands. One whose length differed from
+  theirs used to fail with `broadcast_to: cannot broadcast axis 0`, which
+  named an axis and said nothing about the call it was written for; a set of
+  weights four cells long may now stand beside a thousand cells of operand.
+  What decides which arrays those are is the declaration, not the spelling: a
+  parameter taking a number by value reads the cell, so that array is walked
+  and lines up as before, and an array both read by cell and handed over is
+  an operand too.
+
+- Fix: a local in a kernel or `jit_function` body, or a captured variable
+  starting `carray_jit_`, may be given a name the generated C also uses -- a
+  kernel parameter such as `error`, a C keyword such as `int`, `a_n0` beside a
+  captured array `a`, or a name containing `__`. It failed to compile, raised
+  an `IndexError` for an index in range, or shared its value with another
+  name; it is now renamed in the generated C only.
+
+- Fix: two inner loops in one kernel or `jit_function` body may assign a
+  local of the same name, at one type or two, and a local assigned inside a
+  `while` may be read after it when it was also assigned before it. The
+  first failed in the C compiler or was refused as changing type; the second
+  failed in the C compiler.
+
+- Fix: a loop in a `jit_function` body, and a `while` or inner loop in a
+  kernel whose body held the kernel's first way to fail, kept running after
+  an integer division by zero, a computed index out of range, `clamp` or
+  `Math.gamma` had reported a failure -- so a `while` decided by the value
+  handed back could run forever. Such a loop now leaves at the head of its
+  next pass, and the call raises as it already did.
+
+- Fix: `CArray.jit_each` and `CArray.jit_map` no longer refuse a block that
+  hands a one-cell array to a C function. Those entries line their operands up
+  with the expression's shape, and an array passed to a pointer parameter was
+  lined up with the rest -- so a one-cell array holding state came back
+  stretched and read-only, and the copy-back after the call raised `can not
+  modify read-only array`. An array handed over by address is passed whole
+  rather than walked, so it is left as it is now. `jit_for` was never
+  affected, and a `CScalar` was affected the same way an array was.
+
+- Fix: a captured Integer above 2**63-1 reaches a kernel whole. It was packed
+  into the int64 slot the kernel reads its integers from, which took the value
+  modulo the width and said nothing: `big / 3`, `big > 100` and `big * 1.0`
+  answered from a negative number, while `+` and `*` came out right and hid it.
+  Such a capture is a uint64 now -- the width CArray has for those values --
+  and a value neither an int64 nor a uint64 holds is refused where the capture
+  is read, naming the value.
+
+- Fix: a C declaration written with `ptrdiff_t` compiles. `size_t` and the
+  other `<stddef.h>` names have read since 0.1.0, but the C generated for a
+  body that took one declared no such type, so `CArray.jit_function("ptrdiff_t
+  (*)(ptrdiff_t)")` failed in the C compiler with `unknown type name`.
+  `size_t` was unaffected, by luck rather than by design.
+
+- Fix: two inner loops in one body may both be written `{ |k| ... }`. They
+  are one name in the block and were one index here, so the second loop's
+  range replaced the first's and a reach was checked against the wrong one --
+  `a[k-1]` in a loop from 1 was refused for starting at 0 once a later loop
+  started there. Each loop now counts in an identifier of its own, and the
+  messages go on speaking the name the block wrote.
+
+- Fix: a block holding a character outside ASCII no longer raises. The file a
+  block sits in was read with `File.read`, which uses
+  `Encoding.default_external` -- a setting that has nothing to do with a
+  source's encoding: on a machine with no locale set it is US-ASCII, and the
+  file came back as its own bytes under a tag that the first `rstrip` on a
+  line holding a comment in Japanese raised on. The file is now read as bytes
+  and given the encoding the parser gave it: UTF-8, or what a `coding` magic
+  comment names on the first line or on the second where a shebang takes the
+  first.
+
 
 ## 0.1.2
 
