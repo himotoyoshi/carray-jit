@@ -18,6 +18,7 @@ installed. Every example here runs as written.
 | An index repeats and is *not* summed -- a point number, a batch | `CArray.jit_contract(:p)`, naming the result's axes |
 | Call a C function someone else compiled | `CArray.jit_extern` |
 | Compile a C function of your own | `CArray.jit_function` |
+| Compile a body and call it where it stands, on the locals around it | `CArray.jit_call` |
 | Draw random numbers inside a kernel | `CArray::Rng` + `r.random` |
 | Bring a scalar in from outside, or accumulate into one | `CScalar` -- `s[]` is the value |
 
@@ -234,8 +235,24 @@ CArray.jit_each { out = j0.call(x) }
 it directly rather than reaching it per cell through Fiddle. `from:` names the
 library; `nil` searches the process. `jit_function` compiles a body of your
 own, callable from a kernel, from Ruby, and by a C library that knows nothing
-about either -- and from another `jit_function` body, which is the one thing
-such a body may reach outside its parameters.
+about either -- and from another `jit_function` body. That and a function
+borrowed with `jit_extern`, which the generated file declares and calls by
+name, are the two things such a body may reach outside its parameters.
+
+```ruby
+values = CArray.double(8) { |i| i }
+out    = CArray.double(8)
+n      = values.elements
+
+CArray.jit_call("void (*)(double *out, const double *values, size_t n)") {
+  n.times { |i| out[i] = values[i] * 2.0 }
+}
+```
+
+`jit_call` compiles the block and calls it there and then. The declaration's
+parameter names are the binding: `out`, `values` and `n` are the body's
+parameters and the locals around the call, so there is no argument list to keep
+in step. Compiled once per call site.
 
 A signature is written in C's own spellings: `float` and `double`, the
 exact-width integers `int8_t`..`int64_t` and `uint8_t`..`uint64_t`, and the
@@ -315,6 +332,7 @@ declare `int64_t state[4]` there and pass `rand.state`.
 | `jit_contract` | a new `CArray`, or the `CompiledKernel` when the block assigns |
 | `jit_extern` | `CFunction` |
 | `jit_function` | `CFunction` |
+| `jit_call` | what the function answered, or `nil` where it returns `void` |
 
 Every `CompiledKernel` answers `#c_source` with the C that ran.
 
@@ -324,6 +342,7 @@ Every `CompiledKernel` answers `#c_source` with the C that ran.
 |---|---|
 | `fuse` | works -- CArray walks it, same answer |
 | the six kernel forms and `jit_function` | `CArray::JIT::Unsupported` |
+| `jit_call` | the same, unless a provider answers the site |
 | `jit_extern` | works -- it compiles nothing |
 
 That is what the prefix says. A block outside the subset is refused by name and
