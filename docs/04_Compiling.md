@@ -67,7 +67,7 @@ In `~/.cache/carray-jit` (honouring `XDG_CACHE_HOME`), one directory per version
 
 A kernel is only good for the version that generated it and the architecture it was built for, so those get their own directories. CArray's version is there for the same reason and one of its own: a kernel is handed CArray's memory, on layouts CArray decides, so one compiled against one version and run against the next would answer wrongly rather than fail to load.
 
-The two numbers say different things and move on their own clocks: the first is the version that generated the kernel, the second the version it was generated against. This gem is not versioned with CArray, and one release of it meets more than one -- the dependency is `>= 3.0.1, < 3.1`, so 3.0.1 and 3.0.4 both satisfy it -- and a layout the kernel reaches into can move between them. A new release does not spend its cache budget on entries nothing can reach any more, and a home directory shared between machines -- over NFS, or between Rosetta and native -- does not have one architecture evicting the other's kernels. A directory whose newest entry has not been touched in 30 days (`CARRAY_JIT_CACHE_MAX_AGE_DAYS`) is removed.
+The two numbers say different things and move on their own clocks: the first is the version that generated the kernel, the second the version it was generated against. This gem is not versioned with CArray, and one release of it meets more than one -- the dependency is `>= 3.0.2, < 3.1`, so 3.0.2 and 3.0.4 both satisfy it -- and a layout the kernel reaches into can move between them. A new release does not spend its cache budget on entries nothing can reach any more, and a home directory shared between machines -- over NFS, or between Rosetta and native -- does not have one architecture evicting the other's kernels. A directory whose newest entry has not been touched in 30 days (`CARRAY_JIT_CACHE_MAX_AGE_DAYS`) is removed.
 
 ```ruby
 CArray::JIT.cache_root                 #=> "/home/you/.cache/carray-jit"
@@ -221,6 +221,31 @@ carray_jit_contiguous (char **pointers, int64_t *strides, int64_t *bounds, ...)
 | `CARRAY_JIT_CACHE_MAX_AGE_DAYS` | Days an unused environment's directory is kept (default 30) |
 | `CARRAY_JIT_CC` | C compiler (default `RbConfig::CONFIG["CC"]`) |
 | `CARRAY_JIT_REASSOCIATE` | `0` makes the serial accumulator the default for the process |
+
+## A site answered from somewhere else
+
+A `CArray.jit_call` site (see [Compiling a body where it is called](03_SupportedFeatures.md#compiling-a-body-where-it-is-called)) names a function by its declaration and takes its arguments from the locals around it. Nothing in that says the function has to be compiled here, and the first thing asked at a site is whether something else already has one:
+
+```ruby
+CArray::JIT.call_provider = ->(prototype, block, names) {
+  LIBRARY.lookup(prototype, block) # or nil
+}
+```
+
+What it is handed is the prototype, the block -- whose binding says which method and which module the site is in -- and the names the declaration gave. What it answers is anything that responds to `call`, or `nil`, which means "not mine, compile it" and is the position `jit_extern` puts a function from a library in, said about a call rather than about a name. The answer is kept for that site like any other, so a provider is asked once per site.
+
+This is what `require "carray/jit/call"` is for. It defines `CArray.jit_call` and the declaration's parser and stops there; the compiler -- the analyzer, the generator, the cache -- is required at the first site no provider answers, and not before. A program whose sites were all built ahead of it therefore never loads it. `require "carray/jit"` loads everything as it always did, and a program that knows nothing about any of this sees no difference.
+
+The other half of building ahead is getting the C out, which is `c_source_as`:
+
+```ruby
+square = CArray.jit_function("double sq(double x)") { |x| x * x }
+File.write("kernels.c", square.c_source_as(:my_square))
+```
+
+`c_source` is the source as this compiler wrote it, under the symbol it picked -- `carray_jit_sq_1c42612898e4`, a digest of the body, which is right for an object in a cache and wrong for one committed to a repository, where the name would change every time the body was touched. `c_source_as` writes the same body under a name the caller picked. A name C cannot spell is refused, and so is one in this compiler's own `carray_jit_` namespace, where a cached kernel is entitled to the name; a name the C library already has is the caller's to avoid, the prefix that closed that hazard being what is replaced. A function bound with `jit_extern` has no C of its own and says so.
+
+carray-jit-aot is the gem these were built for: it reads the call sites out of a program, compiles them into one shared object, and answers as the provider at run time. They are here rather than there because a gem reaching into another's method to change what it does is the arrangement that breaks quietly.
 
 ## Testing
 

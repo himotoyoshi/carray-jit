@@ -919,7 +919,7 @@ class CArray
           end
           # A compiled function may already exist somewhere other than this
           # compiler's cache: built ahead of the program and shipped in a
-          # shared object, which is what carray-aot does with these same call
+          # shared object, which is what carray-jit-aot does with these same call
           # sites.  A provider is asked before anything is compiled and
           # answers nil for a site that is not its own -- the same position
           # `jit_extern` puts a function from a library in, said about a call
@@ -961,7 +961,7 @@ class CArray
       # module the site is in -- and the names the declaration gave.  What it
       # answers is anything that responds to `call`.
       #
-      # There is one client and it is carray-aot, which builds these same
+      # There is one client and it is carray-jit-aot, which builds these same
       # sites into a shared object ahead of the program; a machine running
       # that gem then reaches no compiler.  Left here rather than patched in
       # from there, because a gem reaching into another's method to change

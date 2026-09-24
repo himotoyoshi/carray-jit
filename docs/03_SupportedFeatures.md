@@ -941,7 +941,7 @@ The name may be a constant as well as a local, and for a method there is no othe
 
 Which is what the error slot buys here too. `root` reports a failure, so the copy pasted into `hypot` takes the caller's slot, and `hypot`'s own copy takes its caller's -- however deep it goes, and whether the top of it is a kernel or a `#call` from Ruby. So `hypot.call(3.0, 4.0)` is `5.0`, and a body that hands `root` a negative raises the string `root` wrote, at whatever depth it was reached.
 
-This is the one thing a body may reach outside its parameters, and the next section says why it is not really an exception.
+A body reaches outside its parameter list in two places only -- this one, and a function borrowed with `jit_extern` -- and the next section says why neither is really an exception.
 
 #### A call may stand alone
 
@@ -972,9 +972,11 @@ A recursion is written the same way, which is what a body walking an array wants
 
 #### Its parameters are its whole surface
 
-A compiled function may not reach anything outside its parameter list -- not a number, not an array, not a function borrowed with `jit_extern`. A captured number could be written into the C as a literal and a borrowed function's address as a constant, but either would put something in the compiled object that no cache key covers, and an object built for one capture would be handed back for another. The borrowed one has a second reason: an address is all there is of it, and there is nowhere in a compiled object to keep one. A kernel is handed its addresses at call time; a function has no such moment.
+A compiled function may not reach anything outside its parameter list -- not a number, not an array. A captured number could be written into the C as a literal, but that would put something in the compiled object that no cache key covers, and an object built for one capture would be handed back for another.
 
-A function compiled here is the exception, and stays inside the rule that produced the restriction: what goes into the caller is the callee's body and the symbol standing over it, and that symbol -- which carries the digest of the body -- goes into the key. So two blocks spelled the same that call different functions are two functions, which is the whole of what the key had to settle.
+A function compiled here is the first of the two, and stays inside the rule that produced the restriction: what goes into the caller is the callee's body and the symbol standing over it, and that symbol -- which carries the digest of the body -- goes into the key. So two blocks spelled the same that call different functions are two functions, which is the whole of what the key had to settle.
+
+A function borrowed with `jit_extern` is reached by the other route, and it is the name rather than the address. An address is all a borrowed function has for a kernel, and there is nowhere in a compiled object to keep one -- but a name is what the declaration states and what a linker or a loader resolves, and `jit_extern` opened the library to find the function, so the symbol is in the process by the time the body is compiled. The generated file declares it, `double j0(double);`, and calls it by that name, which the key already covers as one of the symbols the body calls. A kernel is unchanged: it takes the address through its buffer, which is what a kernel has and a body has not. A file built ahead of the program links the library the usual way, and one that is not linked by default is the caller's to add.
 
 Two things fall out, and they are worth more than the restriction costs. The first is that `[source, return type, parameter types, the symbols it calls]` is a complete key: nothing else reaches the compiled object, so the body's text settles which function it is. The second is that the compiled object is **pure C** -- it touches no Ruby value and references no Ruby symbol, so the address is safe to call from a thread that holds no GVL, and from a library that knows nothing about Ruby. That is more than a Ruby-defined callback usually manages.
 
@@ -1058,6 +1060,34 @@ So the kernel depends on the **signature**, not the symbol, and one compiled ker
 A body pasted into the kernel is the other way round. It is *in* the kernel, so the kernel is that body's as much as it is the block's, and two bodies that happen to be declared the same way have to be two kernels -- keyed on the symbol, which carries a digest of the text. Sharing one would hand the second function the first one's answer, and say nothing about it.
 
 The other side of that: the address has to arrive with the call rather than with the kernel, and a wrong prototype is undefined behaviour rather than a compile error -- the declaration is trusted, exactly as `Fiddle::Function` trusts it. What is checked is the arity at the call site, and the types the prototype names: a pointer return has no cell to live in and is refused by name, and a `void` one is refused wherever a value is wanted -- which is everywhere but the statement position above.
+
+#### Compiling a body where it is called
+
+`jit_function` hands back a function and the caller writes out the arguments. `CArray.jit_call` does both at once, at the site:
+
+```ruby
+def moving_average (values, window)
+  n = values.elements
+  out = CArray.double(n)
+  CArray.jit_call("void (*)(double *out, const double *values, " \
+                  "size_t n, size_t window)") {
+    n.times { |i|
+      total = 0.0
+      window.times { |k| total = total + values[i - k < 0 ? 0 : i - k] }
+      out[i] = total / window
+    }
+  }
+  out
+end
+```
+
+The declaration's parameter names are the join, and they do the work twice over: they are the body's parameters, so the block declares none, and they name the locals around the call the values come from -- `out`, `values`, `n` and `window` are read out of the method at the moment the call is made. In C a parameter's name in a prototype is decoration; here it is the whole binding. A declared name with no local behind it is refused at the call, by name, rather than read as a `nil` inside the body, and a declaration that leaves a parameter unnamed is refused for the same reason: there is nothing to bind by.
+
+What this saves over `jit_function` and a `call` is the argument list, which restates the declaration in an order nothing checks. What it costs is reading those locals through the block's binding, about 0.3 microseconds against a call that costs several -- so the body it suits is one that does a loop's worth of work per call, which is what a `void` function over whole arrays already is.
+
+What is inside the block is what `jit_function` compiles, under the same rules: the same subset, the same local arrays, the same error slot, and the same refusal for a name it closes over that the declaration did not name. What differs is where the compiled function is kept. It is kept per call site rather than per block -- a block literal is a fresh Proc every time the line runs, but the instruction sequence behind it belongs to the site -- so the second pass through the method is a lookup, and `CArray::JIT.clear_registry` reaches these as it reaches the rest.
+
+A site may also be answered by a function somebody else compiled, in which case nothing here is asked to compile anything; see [A site answered from somewhere else](04_Compiling.md#a-site-answered-from-somewhere-else).
 
 ## The recognized subset
 

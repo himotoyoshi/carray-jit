@@ -20,7 +20,7 @@ A block that steps outside the subset is refused, by name and with a line number
 
 A kernel reads and writes CArray arrays directly, in the memory CArray already holds them in. The arrays are the ones the block closes over, so nothing is named twice. Views are cells like any other — a column, a transpose, a slice of a slice — and are written in place without a copy. Masks propagate as CArray propagates them, and a kernel can ask whether a cell is missing.
 
-A kernel can also call C. `jit_extern` binds a function from any library Fiddle can open, and the kernel calls it at its address rather than reaching it per cell through Fiddle; `jit_function` compiles one from a Ruby block of your own and hands back a pure C function pointer, which a kernel can call, Ruby can call, and a C library that knows nothing about either can be given.
+A kernel can also call C. `jit_extern` binds a function from any library Fiddle can open, and the kernel calls it at its address rather than reaching it per cell through Fiddle; `jit_function` compiles one from a Ruby block of your own and hands back a pure C function pointer, which a kernel can call, Ruby can call, and a C library that knows nothing about either can be given. `jit_call` compiles such a body and calls it where it stands, taking its arguments from the locals around it.
 
 Compiling costs something the first time and nothing afterwards: the shared object is cached on disk, keyed by the generated C and the compiler that built it, so a kernel is compiled once and reused by every later run.
 
@@ -33,7 +33,7 @@ Installing this gem also puts the compiler behind `CArray.fuse`. An array expres
 * [Getting started](01_GettingStarted.md) — the block, its extents, what the three methods return, and where a kernel stands beside `a + b * c` and `CArray.fuse`
 * [The shapes a kernel takes](02_KernelShapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and contraction over a repeated index
 * [Supported features](03_SupportedFeatures.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
-* [Compiling, caching and inspecting](04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
+* [Compiling, caching and inspecting](04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, a call site answered from somewhere else, and what the suite checks
 * [Design notes](05_DesignNotes.md) — decisions that were not obvious, and why
 * [Cheatsheet](06_Cheatsheet.md) — the eight `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
 * [31 exercises, with solutions](07_StepByStep.md) — thirty-one small tasks in the order this guide introduces things, each with its solution and what it answers ([日本語](07_StepByStep.ja.md))
