@@ -387,4 +387,67 @@ class TestErrorWindow < Minitest::Test
     f&.on_error(nil)
   end
 
+
+  # ---------- a window is the thread's ----------
+
+  # The flag and the hook are `_Thread_local`, because the compiled object is
+  # shared whether or not anybody meant to share it: two blocks with the same
+  # text are one function, so a program that never mentions threads can still
+  # have two windows open on one body.
+
+  def test_the_flag_is_declared_per_thread
+    f = raising_below_zero
+    assert_match(/_Thread_local int32_t carray_jit_error = 0;/, f.c_source)
+    assert_match(/_Thread_local void \(\*carray_jit_on_error\)/, f.c_source)
+  end
+
+  def test_a_window_does_not_see_another_thread_s_failure
+    f = raising_below_zero
+    raw = foreign(f)
+    opened = Queue.new
+    closing = Queue.new
+    other = Thread.new do
+      f.watching do
+        opened << :open
+        closing.pop
+        # Nothing this thread called ever went below zero.
+        assert_equal(4.0, raw.call(2.0))
+      end
+      :no_failure
+    rescue RuntimeError => error
+      error.message
+    end
+    opened.pop
+    # A second window on the same body, in this thread, failing.
+    error = assert_raises(RuntimeError) { f.watching { raw.call(-1.0) } }
+    assert_equal("x is negative", error.message)
+    closing << :close
+    assert_equal(:no_failure, other.value)
+  end
+
+  def test_a_flag_raised_in_one_thread_is_not_read_in_another
+    f = always_raising
+    f.clear_error
+    Thread.new do
+      f.clear_error
+      foreign(f).call(1.0)
+      assert_raises(RuntimeError) { f.report_error }
+    end.join
+    assert_nil(f.report_error)
+  end
+
+  def test_a_hook_belongs_to_the_thread_that_set_it
+    f = raising_below_zero
+    data = counter
+    f.on_error(counting_hook.pointer, data)
+    Thread.new do
+      assert_raises(RuntimeError) { f.watching { foreign(f).call(-1.0) } }
+    end.join
+    assert_equal(0, count_of(data))
+    assert_raises(RuntimeError) { f.watching { foreign(f).call(-1.0) } }
+    assert_equal(1, count_of(data))
+  ensure
+    f&.on_error(nil)
+  end
+
 end

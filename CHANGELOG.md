@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: the flag a lent body reports through, and the hook `CFunction#on_error`
+  sets, belong to the thread rather than to the compiled object, so two
+  threads lending one body no longer read each other's failures -- which
+  two separately written blocks with the same text do without meaning to.
+  `#watching`, `#on_error`, `#clear_error` and `#report_error` are unchanged;
+  what moves is where a hook is set, which is now the thread that will lend
+  the address. A library that calls the body from threads of its own is
+  outside the window.
+
 - Fix: a `jit_function` body that calls a function borrowed with
   `jit_extern` from a library other than libm now links on macOS, where it
   failed with "Undefined symbols". Nothing changes elsewhere: Linux linked

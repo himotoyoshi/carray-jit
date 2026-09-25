@@ -550,7 +550,12 @@ class CArray
           lines = lines.gsub("#{body_symbol}(", "#{name}(")
           value = value&.gsub("#{body_symbol}(", "#{name}(")
         end
-        flag = wrapped ? error_flag_declaration + error_hook_declaration : ""
+        flag = if wrapped
+                 error_flag_declaration + error_hook_declaration +
+                   error_state_accessor
+               else
+                 ""
+               end
         # Kept apart from the file it is compiled in: the definition alone is
         # what a kernel pastes into its own translation unit, where the
         # includes are already written and the helpers are shared.
@@ -579,9 +584,25 @@ class CArray
         "/* Called once, by the call whose body put the flag up -- so a\n" \
         "   library that goes on calling can be told to stop (NLopt's\n" \
         "   nlopt_force_stop) rather than be handed stand-ins until it is\n" \
-        "   done.  Set by CFunction#on_error; null until then. */\n" \
-        "void (*#{ERROR_HOOK}) (void *) = 0;\n" \
-        "void *#{ERROR_HOOK_DATA} = 0;\n\n"
+        "   done.  Set by CFunction#on_error; null until then.  Per thread,\n" \
+        "   for the reason the flag beside it is. */\n" \
+        "#{THREAD_LOCAL}void (*#{ERROR_HOOK}) (void *) = 0;\n" \
+        "#{THREAD_LOCAL}void *#{ERROR_HOOK_DATA} = 0;\n\n"
+      end
+
+      # Where a thread's copy of the three above stands.  A thread-local has
+      # no address the loader can hand out -- `dlsym` answers for the symbol,
+      # not for any one thread's copy of it -- so Ruby asks the object itself,
+      # from the thread whose window it is.
+      ERROR_STATE = "carray_jit_error_state".freeze
+
+      def error_state_accessor
+        "/* The three above, for the calling thread, in that order.  Called\n" \
+        "   from Ruby once per thread that opens a window on this body. */\n" \
+        "void\n#{ERROR_STATE} (void **out)\n{\n" \
+        "  out[0] = (void *) &#{ERROR_FLAG};\n" \
+        "  out[1] = (void *) &#{ERROR_HOOK};\n" \
+        "  out[2] = (void *) &#{ERROR_HOOK_DATA};\n}\n\n"
       end
 
       # The entry point the address is, for a body that can fail.  It turns
@@ -660,18 +681,23 @@ class CArray
           :floor_modulo => @uses_floor_modulo }
       end
 
-      # One per compiled object, so two functions never share it, and zeroed
-      # by whoever is about to look -- the same discipline the kernel's own
-      # error slot keeps.  It is written only where the value returned is
-      # already a stand-in, so a caller that never looks is no worse off than
-      # C leaves it.
+      # Per compiled object and per thread, and zeroed by whoever is about
+      # to look -- the same discipline the kernel's own error slot keeps.  It
+      # is written only where the value returned is already a stand-in, so a
+      # caller that never looks is no worse off than C leaves it.
+      #
+      # `_Thread_local` because a window is one thread's: the object is shared
+      # whether or not anybody meant to share it -- two blocks with the same
+      # text compile to one body -- and a single flag between two threads is a
+      # window neither of them can read.  It costs about half a nanosecond a
+      # call, measured, and only a body that can fail has one at all.
       def error_flag_declaration
         "/* Standing at 1 when a division had no divisor, and at the code of\n" \
         "   a `raise` in the body where one was reached -- the numbers a\n" \
         "   kernel reports through its own slot, with the same meanings.  A\n" \
         "   subscript on a pointer parameter is not checked here and does not\n" \
         "   appear: it is the caller's business, as it is in C. */\n" \
-        "int32_t #{ERROR_FLAG} = 0;\n\n"
+        "#{THREAD_LOCAL}int32_t #{ERROR_FLAG} = 0;\n\n"
       end
 
       # The same kernel, wrapped so carray can drive it.
@@ -3008,6 +3034,12 @@ class CArray
       GAMMA_TABLE_LIMIT = 23
 
       ERROR_FLAG = "carray_jit_error"
+
+      # The storage class the flag and the hook beside it are declared with.
+      # C11's, which is what every compiler this gem drives is given; MSVC's
+      # `__declspec(thread)` is not written here because the build flags are
+      # already gcc's and cl has never been one of them.
+      THREAD_LOCAL = "_Thread_local ".freeze
 
       # A computation type this generator has no C for.  Nothing reaches here
       # today -- every type TypeAssignment can assign is named at each of the
