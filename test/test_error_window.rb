@@ -760,4 +760,22 @@ class TestErrorWindow < Minitest::Test
     assert_match(/out\[3\] = \(void \*\) &carray_jit_standin;/, f.c_source)
   end
 
+  # One object per body is what the cache makes, and what a fixed name
+  # assumed.  carray-jit-aot takes the C and links several bodies into one
+  # library, where a fixed name is a duplicate symbol and the link fails --
+  # so the four the window reads are `static`, and the one function that
+  # answers for them wears the body's own name.
+  def test_only_the_accessor_leaves_the_object_and_it_is_named_for_the_body
+    f = raising_below_zero
+    generator = CArray::JIT::CGenerator
+    [generator::ERROR_FLAG, generator::ERROR_HOOK,
+     generator::ERROR_HOOK_DATA, generator::ERROR_STANDIN].each do |name|
+      assert_match(/^static _Thread_local [^\n]*\b#{name}\b/, f.c_source,
+                   "#{name} is exported")
+    end
+    accessor = generator.error_state_name(f.symbol)
+    assert_match(/^void\n#{accessor} \(void \*\*out\)$/, f.c_source)
+    refute_match(/^void\ncarray_jit_error_state \(/, f.c_source)
+  end
+
 end
