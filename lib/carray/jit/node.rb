@@ -153,6 +153,21 @@ class CArray
       end
     end
 
+    # Whether a pointer parameter was handed an address at all: `grad.nil?`,
+    # `grad == nil`, and `if grad` where a condition is read.  A callback's
+    # caller decides that per call -- NLopt hands a derivative-free method's
+    # objective no gradient to fill -- so it is a question the body asks,
+    # not one the declaration can settle.  `null` is true for the spelling
+    # that asks whether it is missing.
+    class PointerTest < Node
+      attr_reader :name, :null
+      def initialize (name, null, location = nil)
+        super(location)
+        @name = name
+        @null = null
+      end
+    end
+
     # Zero of whatever type another expression has.
     #
     # A sum has to start from a zero of the summand's type: start it from an

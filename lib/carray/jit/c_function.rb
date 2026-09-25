@@ -1154,10 +1154,12 @@ class CArray
           raise Unsupported,
                 (if type.indexable?
                    "`#{loose}` is declared `#{type.text}`, which is a pointer; " \
-                   "index it, as in `#{loose}[0]`"
+                   "index it, as in `#{loose}[0]`, or ask whether one came, " \
+                   "as in `if #{loose}` or `#{loose}.nil?`"
                  else
                    "`#{loose}` is declared `#{type.text}`, which is a slot in " \
-                   "the signature rather than a value; the body cannot read it"
+                   "the signature rather than a value; the body cannot read " \
+                   "it, only ask whether it was filled, as in `#{loose}.nil?`"
                  end)
         end
         # A parameter of any computation type the body can work in, uint64

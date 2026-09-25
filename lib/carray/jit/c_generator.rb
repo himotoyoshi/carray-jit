@@ -2480,7 +2480,7 @@ class CArray
                      "#{emit_mask(node.consequent)} : #{emit_mask(node.alternative)}"
           combine_masks([emit_mask(node.condition), "(#{branches})"])
         when IntegerLiteral, FloatLiteral, IndexVariable, CaptureRead, MaskTest,
-             LocalArrayMaskTest, BoundsValue, ZeroLike
+             LocalArrayMaskTest, PointerTest, BoundsValue, ZeroLike
           "0"
         else
           combine_masks(node.children.map { |child| emit_mask(child) })
@@ -3207,6 +3207,8 @@ class CArray
         when MaskTest         then emit_mask_test(node)
         when LocalArrayMaskTest then emit_local_array_mask_test(node)
         when NumericPredicate then emit_numeric_predicate(node)
+        when PointerTest
+          ["#{node.name} #{node.null ? '==' : '!='} NULL", PRECEDENCE.fetch(:==)]
         when Clamp            then emit_clamp(node)
         when UnaryMinus
           operand, precedence = emit_raw(node.operand)

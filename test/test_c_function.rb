@@ -1239,6 +1239,64 @@ class TestCFunction < Minitest::Test
     assert_bits_equal(7.0, f.call(CArray.double(1) { 7.0 }))
   end
 
+  # NLopt hands a derivative-free method's objective a NULL gradient, and a
+  # gradient-based one an array to fill; which it is comes with the call.
+  # The body asks, in the spellings Ruby answers the same way for nil.
+  NLOPT_OBJECTIVE = "double (*)(uint32_t n, const double *x, double *grad, void *data)"
+
+  def test_a_pointer_parameter_may_be_asked_whether_it_came
+    bodies = [
+      CArray.jit_function(NLOPT_OBJECTIVE) { |n, x, grad, data|
+        if grad
+          grad[0] = 2.0 * x[0]
+        end
+        x[0] * x[0]
+      },
+      CArray.jit_function(NLOPT_OBJECTIVE) { |n, x, grad, data|
+        if !grad.nil?
+          grad[0] = 2.0 * x[0]
+        end
+        x[0] * x[0]
+      },
+      CArray.jit_function(NLOPT_OBJECTIVE) { |n, x, grad, data|
+        if n > 0 && grad != nil
+          grad[0] = 2.0 * x[0]
+        end
+        x[0] * x[0]
+      },
+    ]
+    x = CArray.double(1) { 3.0 }
+    bodies.each do |f|
+      assert_bits_equal(9.0, f.call(1, x, nil, nil))
+      grad = CArray.double(1)
+      assert_bits_equal(9.0, f.call(1, x, grad, nil))
+      assert_bits_equal(6.0, grad[0])
+      assert_bits_equal(9.0, f.block.call(1, x, nil, nil))
+    end
+    assert_includes bodies.last.c_source, "grad != NULL"
+  end
+
+  def test_the_test_is_a_value_where_a_condition_is_read
+    f = CArray.jit_function(NLOPT_OBJECTIVE) { |n, x, grad, data|
+      (grad ? 1.0 : 0.0) + (data.nil? ? 10.0 : 20.0)
+    }
+    x = CArray.double(1)
+    assert_bits_equal(10.0, f.call(1, x, nil, nil))
+    assert_bits_equal(11.0, f.call(1, x, CArray.double(1), nil))
+    assert_bits_equal(10.0, f.block.call(1, x, nil, nil))
+  end
+
+  def test_a_bare_pointer_outside_a_condition_is_still_refused
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function(NLOPT_OBJECTIVE) { |n, x, grad, data|
+        g = grad
+        x[0]
+      }
+    end
+    assert_match(/index it, as in `grad\[0\]`, or ask whether one came/,
+                 error.message)
+  end
+
   # The caller is held to the declared length and no more, so a literal
   # subscript past it reaches memory no one promised.  Nothing needs to run
   # to see that, and it is refused as the body is read -- for a write, a

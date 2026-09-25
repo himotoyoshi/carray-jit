@@ -37,6 +37,15 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
+## 0.1.4 (unreleased)
+
+- New: a `jit_function` body may ask whether a pointer parameter was handed
+  an address -- `if grad`, `grad.nil?`, `grad == nil`, `grad != nil` -- and
+  `f.call` passes `nil` there as `NULL`. This is what a callback needs where
+  the caller leaves a pointer out per call, as NLopt does with the gradient
+  under a derivative-free method. A bare pointer name outside a condition is
+  still refused, and a `void *` may be asked but not reached through.
+
 ## 0.1.3
 
 - New: `CArray::JIT.call_provider` is asked at a `jit_call` site before

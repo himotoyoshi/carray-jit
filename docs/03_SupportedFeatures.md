@@ -1020,6 +1020,25 @@ poly.block.call(2.0, coef)   # in Ruby, same bits
 
 A `void *` stays a slot, because it points at nothing in particular: it takes its place in the signature -- which is what makes `gsl_function` sayable -- and the body may not reach through it.
 
+#### Asking whether an address came
+
+Some callers decide per call whether a pointer is there at all. NLopt hands an objective a gradient to fill when the method uses one and `NULL` when it does not, so a body that writes `grad[0]` unconditionally writes through `NULL` under a derivative-free method. The body asks first, in the spellings Ruby answers the same way for `nil`:
+
+```ruby
+objective = CArray.jit_function(
+  "double (*)(uint32_t n, const double *x, double *grad, void *data)"
+) { |n, x, grad, data|
+  if grad                       # grad.nil?, grad == nil and grad != nil read too
+    grad[0] = 2.0 * x[0]
+  end
+  x[0] * x[0]
+}
+
+objective.call(1, x, nil, nil)    # nil arrives as NULL
+```
+
+A bare pointer name is read as the question only where a condition is read -- `if`, `while`, `?:`, and `!`, `&&` and `||` inside one -- because that is where Ruby's truthiness is the question. Anywhere else a pointer is still not a value, and `g = grad` is refused as before. A `void *` may be asked too: whether a slot was filled is a question about the slot, not a reach through it. `f.block.call` takes `nil` in the same place and runs the same branch.
+
 A kernel can hand one of its own arrays over the same way:
 
 ```ruby
