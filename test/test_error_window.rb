@@ -299,4 +299,92 @@ class TestErrorWindow < Minitest::Test
     assert_equal(6.0, foreign(g).call(3.0))
   end
 
+  # ---------- a hook for the one who holds the address ----------
+
+  # What a library would be told to stop with, counted.  A compiled
+  # function is as good a `void (*)(void *)` as any: the ABI is the same.
+  def counting_hook
+    CArray.jit_function("void (*)(int32_t *count)") { |c| c[0] = c[0] + 1 }
+  end
+
+  def counter
+    Fiddle::Pointer.malloc(4).tap { |data| data[0, 4] = [0].pack("l") }
+  end
+
+  def count_of (data)
+    data[0, 4].unpack1("l")
+  end
+
+  def test_the_hook_is_called_once_by_the_failing_call
+    f = raising_below_zero
+    data = counter
+    f.on_error(counting_hook.pointer, data)
+    raw = foreign(f)
+    error = assert_raises(RuntimeError) do
+      f.watching { [1.0, -1.0, -2.0, 3.0].each { |x| raw.call(x) } }
+    end
+    assert_equal("x is negative", error.message)
+    assert_equal(1, count_of(data))
+  ensure
+    f&.on_error(nil)
+  end
+
+  def test_the_hook_is_called_again_once_the_flag_was_put_down
+    f = raising_below_zero
+    data = counter
+    f.on_error(counting_hook.pointer, data)
+    raw = foreign(f)
+    2.times do
+      assert_raises(RuntimeError) { f.watching { raw.call(-1.0) } }
+    end
+    assert_equal(2, count_of(data))
+  ensure
+    f&.on_error(nil)
+  end
+
+  def test_a_call_from_ruby_answers_by_raising_and_not_through_the_hook
+    f = raising_below_zero
+    data = counter
+    f.on_error(counting_hook.pointer, data)
+    assert_raises(RuntimeError) { f.call(-1.0) }
+    assert_equal(0, count_of(data))
+    assert_raises(RuntimeError) { f.watching { foreign(f).call(-1.0) } }
+    assert_equal(1, count_of(data))
+  ensure
+    f&.on_error(nil)
+  end
+
+  def test_no_hook_is_called_once_it_is_taken_away
+    f = raising_below_zero
+    data = counter
+    f.on_error(counting_hook.pointer, data)
+    f.on_error(nil)
+    assert_raises(RuntimeError) { f.watching { foreign(f).call(-1.0) } }
+    assert_equal(0, count_of(data))
+  end
+
+  def test_a_body_that_cannot_fail_accepts_a_hook_and_never_calls_it
+    f = CArray.jit_function("double (*)(double x)") { |x| x * 3.0 }
+    data = counter
+    assert_same(f, f.on_error(counting_hook.pointer, data))
+    assert_equal(6.0, foreign(f).call(2.0))
+    assert_equal(0, count_of(data))
+  end
+
+  # The hook is outside the body, so a recursive body reaches itself
+  # directly and the one call Ruby or a library made is the one that asks.
+  def test_a_recursive_body_calls_itself_and_not_the_entry_point
+    f = CArray.jit_function("double down(double n)") { |n|
+      raise "reached the bottom" if n < 0.0
+      n + down.call(n - 1.0)
+    }
+    data = counter
+    f.on_error(counting_hook.pointer, data)
+    assert_raises(RuntimeError) { f.watching { foreign(f).call(3.0) } }
+    assert_equal(1, count_of(data))
+    assert_match(/_body\(n - 1\.0\)/, f.c_source)
+  ensure
+    f&.on_error(nil)
+  end
+
 end

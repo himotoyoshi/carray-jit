@@ -852,6 +852,20 @@ A window may be opened inside a window, and `#call` may be made inside one: both
 
 One flag per compiled object, so two functions never share a window. Threads do share one, though: the flag is a single `int32_t` beside the body, so lending the same function to two threads at once is not a window that can be made to mean anything. That is C's bargain again, taken along with `void *params`.
 
+#### Telling the holder to stop
+
+The stand-in keeps a library from converging on fiction, but it does not stop the library: an optimizer given a large `maxeval` goes on calling to the end, each call turned away at the top. `#on_error` gives the body a C function to call when it fails, so that whoever holds the address can be told:
+
+```ruby
+nlopt = Fiddle::Handle.new("libnlopt.dylib")
+f.on_error(nlopt["nlopt_force_stop"], opt)   # void nlopt_force_stop(nlopt_opt)
+f.watching { nlopt_optimize.call(opt, x, minf) }
+```
+
+The hook is any `void (*)(void *)` -- an address as a `Fiddle::Pointer` or an Integer -- and the second argument is the one pointer it is called with. It is called once, by the call whose body put the flag up; every call after that is turned away before the body runs, so it is not called again until the flag has been put down and gone up again. It runs in C and reaches no Ruby value, as the body does not. `on_error(nil)` takes it away.
+
+`#call` does not call it. That is one call made from Ruby, and it answers for itself by raising, as it does inside a window. A body that cannot fail has no flag to go up and is compiled without the hook; `on_error` is accepted there and never called, so a library binding can set it without asking which kind of body it was given. The hook belongs to the compiled object, like the flag.
+
 A float division is not this case: `1.0 / 0.0` is an infinity in Ruby, in C and here, so a body that only divides floats declares no flag and pays nothing for one. Neither is a subscript on a pointer parameter, which is unchecked by design -- the caller's business, as it is in C. The one exception needs nothing to run: a literal subscript outside a length the declaration gave -- `v[7]` or `v[-1]` against `double v[2]` -- is refused as the body is read, since the caller is held to that many cells and no more.
 
 A complex is a type a declaration may be written in: `double _Complex`, `float _Complex`, and `<complex.h>`'s `double complex` for either of them, by value or as a pointer (`double _Complex v[]` takes a `cmplx128` array, as `double v[]` takes a `float64` one). A kernel calls such a function the way C calls it. A call from Ruby cannot go straight through Fiddle -- it has no type to carry a complex by value in -- so a function compiled here gets a second entry point beside it, taking each complex argument as the two doubles C99 lays one out as and writing a complex result back the same way. It calls the body rather than repeating it, so `f.call` and `f.block.call` are the same body run two ways, as they are for every other signature. A *borrowed* function declared with one has no such entry point, there being no source here to compile beside it: a kernel calls it, and `f.call` from Ruby says why it cannot.

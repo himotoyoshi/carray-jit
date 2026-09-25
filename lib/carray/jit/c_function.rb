@@ -113,7 +113,8 @@ class CArray
                       symbol: nil,
                       block: nil, c_source: nil, origin: nil, error: nil,
                       definition: nil, helpers: nil, takes_error: false,
-                      raise_messages: {}, dependencies: [], shim: nil)
+                      raise_messages: {}, dependencies: [], shim: nil,
+                      hook: nil)
         # The name the declaration gave, which is what a reader wrote and
         # what an error should say.  It is nil where the declaration gave
         # none -- `double (*)(double)` names no function.
@@ -149,6 +150,11 @@ class CArray
         # signature carries a complex by value; nil where it does not, which
         # is every other signature and every borrowed function.
         @shim = shim
+        # The two pointers beside the flag that #on_error writes, and what
+        # it was handed, held so that nothing it points at is collected while
+        # the C may still call it.  Nil where there is no flag.
+        @hook = hook
+        @hook_held = nil
         @function = nil
       end
 
@@ -324,6 +330,7 @@ class CArray
         # and so never touch the flag at all.
         outer = error_code
         write_error(0)
+        hook = disarm_hook
         begin
           Access.open(arrays.map { |_, buffer, _| buffer },
                       arrays.map { |_, _, type| !type.const },
@@ -338,6 +345,7 @@ class CArray
           code = error_code
         ensure
           write_error(outer)
+          rearm_hook(hook)
         end
         raise_for(code)
         # A view was copied to be made contiguous; a writable one is copied
@@ -384,6 +392,7 @@ class CArray
         }
         outer = error_code
         write_error(0)
+        hook = disarm_hook
         begin
           Access.open(arrays.map { |_, buffer, _| buffer },
                       arrays.map { |_, _, type| !type.const },
@@ -399,6 +408,7 @@ class CArray
           code = error_code
         ensure
           write_error(outer)
+          rearm_hook(hook)
         end
         raise_for(code)
         arrays.each do |array, buffer, type|
@@ -500,6 +510,36 @@ class CArray
         raise_for(error_code)
       end
 
+      # A C function to call when the body fails, so that whoever holds the
+      # address can be told to stop rather than go on being handed stand-ins:
+      #
+      #   f.on_error(nlopt["nlopt_force_stop"], opt)
+      #   f.watching { nlopt_optimize.call(opt, x, minf) }
+      #
+      # `hook` is the address of a `void (*)(void *)` -- a Fiddle::Pointer,
+      # an Integer, or anything answering #to_i -- and `data` is the one
+      # argument it is called with.  It is called once, from the call whose
+      # body put the flag up, and not again until the flag has been put down
+      # and has gone up again; nothing about it reaches Ruby, so it may be
+      # called from a thread that holds no GVL. `nil` takes it away.
+      #
+      # `#call` does not call it: that is one call made from Ruby, and it
+      # answers for itself by raising, as it does inside a window. A body
+      # that cannot fail has no flag to go up, so for it this is accepted
+      # and never called. Like the flag, it belongs to the compiled object,
+      # so a function that shares its body with this one shares the hook.
+      #
+      # Returns self.
+      def on_error (hook, data = nil)
+        return self unless @hook
+        address = hook.nil? ? 0 : hook.to_i
+        @hook[1][0, Fiddle::SIZEOF_VOIDP] =
+          [data.nil? ? 0 : data.to_i].pack("J")
+        @hook[0][0, Fiddle::SIZEOF_VOIDP] = [address].pack("J")
+        @hook_held = hook.nil? ? nil : [hook, data]
+        self
+      end
+
       private
 
       # 0 where the body cannot fail at all: one that neither divides nor
@@ -511,6 +551,19 @@ class CArray
 
       def write_error (code)
         @error[0, 4] = [code].pack("l") if @error
+      end
+
+      # The hook's address, cleared for the length of one call from Ruby,
+      # and put back afterwards.
+      def disarm_hook
+        return nil unless @hook
+        held = @hook[0][0, Fiddle::SIZEOF_VOIDP]
+        @hook[0][0, Fiddle::SIZEOF_VOIDP] = "\0" * Fiddle::SIZEOF_VOIDP
+        held
+      end
+
+      def rearm_hook (held)
+        @hook[0][0, Fiddle::SIZEOF_VOIDP] = held if held
       end
 
       def raise_for (code)
@@ -1234,6 +1287,11 @@ class CArray
         error = if generator.uses_error_flag?
                   Fiddle::Pointer.new(handle[CGenerator::ERROR_FLAG], 4)
                 end
+        hook = if generator.uses_error_flag?
+                 [CGenerator::ERROR_HOOK, CGenerator::ERROR_HOOK_DATA].map { |name|
+                   Fiddle::Pointer.new(handle[name], Fiddle::SIZEOF_VOIDP)
+                 }
+               end
         # A body that reports failures is generated a second time for pasting,
         # with the flag as a parameter.  A second generator rather than the
         # same one twice: what it emitted is what it holds, and the two forms
@@ -1257,7 +1315,8 @@ class CArray
                   helpers: pasted.helper_needs,
                   dependencies: called.values,
                   takes_error: generator.uses_error_flag?,
-                  raise_messages: generator.raise_messages)
+                  raise_messages: generator.raise_messages,
+                  hook: hook)
       end
 
       # The entry point a call from Ruby takes where the signature carries a

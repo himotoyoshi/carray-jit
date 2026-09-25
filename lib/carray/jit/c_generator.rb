@@ -517,7 +517,13 @@ class CArray
       # library handed the address calls without knowing about any of this.
       def generate_function (name, parameter_names, parameter_c_types,
                              return_c_type, return_type, error_parameter: false)
-        @own_symbol = name
+        # Standing alone, a body that turns out to be able to fail is lent
+        # under a wrapper (see #lending_wrapper), and the body itself goes
+        # under a name of its own.  Whether it can fail is known only once it
+        # has been emitted, so a recursive call is written to that name from
+        # the start and put back to `name` below where no wrapper came.
+        body_symbol = "#{name}#{BODY_SUFFIX}"
+        @own_symbol = error_parameter ? name : body_symbol
         @in_function = true
         @error_parameter = error_parameter
         @body_reports = false
@@ -539,14 +545,67 @@ class CArray
         # same argument list the definition ends up declaring.
         parameters << "int32_t *#{ERROR_FLAG}" if error_parameter
         parameters = ["void"] if parameters.empty?
-        flag = @uses_error_flag && !error_parameter ? error_flag_declaration : ""
+        wrapped = @uses_error_flag && !error_parameter
+        unless wrapped || error_parameter
+          lines = lines.gsub("#{body_symbol}(", "#{name}(")
+          value = value&.gsub("#{body_symbol}(", "#{name}(")
+        end
+        flag = wrapped ? error_flag_declaration + error_hook_declaration : ""
         # Kept apart from the file it is compiled in: the definition alone is
         # what a kernel pastes into its own translation unit, where the
         # includes are already written and the helpers are shared.
         opening = "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n"
         body = lines + (@returns_nothing ? "}\n" : "  return #{value};\n}\n")
         @function_definition = opening + body
-        preamble + flag + opening + standing_gate + body
+        return preamble + flag + opening + body unless wrapped
+        preamble + flag +
+          "static #{return_c_type}\n#{body_symbol} (#{parameters.join(', ')})\n{\n" +
+          standing_gate + body + "\n" +
+          lending_wrapper(name, body_symbol, parameter_names, parameters,
+                          return_c_type)
+      end
+
+      # What the body is defined under when a wrapper is lent in its place.
+      # Static, so the object still exports one function.
+      BODY_SUFFIX = "_body".freeze
+
+      # The hook `CFunction#on_error` sets: a C function of one `void *`,
+      # and the pointer it is handed.  Beside the flag, and only where the
+      # flag is, since a body that cannot fail has nothing to call it for.
+      ERROR_HOOK = "carray_jit_on_error".freeze
+      ERROR_HOOK_DATA = "carray_jit_on_error_data".freeze
+
+      def error_hook_declaration
+        "/* Called once, by the call whose body put the flag up -- so a\n" \
+        "   library that goes on calling can be told to stop (NLopt's\n" \
+        "   nlopt_force_stop) rather than be handed stand-ins until it is\n" \
+        "   done.  Set by CFunction#on_error; null until then. */\n" \
+        "void (*#{ERROR_HOOK}) (void *) = 0;\n" \
+        "void *#{ERROR_HOOK_DATA} = 0;\n\n"
+      end
+
+      # The entry point the address is, for a body that can fail.  It turns
+      # a call away while the flag stands, as the body's own gate does, and
+      # calls the hook when this call is the one that raised it -- which is
+      # once, since every call after it is turned away at the top.  The hook
+      # is outside the body so that each way the flag can go up, a `raise`
+      # that leaves early or a division that runs on to the end, is the same
+      # one test afterwards.
+      def lending_wrapper (name, body_symbol, parameter_names, parameters,
+                           return_c_type)
+        arguments = parameter_names.join(", ")
+        fire = "  if ( #{ERROR_FLAG} && #{ERROR_HOOK} ) " \
+               "#{ERROR_HOOK}(#{ERROR_HOOK_DATA});\n"
+        if @returns_nothing
+          "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n" \
+          "  if ( #{ERROR_FLAG} ) return;\n" \
+          "  #{body_symbol}(#{arguments});\n" + fire + "}\n"
+        else
+          "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n" \
+          "  if ( #{ERROR_FLAG} ) return 0;\n" \
+          "  #{return_c_type} value = #{body_symbol}(#{arguments});\n" +
+          fire + "  return value;\n}\n"
+        end
       end
 
       attr_reader :function_definition
