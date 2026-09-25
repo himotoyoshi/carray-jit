@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- New: `CArray::JIT.watching(*functions, on_error: [hook, data]) { ... }`
+  opens one window over several compiled bodies -- an objective and its
+  gradient, a function and its jacobian. Every flag goes down before the
+  block and every one is read after it, and the failure raised is the first
+  in the argument list. `on_error:` sets that pair on each of them for the
+  window's length and puts back whatever hook was there before.
+
 - Fix: the flag a lent body reports through, and the hook `CFunction#on_error`
   sets, belong to the thread rather than to the compiled object, so two
   threads lending one body no longer read each other's failures -- which

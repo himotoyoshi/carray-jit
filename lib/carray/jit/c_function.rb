@@ -465,17 +465,19 @@ class CArray
       # the flag and put it back as they found it, so an inner window answers
       # for its own block and no other.
       def watching
-        outer = error_code
-        write_error(0)
+        opened = open_window
         code = 0
         begin
           result = yield
-          code = error_code
         rescue StandardError
-          raise_for(error_code)
+          # The library is complaining about what a stand-in did.  The body's
+          # own failure is the cause, so it is the one that comes out.
+          code = close_window(opened)
+          opened = nil
+          raise_for(code)
           raise
         ensure
-          write_error(outer)
+          code = close_window(opened) if opened
         end
         raise_for(code)
         result
@@ -609,6 +611,51 @@ class CArray
       def rearm_hook (held)
         state = error_state
         state.hook[0, Fiddle::SIZEOF_VOIDP] = held if state && held
+      end
+
+      # What a window does at its two ends.  `#watching` is these with a
+      # block between them, and `CArray::JIT.watching` is these over several
+      # functions at once -- which is why they are named rather than written
+      # inline in the one method that had them.
+      #
+      # `hook` is the `[address, data]` a window wants a hook of its own for,
+      # and nil where it leaves whatever is set alone.
+      def open_window (hook = nil)
+        outer = error_code
+        write_error(0)
+        [outer, hook && hold_hook(*hook)]
+      end
+
+      # What this window's calls reported, with the flag and the hook put
+      # back as they were found.
+      def close_window (opened)
+        outer, held = opened
+        code = error_code
+        write_error(outer)
+        restore_hook(held)
+        code
+      end
+
+      # This window's hook set and the one it displaced handed back, so that
+      # the window can put it there again.  `#on_error` writes these two
+      # pointers; what it has no way to do is read them, and a window that
+      # brings a hook of its own has to -- otherwise it leaves with the
+      # owner's gone and nothing said about it.
+      def hold_hook (address, data)
+        state = error_state
+        return nil unless state
+        held = [state.hook[0, Fiddle::SIZEOF_VOIDP],
+                state.data[0, Fiddle::SIZEOF_VOIDP], state.held]
+        on_error(address, data)
+        held
+      end
+
+      def restore_hook (held)
+        state = error_state
+        return unless state && held
+        state.hook[0, Fiddle::SIZEOF_VOIDP] = held[0]
+        state.data[0, Fiddle::SIZEOF_VOIDP] = held[1]
+        state.held = held[2]
       end
 
       def raise_for (code)
@@ -1114,7 +1161,96 @@ class CArray
                            declared_parameters)
       end
 
+      # One window over several functions, for a call that is handed more
+      # than one address:
+      #
+      #   CArray::JIT.watching(objective, gradient) do
+      #     NLopt.optimize(option, x, minimum)
+      #   end
+      #
+      # Every flag is put down before the block, and every one is read after
+      # it -- because a flag nobody reads is a failure that becomes a wrong
+      # answer, and then surfaces on an unrelated later window.  Whichever
+      # failure comes first in the argument list is the one raised, and a
+      # failure raised this way outranks whatever the block raised, for the
+      # reason `CFunction#watching` gives: the library is complaining about
+      # a stand-in, and the stand-in is the consequence.
+      #
+      # `on_error:` is the `[hook, data]` pair `CFunction#on_error` takes,
+      # set on every function for the length of the window and taken off
+      # again afterwards -- with whatever hook was there before put back.
+      # That is the difference from calling `#on_error` around the block:
+      # the pair can be read back here and cannot be read back from Ruby, so
+      # a window that brings its own hook is the only way to borrow one
+      # without leaving the owner's gone.
+      #
+      # `nil` in the list is skipped, so an optional gradient or jacobian may
+      # be passed as it stands, and a function named twice is watched once.
+      # A body that cannot fail has no flag and no hook, and passing one
+      # changes nothing -- which is what lets a binding watch what it was
+      # given without asking which kind of body it is.
+      def watching (*functions, on_error: nil)
+        armed = functions.compact
+        armed.each do |function|
+          next if function.is_a?(CFunction)
+          raise TypeError,
+                "`CArray::JIT.watching` watches compiled functions, and " \
+                "#{function.class} is not one -- pass what `jit_function` " \
+                "or `jit_extern` answered"
+        end
+        armed = armed.uniq
+        hook = window_hook(on_error)
+        return yield if armed.empty?
+        opened = armed.map { |function| function.send(:open_window, hook) }
+        codes = []
+        begin
+          result = yield
+        rescue StandardError
+          # Closed here rather than in the ensure below, so that the failure
+          # raised next is raised from inside this rescue and carries the
+          # library's own complaint as its cause.
+          codes = close_windows(armed, opened)
+          opened = nil
+          raise_first_failure(armed, codes)
+          raise
+        ensure
+          codes = close_windows(armed, opened) if opened
+        end
+        raise_first_failure(armed, codes)
+        result
+      end
+
       private
+
+      # Every window closed, in the order they were opened, and what each of
+      # them saw.  All of them, whatever happened in the block: a flag nobody
+      # reads is one that surfaces on an unrelated later window.
+      def close_windows (armed, opened)
+        armed.zip(opened).map { |function, state|
+          function.send(:close_window, state)
+        }
+      end
+
+      # The first failure among the flags just read, raised as the function
+      # that reported it would raise it.  A code of 0 is no failure and is
+      # passed over, so this walks the list in the order it was written and
+      # stops at the first that has something to say.
+      def raise_first_failure (armed, codes)
+        armed.zip(codes).each do |function, code|
+          function.send(:raise_for, code)
+        end
+      end
+
+      def window_hook (on_error)
+        return nil if on_error.nil?
+        unless on_error.is_a?(Array) && (1..2).cover?(on_error.size)
+          raise ArgumentError,
+                "`on_error:` takes the hook and the one pointer it is " \
+                "handed, as `CFunction#on_error` does -- " \
+                "`on_error: [handle[\"nlopt_force_stop\"], option]`"
+        end
+        [on_error[0], on_error[1]]
+      end
 
       def bind_c_function (prototype, name, return_type, parameters, from)
         handle = library_handle(from)
