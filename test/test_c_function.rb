@@ -702,6 +702,49 @@ class TestCFunction < Minitest::Test
     assert_match(/long double/, error.message)
   end
 
+  # C lets the integer words come in any order and `int` go unwritten, and
+  # a header is copied as it stands -- NLopt's objective takes `unsigned n`.
+  # Fiddle fails on a bare `unsigned` and reads `int unsigned` as signed.
+  def test_the_integer_words_read_in_any_order
+    widths = {
+      "unsigned" => :uint32, "signed" => :int32, "int unsigned" => :uint32,
+      "short unsigned" => :uint16, "long unsigned int" => :uint64,
+      "unsigned long long int" => :uint64, "signed char" => :int8,
+    }
+    widths.each do |spelling, data_type|
+      _, _, (type,) = CArray::JIT::CDeclaration.parse("void (*)(const #{spelling} *v)")
+      assert_equal(data_type,
+                   CArray::JIT::CDeclaration::DATA_TYPES.fetch(type.element.fiddle),
+                   spelling)
+    end
+    f = CArray.jit_function("uint64_t (*)(unsigned n, const unsigned *v)") { |n, v| v[n - 1] }
+    assert_equal(4294967295, f.call(2, CArray.uint32(2) { 4294967295 }))
+  end
+
+  def test_an_nlopt_prototype_reads_as_the_header_writes_it
+    f = CArray.jit_function(
+      "double (*)(unsigned n, const double *x, double *grad, void *f_data)"
+    ) { |n, x, grad, f_data|
+      s = 0.0
+      (0...n).each { |k| s += x[k] * x[k]; grad[k] = 2.0 * x[k] if grad }
+      s
+    }
+    x = CArray.double(3).seq!(1.0)
+    grad = CArray.double(3)
+    assert_bits_equal(14.0, f.call(3, x, nil, nil))
+    assert_bits_equal(14.0, f.call(3, x, grad, nil))
+    assert_equal([2.0, 4.0, 6.0], grad.to_a)
+  end
+
+  def test_integer_words_c_does_not_combine
+    ["signed unsigned", "short long", "long long long", "char int", "int int"].each do |spelling|
+      error = assert_raises(CArray::JIT::Unsupported) do
+        CArray.jit_function("double (*)(#{spelling} n)") { |n| 0.0 }
+      end
+      assert_match(/is not a C integer type/, error.message)
+    end
+  end
+
   # Splitting the two spellings retired this pair of errors: a compiled
   # function has no library to be found in, and a found one has no body to
   # compile, so neither method has the other's parameter to refuse.

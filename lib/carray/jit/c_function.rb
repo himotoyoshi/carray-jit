@@ -641,6 +641,14 @@ class CArray
           "long double here to make one of",
       }.freeze
 
+      # The words C builds its integer types from.  They may come in any
+      # order and `int` may be left out -- `unsigned`, `long unsigned int`
+      # and `int unsigned` are all C -- while Fiddle reads only some of those
+      # orders, fails on a bare `unsigned`, and reads `int unsigned` as a
+      # signed int without saying so.  So a spelling made only of these is
+      # counted here and handed to Fiddle in the one order it reads.
+      INTEGER_WORDS = %w[signed unsigned char short int long].freeze
+
       # The CArray data type a pointer parameter takes, by the code Fiddle
       # gave its element.  This is the table CGenerator::STORAGE_C_TYPES
       # already holds, read the other way round -- nothing new is decided
@@ -797,6 +805,7 @@ class CArray
         if (reason = REFUSED[spelling])
           raise Unsupported, "#{reason} (in `#{prototype}`)"
         end
+        spelling = integer_spelling(spelling, text, prototype)
         # A parameter written as an array is a pointer at the ABI, whatever
         # its declarator says.
         pointer ||= !array.nil?
@@ -827,6 +836,33 @@ class CArray
         end
         CType.new(written, code, pointer ? nil : COMPUTATION[code], pointer,
                   array, element, keywords.include?("const"))
+      end
+
+      # `long unsigned int` as `unsigned long`, `unsigned` as `unsigned int`:
+      # the order Fiddle reads, for a spelling made only of INTEGER_WORDS.
+      # Anything else is handed back untouched.  A combination C does not
+      # have -- `signed unsigned`, `short long`, three `long`s -- is refused
+      # here rather than left to a parser that has been seen to guess.
+      def integer_spelling (spelling, text, prototype)
+        words = spelling.split(/\s+/)
+        return spelling unless words.all? { |word| INTEGER_WORDS.include?(word) }
+        count = words.tally
+        longs = count.fetch("long", 0)
+        base = count.keys & %w[char short]
+        if count.values_at("signed", "unsigned", "char", "short", "int")
+                .any? { |n| n.to_i > 1 } ||
+           (count.key?("signed") && count.key?("unsigned")) ||
+           base.size > 1 || (base.any? && longs > 0) || longs > 2 ||
+           (count.key?("char") && count.key?("int"))
+          raise Unsupported,
+                "`#{text.strip}` in `#{prototype}` is not a C integer type"
+        end
+        sign = count.key?("unsigned") ? "unsigned " : ""
+        width = base.first || { 0 => "int", 1 => "long", 2 => "long long" }.fetch(longs)
+        # `signed char` is a type of its own in C, apart from plain `char`,
+        # and Fiddle reads both as the one byte they are.
+        sign = "signed " if width == "char" && count.key?("signed")
+        "#{sign}#{width}"
       end
 
       # The code for a complex spelling, or nil for anything else.  `float
