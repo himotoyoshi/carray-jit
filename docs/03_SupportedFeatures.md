@@ -856,6 +856,20 @@ The thread is the native one, which for Ruby is the thread that opened the windo
 
 What this leaves outside the window is a library that calls the body from threads of its own. The flag such a call raises belongs to the thread that raised it: the body stops answering there, as it should, and the window watching from Ruby sees nothing and raises nothing. A library that calls back on the thread it was called from -- which is what GSL and NLopt do -- is inside the window.
 
+#### More than one address at a time
+
+A call is often handed several: an objective and its gradient, a function and its jacobian. Each has a flag of its own, and a flag nobody reads is a failure that turns into a wrong answer and then surfaces on an unrelated later window. So all of them go down before the call and all of them are read after it:
+
+```ruby
+CArray::JIT.watching(objective, gradient) do
+  NLopt.optimize(option, x, minimum)
+end
+```
+
+The failure raised is the first one in the argument list, and it outranks what the block raised, for the reason a single window's does. `nil` in the list is skipped, so an optional gradient may be passed as it stands, and a function named twice is watched once. A body that cannot fail has no flag and changes nothing, which is what lets a binding watch what it was given without first asking which kind of body it is.
+
+`on_error:` takes the `[hook, data]` pair `#on_error` takes and sets it on every function for the length of the window, putting back whatever hook was there when the window closes. That is what the method is for beyond the several flags: the pair can be read back here and cannot be read back from Ruby, so setting `#on_error` around a block and clearing it afterwards leaves the owner's hook gone and says nothing about it.
+
 #### Telling the holder to stop
 
 The stand-in keeps a library from converging on fiction, but it does not stop the library: an optimizer given a large `maxeval` goes on calling to the end, each call turned away at the top. `#on_error` gives the body a C function to call when it fails, so that whoever holds the address can be told:
@@ -868,7 +882,7 @@ f.watching { nlopt_optimize.call(opt, x, minf) }
 
 The hook is any `void (*)(void *)` -- an address as a `Fiddle::Pointer` or an Integer -- and the second argument is the one pointer it is called with. It is called once, by the call whose body put the flag up; every call after that is turned away before the body runs, so it is not called again until the flag has been put down and gone up again. It runs in C and reaches no Ruby value, as the body does not. `on_error(nil)` takes it away.
 
-`#call` does not call it. That is one call made from Ruby, and it answers for itself by raising, as it does inside a window. A body that cannot fail has no flag to go up and is compiled without the hook; `on_error` is accepted there and never called, so a library binding can set it without asking which kind of body it was given. The hook belongs to the thread that set it, like the flag, so it is set on the thread that will lend the address -- which is where the window is written anyway.
+`#call` does not call it. That is one call made from Ruby, and it answers for itself by raising, as it does inside a window. A body that cannot fail has no flag to go up and is compiled without the hook; `on_error` is accepted there and never called, so a library binding can set it without asking which kind of body it was given. The hook belongs to the thread that set it, like the flag, so it is set on the thread that will lend the address -- which is where the window is written anyway. A window that wants a hook only for its own length, and the owner's back afterwards, is `CArray::JIT.watching`'s `on_error:` above.
 
 A float division is not this case: `1.0 / 0.0` is an infinity in Ruby, in C and here, so a body that only divides floats declares no flag and pays nothing for one. Neither is a subscript on a pointer parameter, which is unchecked by design -- the caller's business, as it is in C. The one exception needs nothing to run: a literal subscript outside a length the declaration gave -- `v[7]` or `v[-1]` against `double v[2]` -- is refused as the body is read, since the caller is held to that many cells and no more.
 
