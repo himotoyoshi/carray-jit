@@ -552,7 +552,7 @@ class CArray
         end
         flag = if wrapped
                  error_flag_declaration + error_hook_declaration +
-                   error_standin_declaration + error_state_accessor
+                   error_standin_declaration + error_state_accessor(name)
                else
                  ""
                end
@@ -586,8 +586,8 @@ class CArray
         "   nlopt_force_stop) rather than be handed stand-ins until it is\n" \
         "   done.  Set by CFunction#on_error; null until then.  Per thread,\n" \
         "   for the reason the flag beside it is. */\n" \
-        "#{THREAD_LOCAL}void (*#{ERROR_HOOK}) (void *) = 0;\n" \
-        "#{THREAD_LOCAL}void *#{ERROR_HOOK_DATA} = 0;\n\n"
+        "static #{THREAD_LOCAL}void (*#{ERROR_HOOK}) (void *) = 0;\n" \
+        "static #{THREAD_LOCAL}void *#{ERROR_HOOK_DATA} = 0;\n\n"
       end
 
       # What a failed call answers C with.  Set by the window through
@@ -600,19 +600,34 @@ class CArray
         "   it; one that reads the return value as a status does, and only\n" \
         "   the caller knows which it is, so the window sets it.  0 until a\n" \
         "   window says otherwise, which is what it always answered. */\n" \
-        "#{THREAD_LOCAL}int64_t #{ERROR_STANDIN} = 0;\n\n"
+        "static #{THREAD_LOCAL}int64_t #{ERROR_STANDIN} = 0;\n\n"
       end
 
       # Where a thread's copy of the four above stands.  A thread-local has
       # no address the loader can hand out -- `dlsym` answers for the symbol,
       # not for any one thread's copy of it -- so Ruby asks the object itself,
       # from the thread whose window it is.
-      ERROR_STATE = "carray_jit_error_state".freeze
+      #
+      # It is the only one of the five that is exported, and it wears the
+      # body's own name, so that this file can be linked beside another one
+      # generated the same way.  One object per body is what the cache makes
+      # and what these names once assumed; carray-jit-aot takes the C and
+      # links several into one library, where a fixed name is a duplicate
+      # symbol and the link fails.  The four it answers for are `static` for
+      # the same reason -- nothing outside this file reaches them by name,
+      # Ruby included, which is what this function is for.
+      ERROR_STATE_SUFFIX = "_error_state".freeze
 
-      def error_state_accessor
+      # What Ruby looks the accessor up under, for a body compiled as
+      # `symbol`.
+      def self.error_state_name (symbol)
+        "#{symbol}#{ERROR_STATE_SUFFIX}"
+      end
+
+      def error_state_accessor (name)
         "/* The four above, for the calling thread, in that order.  Called\n" \
         "   from Ruby once per thread that opens a window on this body. */\n" \
-        "void\n#{ERROR_STATE} (void **out)\n{\n" \
+        "void\n#{CGenerator.error_state_name(name)} (void **out)\n{\n" \
         "  out[0] = (void *) &#{ERROR_FLAG};\n" \
         "  out[1] = (void *) &#{ERROR_HOOK};\n" \
         "  out[2] = (void *) &#{ERROR_HOOK_DATA};\n" \
@@ -726,7 +741,7 @@ class CArray
         "   kernel reports through its own slot, with the same meanings.  A\n" \
         "   subscript on a pointer parameter is not checked here and does not\n" \
         "   appear: it is the caller's business, as it is in C. */\n" \
-        "#{THREAD_LOCAL}int32_t #{ERROR_FLAG} = 0;\n\n"
+        "static #{THREAD_LOCAL}int32_t #{ERROR_FLAG} = 0;\n\n"
       end
 
       # The same kernel, wrapped so carray can drive it.

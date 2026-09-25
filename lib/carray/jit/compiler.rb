@@ -56,6 +56,12 @@ class CArray
       # only where it means something -- and Apple's linker rejects it
       # outright, which would trade a Linux crash for a macOS build that never
       # compiles at all.
+      #
+      # A compiled `jit_function` is the exception and exports no fixed name:
+      # its body, its helpers and the four words a window reads are static,
+      # and what leaves the object is the declared symbol, the shim beside it
+      # and the accessor -- all three carrying the body's own digest.  That is
+      # what lets carray-jit-aot link several of them into one library.
       SYMBOLIC =
         (RbConfig::CONFIG["host_os"] =~ /darwin|mswin|mingw|cygwin/ ?
            [] : ["-Wl,-Bsymbolic"]).freeze

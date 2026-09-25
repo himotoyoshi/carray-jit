@@ -39,6 +39,15 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: a compiled `jit_function` exports its own declared symbol and nothing
+  under a fixed name, so several of them can be linked into one library.
+  Two bodies that could fail -- either raising, or dividing an integer by
+  something that might be zero -- used to define `carray_jit_error` and its
+  three neighbours twice and the link failed with duplicate symbols, which
+  is what carray-jit-aot hit when a library held two such functions. Those
+  four are static now, and the one function that answers where they stand
+  carries the body's digest.
+
 - New: `stand_in:` on `CArray::JIT.watching` and `CFunction#watching` is the
   number a failed body answers its C caller with, for a caller that reads
   the return value as a status rather than as a value -- GSL's callbacks

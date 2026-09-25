@@ -1525,12 +1525,14 @@ class CArray
         #
         # The place is the calling thread's, and a thread-local is not a name
         # the loader can hand an address for, so what is taken here is the
-        # accessor beside it -- called once per thread, from that thread.
+        # accessor beside it -- called once per thread, from that thread.  It
+        # is named after the body, the four it answers for being `static`, so
+        # that two objects generated this way can be linked side by side.
         error_state = if generator.uses_error_flag?
-                        Fiddle::Function.new(handle[CGenerator::ERROR_STATE],
+                        accessor = CGenerator.error_state_name(symbol)
+                        Fiddle::Function.new(handle[accessor],
                                              [Fiddle::TYPE_VOIDP],
-                                             Fiddle::TYPE_VOID,
-                                             name: CGenerator::ERROR_STATE)
+                                             Fiddle::TYPE_VOID, name: accessor)
                       end
         # A body that reports failures is generated a second time for pasting,
         # with the flag as a parameter.  A second generator rather than the
