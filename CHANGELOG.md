@@ -44,6 +44,13 @@ version you have and a newer one.
   failed with "Undefined symbols". Nothing changes elsewhere: Linux linked
   it already.
 
+- New: `CFunction#on_error(hook, data)` names a C function,
+  `void (*)(void *)`, that a compiled body calls with `data` when it fails,
+  once, from the call that failed -- so a library holding the address can
+  be told to stop, as `nlopt_force_stop` tells NLopt. `#call` from Ruby
+  does not call it, and `on_error(nil)` takes it away. A body that cannot
+  fail accepts one and never calls it.
+
 - Fix: a prototype given to `jit_function` or `jit_extern` reads C's integer
   types in any word order and without `int`, as C does -- `unsigned n`,
   `long unsigned int`, `short unsigned` -- so a header's declaration can be
