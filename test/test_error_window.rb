@@ -450,7 +450,6 @@ class TestErrorWindow < Minitest::Test
     f&.on_error(nil)
   end
 
-
   # ---------- one window over several functions ----------
 
   def refusing_above_nine
@@ -619,6 +618,146 @@ class TestErrorWindow < Minitest::Test
       CArray::JIT.watching(f, on_error: counting_hook.pointer) { 1 }
     end
     assert_match(/takes the hook and the one pointer/, error.message)
+  end
+
+  # ---------- what a failed call answers C with ----------
+
+  # The flag is the contract, and for a body returning `double` the value is
+  # a courtesy nobody reads.  For one returning `int` it is a status: GSL's
+  # callbacks return `int`, and 0 there is GSL_SUCCESS -- so a failed body
+  # answering 0 tells GSL the step went well.  Which number is right belongs
+  # to the window, because the body does not know what it was handed to.
+
+  def reporting_int
+    CArray.jit_function("int step(double x)") { |x|
+      raise "past the edge" if x > 0.5
+      1
+    }
+  end
+
+  def calling_int (function)
+    Fiddle::Function.new(function.pointer, [Fiddle::TYPE_DOUBLE],
+                         Fiddle::TYPE_INT)
+  end
+
+  def test_a_failed_call_answers_zero_unless_a_window_says_otherwise
+    f = reporting_int
+    raw = calling_int(f)
+    seen = nil
+    assert_raises(RuntimeError) do
+      CArray::JIT.watching(f) { seen = [raw.call(0.1), raw.call(0.9), raw.call(0.2)] }
+    end
+    assert_equal([1, 0, 0], seen)
+  end
+
+  def test_a_window_says_what_a_failed_call_answers_with
+    f = reporting_int
+    raw = calling_int(f)
+    seen = nil
+    assert_raises(RuntimeError) do
+      CArray::JIT.watching(f, stand_in: 9) do
+        # The failing call and every one turned away after it: a library
+        # that stops on a non-zero status has to be told on each of them.
+        seen = [raw.call(0.1), raw.call(0.9), raw.call(0.2)]
+      end
+    end
+    assert_equal([1, 9, 9], seen)
+  end
+
+  def test_the_stand_in_is_put_back_when_the_window_closes
+    f = reporting_int
+    raw = calling_int(f)
+    assert_raises(RuntimeError) do
+      CArray::JIT.watching(f, stand_in: 9) { raw.call(0.9) }
+    end
+    seen = nil
+    assert_raises(RuntimeError) do
+      CArray::JIT.watching(f) { seen = raw.call(0.9) }
+    end
+    assert_equal(0, seen)
+  end
+
+  def test_an_inner_window_puts_back_the_outer_window_s_stand_in
+    f = reporting_int
+    raw = calling_int(f)
+    outer = nil
+    assert_raises(RuntimeError) do
+      CArray::JIT.watching(f, stand_in: 9) do
+        assert_raises(RuntimeError) do
+          CArray::JIT.watching(f, stand_in: 4) { assert_equal(4, raw.call(0.9)) }
+        end
+        outer = raw.call(0.9)
+      end
+    end
+    assert_equal(9, outer)
+  end
+
+  def test_a_single_function_s_window_takes_one_too
+    f = reporting_int
+    raw = calling_int(f)
+    seen = nil
+    assert_raises(RuntimeError) do
+      f.watching(stand_in: 7) { seen = [raw.call(0.9), raw.call(0.1)] }
+    end
+    assert_equal([7, 7], seen)
+  end
+
+  # Every way a body can fail answers the same, which is the whole point of a
+  # status: a `raise` leaves early, while a division that had no divisor runs
+  # on to the end and used to hand back whatever the helper's zero added up
+  # to -- two different answers for one failure.
+  def test_a_division_answers_as_a_raise_does
+    f = CArray.jit_function("int share(int64_t a, int64_t b)") { |a, b|
+      100 + a / b
+    }
+    raw = Fiddle::Function.new(f.pointer,
+                               [Fiddle::TYPE_LONG_LONG, Fiddle::TYPE_LONG_LONG],
+                               Fiddle::TYPE_INT)
+    seen = nil
+    assert_raises(ZeroDivisionError) do
+      CArray::JIT.watching(f, stand_in: -1) do
+        seen = [raw.call(10, 2), raw.call(10, 0), raw.call(10, 5)]
+      end
+    end
+    assert_equal([105, -1, -1], seen)
+  end
+
+  def test_the_stand_in_is_cast_to_what_the_body_returns
+    f = CArray.jit_function("double half(double x)") { |x|
+      raise "x is negative" if x < 0.0
+      x / 2.0
+    }
+    raw = foreign(f)
+    seen = nil
+    assert_raises(RuntimeError) do
+      CArray::JIT.watching(f, stand_in: -1) do
+        seen = [raw.call(4.0), raw.call(-1.0), raw.call(6.0)]
+      end
+    end
+    assert_equal([2.0, -1.0, -1.0], seen)
+    assert_match(/return \(double\) carray_jit_standin;/, f.c_source)
+  end
+
+  def test_a_body_that_cannot_fail_takes_one_and_answers_as_it_always_did
+    f = CArray.jit_function("int steady(double x)") { |x| 3 }
+    assert_equal(3, CArray::JIT.watching(f, stand_in: 9) { calling_int(f).call(1.0) })
+  end
+
+  def test_the_stand_in_is_a_number_that_fits_one_word
+    f = reporting_int
+    error = assert_raises(TypeError) do
+      CArray::JIT.watching(f, stand_in: 1.5) { 1 }
+    end
+    assert_match(/Float is not one/, error.message)
+    assert_raises(RangeError) do
+      CArray::JIT.watching(f, stand_in: 2**70) { 1 }
+    end
+  end
+
+  def test_the_stand_in_stands_beside_the_flag_and_the_hook
+    f = raising_below_zero
+    assert_match(/_Thread_local int64_t carray_jit_standin = 0;/, f.c_source)
+    assert_match(/out\[3\] = \(void \*\) &carray_jit_standin;/, f.c_source)
   end
 
 end

@@ -552,7 +552,7 @@ class CArray
         end
         flag = if wrapped
                  error_flag_declaration + error_hook_declaration +
-                   error_state_accessor
+                   error_standin_declaration + error_state_accessor
                else
                  ""
                end
@@ -590,19 +590,33 @@ class CArray
         "#{THREAD_LOCAL}void *#{ERROR_HOOK_DATA} = 0;\n\n"
       end
 
-      # Where a thread's copy of the three above stands.  A thread-local has
+      # What a failed call answers C with.  Set by the window through
+      # `stand_in:`, and 0 until then, which is what this always was.
+      ERROR_STANDIN = "carray_jit_standin".freeze
+
+      def error_standin_declaration
+        "/* What a call answers with once the flag stands -- cast to whatever\n" \
+        "   this body returns.  A caller that reads the flag never looks at\n" \
+        "   it; one that reads the return value as a status does, and only\n" \
+        "   the caller knows which it is, so the window sets it.  0 until a\n" \
+        "   window says otherwise, which is what it always answered. */\n" \
+        "#{THREAD_LOCAL}int64_t #{ERROR_STANDIN} = 0;\n\n"
+      end
+
+      # Where a thread's copy of the four above stands.  A thread-local has
       # no address the loader can hand out -- `dlsym` answers for the symbol,
       # not for any one thread's copy of it -- so Ruby asks the object itself,
       # from the thread whose window it is.
       ERROR_STATE = "carray_jit_error_state".freeze
 
       def error_state_accessor
-        "/* The three above, for the calling thread, in that order.  Called\n" \
+        "/* The four above, for the calling thread, in that order.  Called\n" \
         "   from Ruby once per thread that opens a window on this body. */\n" \
         "void\n#{ERROR_STATE} (void **out)\n{\n" \
         "  out[0] = (void *) &#{ERROR_FLAG};\n" \
         "  out[1] = (void *) &#{ERROR_HOOK};\n" \
-        "  out[2] = (void *) &#{ERROR_HOOK_DATA};\n}\n\n"
+        "  out[2] = (void *) &#{ERROR_HOOK_DATA};\n" \
+        "  out[3] = (void *) &#{ERROR_STANDIN};\n}\n\n"
       end
 
       # The entry point the address is, for a body that can fail.  It turns
@@ -612,20 +626,34 @@ class CArray
       # is outside the body so that each way the flag can go up, a `raise`
       # that leaves early or a division that runs on to the end, is the same
       # one test afterwards.
+      #
+      # It is also the one place that says what a failed call answers C with.
+      # The body has several ways of ending -- a `raise` returns early, a
+      # division that had no divisor runs on to the end and returns whatever
+      # the zero the helper handed back added up to -- and a caller reading
+      # the return value as a status cannot be given a different answer
+      # depending on which.  So the gates inside the body go on returning
+      # zero to their own caller, which is this function or the body itself
+      # recursing, and what C is told is decided here, once, from the flag.
       def lending_wrapper (name, body_symbol, parameter_names, parameters,
                            return_c_type)
         arguments = parameter_names.join(", ")
-        fire = "  if ( #{ERROR_FLAG} && #{ERROR_HOOK} ) " \
-               "#{ERROR_HOOK}(#{ERROR_HOOK_DATA});\n"
         if @returns_nothing
           "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n" \
           "  if ( #{ERROR_FLAG} ) return;\n" \
-          "  #{body_symbol}(#{arguments});\n" + fire + "}\n"
+          "  #{body_symbol}(#{arguments});\n" \
+          "  if ( #{ERROR_FLAG} && #{ERROR_HOOK} ) " \
+          "#{ERROR_HOOK}(#{ERROR_HOOK_DATA});\n}\n"
         else
+          standin = "(#{return_c_type}) #{ERROR_STANDIN}"
           "#{return_c_type}\n#{name} (#{parameters.join(', ')})\n{\n" \
-          "  if ( #{ERROR_FLAG} ) return 0;\n" \
-          "  #{return_c_type} value = #{body_symbol}(#{arguments});\n" +
-          fire + "  return value;\n}\n"
+          "  if ( #{ERROR_FLAG} ) return #{standin};\n" \
+          "  #{return_c_type} value = #{body_symbol}(#{arguments});\n" \
+          "  if ( #{ERROR_FLAG} ) {\n" \
+          "    if ( #{ERROR_HOOK} ) #{ERROR_HOOK}(#{ERROR_HOOK_DATA});\n" \
+          "    return #{standin};\n" \
+          "  }\n" \
+          "  return value;\n}\n"
         end
       end
 
@@ -643,10 +671,11 @@ class CArray
       # looks like a right one.
       #
       # What the gate says is that the body does no more work.  It does not
-      # say what the call is worth: the flag is the contract, and the zero is
-      # a courtesy to a caller who never looks at it.  A `void` body has no
-      # courtesy to offer and leaves its out-parameters alone, which is the
-      # same refusal to work.
+      # say what the call is worth: the flag is the contract, and the zero
+      # goes to this body's own caller -- the lending wrapper, or the body
+      # itself recursing -- rather than to C, which is told whatever the
+      # window chose.  A `void` body has no zero to offer and leaves its
+      # out-parameters alone, which is the same refusal to work.
       #
       # It goes in the file and not in the definition, so that the form a
       # kernel pastes cannot pick it up whichever way the two forms are
@@ -1763,7 +1792,9 @@ class CArray
         # A function returns whatever it returns, whatever happened -- the
         # arrangement its C caller is left with, and the one the division
         # helper already keeps by returning zero from a divide it refused.
-        # The value is not the answer; the flag says so.
+        # The value is not the answer; the flag says so.  For a body lent
+        # out, this zero reaches the wrapper rather than C, and the wrapper
+        # answers C with what the window chose.
         leaving = @in_function && !@returns_nothing ? "return 0;" : "return;"
         "#{indent}if ( #{tests.join(' && ')} ) {\n" \
         "#{indent}  #{report}\n" +

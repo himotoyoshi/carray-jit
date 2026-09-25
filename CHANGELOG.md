@@ -39,6 +39,22 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- New: `stand_in:` on `CArray::JIT.watching` and `CFunction#watching` is the
+  number a failed body answers its C caller with, for a caller that reads
+  the return value as a status rather than as a value -- GSL's callbacks
+  return `int`, where 0 is `GSL_SUCCESS`, so a failed body handed the
+  default is read as a step that went well. It is cast to whatever the body
+  returns, reaches the call that failed and every call turned away after it,
+  and is put back when the window closes. The default is 0, which is what a
+  failed call has always answered.
+
+- Change: a body lent out answers its C caller the same way whichever way it
+  failed. A `raise` answered 0, while a division that had no divisor ran on
+  to the end and answered whatever the body made of the zero the helper
+  handed back -- `100 + a / 0` answered 100. Both now answer the window's
+  `stand_in:`, which is 0 where none was given. A caller reading the flag
+  rather than the return value sees no change.
+
 - New: `CArray::JIT.watching(*functions, on_error: [hook, data]) { ... }`
   opens one window over several compiled bodies -- an objective and its
   gradient, a function and its jacobian. Every flag goes down before the

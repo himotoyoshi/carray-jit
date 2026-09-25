@@ -844,6 +844,8 @@ That is the arrangement a kernel already keeps with its own slot: cleared once b
 
 Once the flag stands, the body does no more work. It is asked again -- the library has no idea anything went wrong, and nothing has told it to stop -- and it returns the stand-in without running. **The stand-in is not the answer. The flag says so.** A body that returns nothing has no stand-in to offer and leaves its out-parameters alone, which is the same refusal.
 
+The stand-in is zero unless a window says otherwise, and one number answers for every way the body can fail -- a `raise` that leaves early, a division that had no divisor and ran on to the end. The entry point decides it from the flag rather than each of those deciding for itself, so a caller reading the return value gets one answer for one failure.
+
 This matters more than it sounds. Without it a body would report its failure once and then answer normally, and an adaptive routine would do what adaptive routines do: see one bad point, subdivide around it, find every subdivision well behaved, and converge. The number that comes back is not wrong in a way anybody can see. It is worse than a wrong answer, because it looks like a right one.
 
 A failure inside the window outranks whatever the library made of it. The body returned a stand-in, so the library is usually the first to complain -- that the endpoints do not straddle, that the iteration did not converge -- and those complaints are consequences rather than what happened, so `#watching` reads the flag before letting the exception through. Where nothing stands, the library's own story is the story.
@@ -869,6 +871,22 @@ end
 The failure raised is the first one in the argument list, and it outranks what the block raised, for the reason a single window's does. `nil` in the list is skipped, so an optional gradient may be passed as it stands, and a function named twice is watched once. A body that cannot fail has no flag and changes nothing, which is what lets a binding watch what it was given without first asking which kind of body it is.
 
 `on_error:` takes the `[hook, data]` pair `#on_error` takes and sets it on every function for the length of the window, putting back whatever hook was there when the window closes. That is what the method is for beyond the several flags: the pair can be read back here and cannot be read back from Ruby, so setting `#on_error` around a block and clearing it afterwards leaves the owner's hook gone and says nothing about it.
+
+#### When the return value is the answer
+
+Zero is a courtesy to a caller that reads the flag and nothing else, and for a body returning `double` that is what it is. For one returning `int` it is a status. GSL's callbacks return `int`, and zero there is `GSL_SUCCESS` -- so a failed body handed back the default tells GSL that the step went well, and GSL goes on: measured on `gsl_odeiv2`, a callback failing at t = 0.1 was called 23,356 more times and the driver returned success on a solution nobody computed.
+
+So the number is the window's to choose:
+
+```ruby
+CArray::JIT.watching(rhs, stand_in: 9) do   # 9 is GSL_EBADFUNC
+  Odeiv2.driver_apply(driver, t, t1, y)
+end
+```
+
+It is set for the length of the window and put back afterwards, like `on_error:`, and `CFunction#watching` takes it for a window over one function. It is cast to whatever the body returns, so a `double` body may take one too, and it reaches both the call that failed and every call turned away after it -- which is what a library stopping on a status has to be told on each of them.
+
+It belongs to the window rather than to the body because the right number is not a property of the body. The same `int (*)(...)` may be handed to a routine that stops on a non-zero status and to one that reads it as a rejected step and tries again with a smaller radius -- measured on the same bodies, a non-zero status cost `gsl_multifit_nlinear` 6 calls against 103 -- and what a body is handed to is not something it can know.
 
 #### Telling the holder to stop
 
