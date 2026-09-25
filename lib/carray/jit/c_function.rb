@@ -143,9 +143,9 @@ class CArray
         @takes_error = takes_error
         @raise_messages = raise_messages
         @origin = origin
-        # What the object answers when asked where this thread's flag and
-        # hook pointers stand.  Nil when the body can neither divide by zero
-        # nor raise, and so has none.
+        # What the object answers when asked where this thread's flag, hook
+        # and stand-in stand.  Nil when the body can neither divide by zero
+        # nor raise, and so has none of them.
         @error_state = error_state
         # The address of the entry point a call from Ruby takes where the
         # signature carries a complex by value; nil where it does not, which
@@ -464,8 +464,16 @@ class CArray
       # Windows nest, and a call made inside one leaves it armed: both borrow
       # the flag and put it back as they found it, so an inner window answers
       # for its own block and no other.
-      def watching
-        opened = open_window
+      #
+      # `stand_in:` is the number a call answers C with once the flag stands,
+      # for a library that reads the return value as a status rather than as
+      # a value -- GSL's callbacks return `int`, and 0 is `GSL_SUCCESS`
+      # there, so a failed body reporting 0 tells GSL the step went well.  It
+      # is cast to whatever the body returns and is 0 until a window says
+      # otherwise, which is what a failed call has always answered.  Set for
+      # the length of the window, and put back afterwards.
+      def watching (stand_in: nil)
+        opened = open_window(nil, JIT.send(:window_stand_in, stand_in))
         code = 0
         begin
           result = yield
@@ -546,11 +554,11 @@ class CArray
 
       private
 
-      # One thread's copy of the three the compiled object carries -- the
-      # flag, the hook's address and the pointer it is handed -- with the
-      # Ruby objects `#on_error` was given held beside them, so that nothing
-      # the C may still call is collected.
-      ErrorState = Struct.new(:flag, :hook, :data, :held)
+      # One thread's copy of the four the compiled object carries -- the
+      # flag, the hook's address, the pointer it is handed, and what a failed
+      # call answers C with -- with the Ruby objects `#on_error` was given
+      # held beside them, so that nothing the C may still call is collected.
+      ErrorState = Struct.new(:flag, :hook, :data, :standin, :held)
       private_constant :ErrorState
 
       # Where those copies are kept, per thread.  A thread variable rather
@@ -578,12 +586,13 @@ class CArray
       end
 
       def resolve_error_state
-        out = String.new("\0" * (3 * Fiddle::SIZEOF_VOIDP))
+        out = String.new("\0" * (4 * Fiddle::SIZEOF_VOIDP))
         @error_state.call(out)
-        flag, hook, data = out.unpack("J3")
+        flag, hook, data, standin = out.unpack("J4")
         ErrorState.new(Fiddle::Pointer.new(flag, 4),
                        Fiddle::Pointer.new(hook, Fiddle::SIZEOF_VOIDP),
                        Fiddle::Pointer.new(data, Fiddle::SIZEOF_VOIDP),
+                       Fiddle::Pointer.new(standin, 8),
                        nil)
       end
 
@@ -619,20 +628,22 @@ class CArray
       # inline in the one method that had them.
       #
       # `hook` is the `[address, data]` a window wants a hook of its own for,
-      # and nil where it leaves whatever is set alone.
-      def open_window (hook = nil)
+      # and `standin` what it wants a failed call to answer C with; nil for
+      # either leaves whatever is set alone.
+      def open_window (hook = nil, standin = nil)
         outer = error_code
         write_error(0)
-        [outer, hook && hold_hook(*hook)]
+        [outer, hook && hold_hook(*hook), standin && hold_standin(standin)]
       end
 
-      # What this window's calls reported, with the flag and the hook put
-      # back as they were found.
+      # What this window's calls reported, with the flag, the hook and the
+      # stand-in put back as they were found.
       def close_window (opened)
-        outer, held = opened
+        outer, held, standin = opened
         code = error_code
         write_error(outer)
         restore_hook(held)
+        restore_standin(standin)
         code
       end
 
@@ -656,6 +667,22 @@ class CArray
         state.hook[0, Fiddle::SIZEOF_VOIDP] = held[0]
         state.data[0, Fiddle::SIZEOF_VOIDP] = held[1]
         state.held = held[2]
+      end
+
+      # This window's stand-in written, and the one it displaced handed back.
+      # Held as the eight bytes rather than as a number, so that whatever was
+      # there goes back exactly as it stood.
+      def hold_standin (value)
+        state = error_state
+        return nil unless state
+        held = state.standin[0, 8]
+        state.standin[0, 8] = [value].pack("q")
+        held
+      end
+
+      def restore_standin (held)
+        state = error_state
+        state.standin[0, 8] = held if state && held
       end
 
       def raise_for (code)
@@ -1184,12 +1211,19 @@ class CArray
       # a window that brings its own hook is the only way to borrow one
       # without leaving the owner's gone.
       #
+      # `stand_in:` is the number a failed call answers C with, as
+      # `CFunction#watching` takes it, and is set on every function watched.
+      # Which number is right belongs to the window and not to the body: the
+      # same `int (*)(...)` may be handed to a routine that stops on a
+      # non-zero status and to one that reads it as a rejected step and tries
+      # again, and the body has no way of knowing which it was given to.
+      #
       # `nil` in the list is skipped, so an optional gradient or jacobian may
       # be passed as it stands, and a function named twice is watched once.
-      # A body that cannot fail has no flag and no hook, and passing one
-      # changes nothing -- which is what lets a binding watch what it was
-      # given without asking which kind of body it is.
-      def watching (*functions, on_error: nil)
+      # A body that cannot fail has no flag, no hook and no stand-in, and
+      # passing one changes nothing -- which is what lets a binding watch
+      # what it was given without asking which kind of body it is.
+      def watching (*functions, on_error: nil, stand_in: nil)
         armed = functions.compact
         armed.each do |function|
           next if function.is_a?(CFunction)
@@ -1200,8 +1234,11 @@ class CArray
         end
         armed = armed.uniq
         hook = window_hook(on_error)
+        standin = window_stand_in(stand_in)
         return yield if armed.empty?
-        opened = armed.map { |function| function.send(:open_window, hook) }
+        opened = armed.map { |function|
+          function.send(:open_window, hook, standin)
+        }
         codes = []
         begin
           result = yield
@@ -1239,6 +1276,26 @@ class CArray
         armed.zip(codes).each do |function, code|
           function.send(:raise_for, code)
         end
+      end
+
+      # The number a window hands the C as a failed call's answer.  An
+      # Integer because that is what the object carries it in -- one 64-bit
+      # word, cast at the return -- and because a status is a whole number
+      # wherever one is read.
+      def window_stand_in (stand_in)
+        return nil if stand_in.nil?
+        unless stand_in.is_a?(Integer)
+          raise TypeError,
+                "`stand_in:` is the number a failed call answers C with, " \
+                "and #{stand_in.class} is not one -- it is cast to whatever " \
+                "the body returns, so what is given here is an Integer"
+        end
+        unless (-(2**63)...2**63).cover?(stand_in)
+          raise RangeError,
+                "`stand_in:` is carried in one 64-bit word, and " \
+                "#{stand_in} does not fit in one"
+        end
+        stand_in
       end
 
       def window_hook (on_error)
