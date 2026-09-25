@@ -8,7 +8,7 @@ The block is read with Prism, translated to C if it falls inside that subset, co
 
 ## Status
 
-0.1.3 is the current release, and it still moves: behaviour can change between releases — see [CHANGELOG.md](CHANGELOG.md). A companion gem to CArray, it follows CArray's surface, which is not settled until CArray 3.1.
+0.1.3 is the current release, and it still moves: behaviour can change between releases.
 
 ## Features
 
@@ -65,14 +65,14 @@ The `jit_` methods are this gem's, and exist once `require "carray/jit"` has run
 
 ## Documentation
 
-* [Introduction](docs/00_Introduction.md) — what carray-jit is: the gap it fills beside CArray, the subset a block is written in, and where a kernel gets its data
-* [Getting started](docs/01_GettingStarted.md) — the block, its extents, what the three methods return, and where a kernel stands beside `a + b * c` and `CArray.fuse`
-* [The shapes a kernel takes](docs/02_KernelShapes.md) — work that reaches no neighbour, extents and subscripts, stencils, reductions, and contraction over a repeated index
-* [Supported features](docs/03_SupportedFeatures.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
-* [Compiling, caching and inspecting](docs/04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, and what the suite checks
-* [Design notes](docs/05_DesignNotes.md) — decisions that were not obvious, and why
-* [Cheatsheet](docs/06_Cheatsheet.md) — the eight `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
-* [31 exercises, with solutions](docs/07_StepByStep.md) — thirty-one small tasks in the order this guide introduces things, each with its solution and what it answers
+* [Introduction](docs/00_Introduction.md) — what carray-jit is and what it is for
+* [Getting started](docs/01_GettingStarted.md) — a first kernel, step by step
+* [The shapes a kernel takes](docs/02_KernelShapes.md) — loops, stencils, reductions and contractions
+* [Supported features](docs/03_SupportedFeatures.md) — what a block may contain
+* [Compiling, caching and inspecting](docs/04_Compiling.md) — compilation, the kernel cache and the generated C
+* [Design notes](docs/05_DesignNotes.md) — why things are the way they are
+* [Cheatsheet](docs/06_Cheatsheet.md) — every method on one page
+* [Exercises](docs/07_StepByStep.md) — 31 small tasks, each with its solution
 
 ## Contributing
 
