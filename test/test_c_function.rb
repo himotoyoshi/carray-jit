@@ -865,6 +865,29 @@ class TestCFunction < Minitest::Test
     assert_in_delta 0.7651976865579666 * 2.0, doubled.call(1.0), 1e-12
   end
 
+  # libm is on the link line by name; any other library is only in the
+  # process, opened by `jit_extern`.  Apple's linker refused a name it could
+  # not see at link time, so this failed on macOS for every library but
+  # libm.
+  def test_a_compiled_body_calls_a_function_from_a_library_of_its_own
+    directory = Dir.mktmpdir("carray-jit-library-")
+    begin
+      source = File.join(directory, "triple.c")
+      library = File.join(directory, "libtriple.#{RbConfig::CONFIG['DLEXT']}")
+      File.write(source, "double carray_jit_test_triple (double x) { return 3.0 * x; }\n")
+      command = [CArray::JIT::Compiler.compiler_command,
+                 "-O2", "-fPIC", "-shared", source, "-o", library]
+      skip "no working C compiler" unless system(*command, out: File::NULL,
+                                                 err: File::NULL)
+      triple = CArray.jit_extern("double carray_jit_test_triple(double)",
+                                 from: library)
+      f = CArray.jit_function("double (*)(double x)") { |x| triple.call(x) + 1.0 }
+      assert_bits_equal(7.0, f.call(2.0))
+    ensure
+      FileUtils.remove_entry(directory)
+    end
+  end
+
   def test_the_borrowed_one_is_declared_rather_than_pasted
     j0 = CArray.jit_extern("double j0(double)")
     source = CArray.jit_function("double f(double x)") { |x| j0.call(x) }.c_source

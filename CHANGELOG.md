@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: a `jit_function` body that calls a function borrowed with
+  `jit_extern` from a library other than libm now links on macOS, where it
+  failed with "Undefined symbols". Nothing changes elsewhere: Linux linked
+  it already.
+
 - Fix: a prototype given to `jit_function` or `jit_extern` reads C's integer
   types in any word order and without `int`, as C does -- `unsigned n`,
   `long unsigned int`, `short unsigned` -- so a header's declaration can be

@@ -62,6 +62,17 @@ class CArray
 
       FLAGS = ["-O3", "-fPIC", "-shared", "-ffp-contract=off", *SYMBOLIC].freeze
 
+      # A compiled body calls a function borrowed with `jit_extern` by name,
+      # and the library it came from is one the process opened -- which is
+      # where the name is resolved, when the object is loaded.  ELF leaves a
+      # shared object's undefined names to the loader as it is; Apple's
+      # linker refuses them unless told to, so a borrowed function from
+      # anywhere but libm (which `-lm` names) failed to link on macOS.
+      # `jit_extern` has opened the library before any body that calls it
+      # is compiled, so by the time the object loads the name is there.
+      LINK = (RbConfig::CONFIG["host_os"] =~ /darwin/ ?
+                ["-undefined", "dynamic_lookup"] : []).freeze
+
       # Kernels retained on disk.  Each costs about 17 KB, so the default is
       # roughly 9 MB -- far more than any real program compiles, but a bound
       # all the same.
@@ -537,7 +548,8 @@ class CArray
                   "Set CARRAY_JIT_CC to a C compiler, or leave it unset for " \
                   "the one Ruby was built with."
           end
-          command = [compiler_command, *flags, source_path, "-o", object_path, "-lm"]
+          command = [compiler_command, *flags, source_path, "-o", object_path,
+                     "-lm", *LINK]
           output = IO.popen(command, err: [:child, :out]) { |io| io.read }
           unless $?.success?
             raise CompilationError, "#{command.join(' ')}\n#{output}"
