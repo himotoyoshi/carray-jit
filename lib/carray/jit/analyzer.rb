@@ -1570,7 +1570,7 @@ class CArray
             "Ruby; write the test at the top",
             node.location)
         end
-        condition = build(node.predicate)
+        condition = build_condition(node.predicate)
         @loop_depth += 1
         statements = statements_of(node.statements).map { |inner|
           build_statement(inner)
@@ -1770,7 +1770,7 @@ class CArray
           else
             raise Unsupported.new("unsupported `if` continuation", node.location)
           end
-        Branch.new(build(node.predicate),
+        Branch.new(build_condition(node.predicate),
                    statements_of(node.statements).map { |inner|
                      build_statement(inner)
                    },
@@ -3021,6 +3021,42 @@ class CArray
         CaptureRead.new(name, location)
       end
 
+      # What `if`, `while` and `?:` read.  A pointer parameter named bare
+      # there is Ruby's truthiness -- nil is false and an array is true -- so
+      # `if grad` asks whether an address came, which is what NLopt's
+      # derivative-free methods leave out.  Only where a condition is read:
+      # anywhere else the bare name would be a value, and a pointer is not
+      # one.  `!`, `&&`, `||` and parentheses are looked through, since each
+      # of those reads its operands as conditions too.
+      def build_condition (node)
+        case node
+        when Prism::ParenthesesNode
+          inner = node.body ? node.body.body : []
+          return build_condition(inner.first) if inner.size == 1
+        when Prism::AndNode
+          return LogicalOperation.new(:"&&", build_condition(node.left),
+                                      build_condition(node.right), node.location)
+        when Prism::OrNode
+          return LogicalOperation.new(:"||", build_condition(node.left),
+                                      build_condition(node.right), node.location)
+        when Prism::CallNode
+          if node.name == :! && node.receiver && node.arguments.nil?
+            return LogicalNot.new(build_condition(node.receiver), node.location)
+          end
+        end
+        pointer_test(node, false, node.location) || build(node)
+      end
+
+      # A PointerTest when `receiver` names a pointer parameter, nil when it
+      # does not.  Asking is not reaching through, so a `void *` may be asked
+      # too: whether a slot was filled is a question about the slot.
+      def pointer_test (receiver, null, location)
+        name = captured_name(receiver)
+        return nil unless name && @pointers.key?(name)
+        return nil if @local_names.include?(name)
+        PointerTest.new(name, null, location)
+      end
+
       def build_conditional (node)
         unless node.subsequent
           raise Unsupported.new("`if` without `else` has no value for every cell",
@@ -3029,7 +3065,7 @@ class CArray
         unless node.subsequent.is_a?(Prism::ElseNode)
           raise Unsupported.new("`elsif` is not supported", node.location)
         end
-        Conditional.new(build(node.predicate),
+        Conditional.new(build_condition(node.predicate),
                         build_single(node.statements, node.location, "if"),
                         build_single(node.subsequent.statements, node.location, "else"),
                         node.location)
@@ -3124,6 +3160,20 @@ class CArray
           end
           return Clamp.new(build(node.receiver), build(arguments.first),
                            build(arguments.last), node.location)
+        end
+        if node.name == :nil? && arguments.empty? &&
+           (test = pointer_test(node.receiver, true, node.location))
+          return test
+        end
+        if [:==, :!=].include?(node.name) && arguments.size == 1
+          # `grad == nil` and `nil == grad`, which Ruby answers the way
+          # `grad.nil?` does and so may be written wherever that is.
+          receiver, other = node.receiver, arguments.first
+          receiver, other = other, receiver if receiver.is_a?(Prism::NilNode)
+          if other.is_a?(Prism::NilNode) &&
+             (test = pointer_test(receiver, node.name == :==, node.location))
+            return test
+          end
         end
         if arguments.empty? && NUMERIC_PREDICATES.include?(node.name)
           return NumericPredicate.new(node.name, build(node.receiver),

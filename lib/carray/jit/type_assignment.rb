@@ -361,6 +361,8 @@ class CArray
         when MaskTest
           walk_subscripts(node.subscripts)
           node.type = :boolean
+        when PointerTest
+          node.type = :boolean
         when NumericPredicate
           walk(node.operand)
           node.type = :boolean
@@ -932,6 +934,8 @@ class CArray
           # Nothing to check: no value is computed.
         when MaskTest
           # Nothing to check: it reads a mask byte.
+        when PointerTest
+          # Nothing to check: it compares an address with NULL.
         when Clamp
           node.children.each { |child| verify(child) }
           types = node.children.map(&:type)
