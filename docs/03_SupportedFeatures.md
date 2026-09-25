@@ -850,7 +850,11 @@ A failure inside the window outranks whatever the library made of it. The body r
 
 A window may be opened inside a window, and `#call` may be made inside one: both borrow the flag and put it back as they found it, so an inner window answers for its own block and no other, and a call answers for itself without disarming whoever is watching. A kernel run inside a window is untouched either way -- a kernel is handed its own slot, and never reaches this flag at all.
 
-One flag per compiled object, so two functions never share a window. Threads do share one, though: the flag is a single `int32_t` beside the body, so lending the same function to two threads at once is not a window that can be made to mean anything. That is C's bargain again, taken along with `void *params`.
+One flag per compiled object and one per thread, so two functions never share a window and neither do two threads. The second half matters more than it sounds: the object is shared whether or not anybody meant to share it, because two blocks with the same text compile to one function. So a program that never mentions threads can open two windows on one body, and one flag between them is a window neither of them can read -- the second to open puts down what the first had already recorded. The flag and the hook are `_Thread_local`, which costs about half a nanosecond a call, and only on a body that has a flag at all.
+
+The thread is the native one, which for Ruby is the thread that opened the window -- except under the M:N scheduler (a non-main Ractor's threads, or `RUBY_MN_THREADS=1`), where a Ruby thread is not tied to one native thread and the window cannot be relied on to be the same copy throughout.
+
+What this leaves outside the window is a library that calls the body from threads of its own. The flag such a call raises belongs to the thread that raised it: the body stops answering there, as it should, and the window watching from Ruby sees nothing and raises nothing. A library that calls back on the thread it was called from -- which is what GSL and NLopt do -- is inside the window.
 
 #### Telling the holder to stop
 
@@ -864,7 +868,7 @@ f.watching { nlopt_optimize.call(opt, x, minf) }
 
 The hook is any `void (*)(void *)` -- an address as a `Fiddle::Pointer` or an Integer -- and the second argument is the one pointer it is called with. It is called once, by the call whose body put the flag up; every call after that is turned away before the body runs, so it is not called again until the flag has been put down and gone up again. It runs in C and reaches no Ruby value, as the body does not. `on_error(nil)` takes it away.
 
-`#call` does not call it. That is one call made from Ruby, and it answers for itself by raising, as it does inside a window. A body that cannot fail has no flag to go up and is compiled without the hook; `on_error` is accepted there and never called, so a library binding can set it without asking which kind of body it was given. The hook belongs to the compiled object, like the flag.
+`#call` does not call it. That is one call made from Ruby, and it answers for itself by raising, as it does inside a window. A body that cannot fail has no flag to go up and is compiled without the hook; `on_error` is accepted there and never called, so a library binding can set it without asking which kind of body it was given. The hook belongs to the thread that set it, like the flag, so it is set on the thread that will lend the address -- which is where the window is written anyway.
 
 A float division is not this case: `1.0 / 0.0` is an infinity in Ruby, in C and here, so a body that only divides floats declares no flag and pays nothing for one. Neither is a subscript on a pointer parameter, which is unchecked by design -- the caller's business, as it is in C. The one exception needs nothing to run: a literal subscript outside a length the declaration gave -- `v[7]` or `v[-1]` against `double v[2]` -- is refused as the body is read, since the caller is held to that many cells and no more.
 

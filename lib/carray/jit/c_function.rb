@@ -111,10 +111,10 @@ class CArray
 
       def initialize (name, prototype, return_type, parameters, pointer,
                       symbol: nil,
-                      block: nil, c_source: nil, origin: nil, error: nil,
+                      block: nil, c_source: nil, origin: nil,
                       definition: nil, helpers: nil, takes_error: false,
                       raise_messages: {}, dependencies: [], shim: nil,
-                      hook: nil)
+                      error_state: nil)
         # The name the declaration gave, which is what a reader wrote and
         # what an error should say.  It is nil where the declaration gave
         # none -- `double (*)(double)` names no function.
@@ -143,18 +143,14 @@ class CArray
         @takes_error = takes_error
         @raise_messages = raise_messages
         @origin = origin
-        # Where the compiled body says a division had no divisor, or a
-        # subscript ran off its array.  Nil when the body can do neither.
-        @error = error
+        # What the object answers when asked where this thread's flag and
+        # hook pointers stand.  Nil when the body can neither divide by zero
+        # nor raise, and so has none.
+        @error_state = error_state
         # The address of the entry point a call from Ruby takes where the
         # signature carries a complex by value; nil where it does not, which
         # is every other signature and every borrowed function.
         @shim = shim
-        # The two pointers beside the flag that #on_error writes, and what
-        # it was handed, held so that nothing it points at is collected while
-        # the C may still call it.  Nil where there is no flag.
-        @hook = hook
-        @hook_held = nil
         @function = nil
       end
 
@@ -526,44 +522,93 @@ class CArray
       # `#call` does not call it: that is one call made from Ruby, and it
       # answers for itself by raising, as it does inside a window. A body
       # that cannot fail has no flag to go up, so for it this is accepted
-      # and never called. Like the flag, it belongs to the compiled object,
-      # so a function that shares its body with this one shares the hook.
+      # and never called.
+      #
+      # Like the flag, it belongs to the thread that set it: a body lent from
+      # two threads at once has a hook and a flag in each of them, and this
+      # sets the one belonging to the thread that calls it. So it is set on
+      # the thread that will lend the address, which is where `#watching` is
+      # written anyway.
       #
       # Returns self.
       def on_error (hook, data = nil)
-        return self unless @hook
+        state = error_state
+        return self unless state
         address = hook.nil? ? 0 : hook.to_i
-        @hook[1][0, Fiddle::SIZEOF_VOIDP] =
+        state.data[0, Fiddle::SIZEOF_VOIDP] =
           [data.nil? ? 0 : data.to_i].pack("J")
-        @hook[0][0, Fiddle::SIZEOF_VOIDP] = [address].pack("J")
-        @hook_held = hook.nil? ? nil : [hook, data]
+        state.hook[0, Fiddle::SIZEOF_VOIDP] = [address].pack("J")
+        state.held = hook.nil? ? nil : [hook, data]
         self
       end
 
       private
 
-      # 0 where the body cannot fail at all: one that neither divides nor
-      # raises is compiled without a flag to read, and has no failure to
+      # One thread's copy of the three the compiled object carries -- the
+      # flag, the hook's address and the pointer it is handed -- with the
+      # Ruby objects `#on_error` was given held beside them, so that nothing
+      # the C may still call is collected.
+      ErrorState = Struct.new(:flag, :hook, :data, :held)
+      private_constant :ErrorState
+
+      # Where those copies are kept, per thread.  A thread variable rather
+      # than a fiber-local one, because what is being tracked is the C's own
+      # storage: every fiber running on a thread reaches that thread's copy.
+      THREAD_STATES = :carray_jit_error_states
+      private_constant :THREAD_STATES
+
+      # This thread's, resolved by asking the object where they stand and
+      # kept for as long as the thread lives -- a thread's copies do not
+      # move.  Nil where the body cannot fail at all: one that neither
+      # divides nor raises is compiled without a flag, and has no failure to
       # report rather than an unread one.
+      def error_state
+        return nil unless @error_state
+        thread = Thread.current
+        kept = thread.thread_variable_get(THREAD_STATES)
+        unless kept
+          kept = {}
+          thread.thread_variable_set(THREAD_STATES, kept)
+        end
+        # By symbol, which carries a digest of the body: two functions with
+        # the same symbol are one compiled object and one set of copies.
+        kept[@symbol] ||= resolve_error_state
+      end
+
+      def resolve_error_state
+        out = String.new("\0" * (3 * Fiddle::SIZEOF_VOIDP))
+        @error_state.call(out)
+        flag, hook, data = out.unpack("J3")
+        ErrorState.new(Fiddle::Pointer.new(flag, 4),
+                       Fiddle::Pointer.new(hook, Fiddle::SIZEOF_VOIDP),
+                       Fiddle::Pointer.new(data, Fiddle::SIZEOF_VOIDP),
+                       nil)
+      end
+
+      # 0 where the body cannot fail at all.
       def error_code
-        @error ? @error[0, 4].unpack1("l") : 0
+        state = error_state
+        state ? state.flag[0, 4].unpack1("l") : 0
       end
 
       def write_error (code)
-        @error[0, 4] = [code].pack("l") if @error
+        state = error_state
+        state.flag[0, 4] = [code].pack("l") if state
       end
 
       # The hook's address, cleared for the length of one call from Ruby,
       # and put back afterwards.
       def disarm_hook
-        return nil unless @hook
-        held = @hook[0][0, Fiddle::SIZEOF_VOIDP]
-        @hook[0][0, Fiddle::SIZEOF_VOIDP] = "\0" * Fiddle::SIZEOF_VOIDP
+        state = error_state
+        return nil unless state
+        held = state.hook[0, Fiddle::SIZEOF_VOIDP]
+        state.hook[0, Fiddle::SIZEOF_VOIDP] = "\0" * Fiddle::SIZEOF_VOIDP
         held
       end
 
       def rearm_hook (held)
-        @hook[0][0, Fiddle::SIZEOF_VOIDP] = held if held
+        state = error_state
+        state.hook[0, Fiddle::SIZEOF_VOIDP] = held if state && held
       end
 
       def raise_for (code)
@@ -1284,14 +1329,16 @@ class CArray
         # Where the body can divide by zero or reach outside an array, the
         # object carries a place to say so.  Reading it is what lets a call
         # from Ruby raise what the same expression raises in Ruby.
-        error = if generator.uses_error_flag?
-                  Fiddle::Pointer.new(handle[CGenerator::ERROR_FLAG], 4)
-                end
-        hook = if generator.uses_error_flag?
-                 [CGenerator::ERROR_HOOK, CGenerator::ERROR_HOOK_DATA].map { |name|
-                   Fiddle::Pointer.new(handle[name], Fiddle::SIZEOF_VOIDP)
-                 }
-               end
+        #
+        # The place is the calling thread's, and a thread-local is not a name
+        # the loader can hand an address for, so what is taken here is the
+        # accessor beside it -- called once per thread, from that thread.
+        error_state = if generator.uses_error_flag?
+                        Fiddle::Function.new(handle[CGenerator::ERROR_STATE],
+                                             [Fiddle::TYPE_VOIDP],
+                                             Fiddle::TYPE_VOID,
+                                             name: CGenerator::ERROR_STATE)
+                      end
         # A body that reports failures is generated a second time for pasting,
         # with the flag as a parameter.  A second generator rather than the
         # same one twice: what it emitted is what it holds, and the two forms
@@ -1310,13 +1357,12 @@ class CArray
                   symbol: symbol,
                   shim: shim_symbol && handle[shim_symbol],
                   block: block, c_source: generator.provenance + c_source,
-                  origin: origin, error: error,
+                  origin: origin, error_state: error_state,
                   definition: pasted.function_definition,
                   helpers: pasted.helper_needs,
                   dependencies: called.values,
                   takes_error: generator.uses_error_flag?,
-                  raise_messages: generator.raise_messages,
-                  hook: hook)
+                  raise_messages: generator.raise_messages)
       end
 
       # The entry point a call from Ruby takes where the signature carries a
