@@ -892,6 +892,8 @@ The generated C keeps the spelling it was given, so the C compiler gives it its 
 
 A parameter may be one, which is the point of reading them: a body that counts bytes or elements is declared the way C declares it rather than in a translation of it.
 
+The platform's own integer words read the same way, in whatever order C allows them: `unsigned` is `unsigned int`, `long unsigned int` is `unsigned long`, and `int` may be left out wherever C lets it be. That is how headers are written -- NLopt's objective is `double (*)(unsigned n, const double *x, double *grad, void *f_data)` -- and a declaration copied out of one reads as it stands. A combination C has no type for, such as `short long` or `signed unsigned`, is refused by name.
+
 ```ruby
 stride = CArray.jit_function("size_t stride(size_t n, size_t width)") { |n, w|
   n * w

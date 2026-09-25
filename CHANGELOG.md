@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: a prototype given to `jit_function` or `jit_extern` reads C's integer
+  types in any word order and without `int`, as C does -- `unsigned n`,
+  `long unsigned int`, `short unsigned` -- so a header's declaration can be
+  copied as it stands. `int unsigned`, which was taken as a signed `int`,
+  is now unsigned. A combination C does not have, such as `short long`, is
+  refused.
+
 - New: a `jit_function` body may ask whether a pointer parameter was handed
   an address -- `if grad`, `grad.nil?`, `grad == nil`, `grad != nil` -- and
   `f.call` passes `nil` there as `NULL`. This is what a callback needs where
