@@ -129,14 +129,14 @@ if LAPACK
   lapack = median(SAMPLES.times.map {
     a, b, c, d = system.map { |v| v.copy }
     right = d[nil, :_]
-    Benchmark.realtime { CArray::Linalg.solve_tridiagonal(a[1..-1], b, c[0..-2], right) }
+    Benchmark.realtime { CA::Linalg.solve_tridiagonal(a[1..-1], b, c[0..-2], right) }
   })
   puts format("  (copying ?gtsv's four arguments, excluded: %.1f ms)", copy_cost * 1e3)
   puts format("LAPACK ?gtsv             %8.1f ms   %6.1f ns/element  %5.2fx",
               lapack * 1e3, lapack / N * 1e9, lapack / jit)
 
   a, b, c, d = system.map { |v| v.copy }
-  solution = CArray::Linalg.solve_tridiagonal(a[1..-1], b, c[0..-2], d[nil, :_])
+  solution = CA::Linalg.solve_tridiagonal(a[1..-1], b, c[0..-2], d[nil, :_])
   difference = (0...N).map { |i| (solution[i, 0] - reference[i]).abs }.max
   puts format("largest difference from LAPACK: %.3g", difference)
 end
