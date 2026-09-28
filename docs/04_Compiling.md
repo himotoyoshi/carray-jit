@@ -263,7 +263,7 @@ The tridiagonal solver in `test/test_thomas.rb` is the case the design had to be
 The Ruby loop is the comparison this gem is about. The LAPACK row is **not** a claim that this is faster than LAPACK, and three things stand between it and any such reading:
 
 - `?gtsv` does LU with partial pivoting and solves systems that are not diagonally dominant. This solves the ones that are. Skipping the pivot is most of the difference.
-- What is timed is `CArray::Linalg.solve_tridiagonal`, not `?gtsv` itself: the diagonals are passed as views, so there are contiguity copies, plus validation and output allocation, inside that number.
+- What is timed is `CA::Linalg.solve_tridiagonal`, not `?gtsv` itself: the diagonals are passed as views, so there are contiguity copies, plus validation and output allocation, inside that number.
 - The four arguments `?gtsv` overwrites have to be copied first, and that is excluded from the figure, because it is not part of solving.
 
 What the comparison is good for is the other direction. `?gtsv` exists, so this kernel can be checked against it, and it agrees to within rounding. The algorithms `jit_for` is actually for, a periodic tridiagonal solve or a domain-specific recurrence, have no LAPACK entry point to be checked against at all.
