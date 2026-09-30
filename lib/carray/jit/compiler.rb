@@ -159,7 +159,9 @@ class CArray
             if defined?(Gem::Specification)
               begin
                 Gem::Specification.find_by_name("carray").version.to_s
-              rescue StandardError
+              rescue StandardError, LoadError
+                # A gem that is not installed raises Gem::MissingSpecError,
+                # which is a LoadError rather than a StandardError.
                 "none"
               end
             else

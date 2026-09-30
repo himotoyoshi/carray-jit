@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: the `carray-jit` command runs when the carray gem is not installed.
+  `status`, `list`, `show` and `clear` used to stop with
+  `Gem::MissingSpecError`; they now work on the cache directory named
+  `carraynone`. Nothing changes where carray is installed as a gem.
+
 - Fix: a compiled `jit_function` exports its own declared symbol and nothing
   under a fixed name, so several of them can be linked into one library.
   Two bodies that could fail -- either raising, or dividing an integer by
