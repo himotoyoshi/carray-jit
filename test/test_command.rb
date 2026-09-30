@@ -46,6 +46,27 @@ class TestCommand < Minitest::Test
     assert_match(/kernels\s+0/, output)
   end
 
+  # The command loads the compiler and not CArray, so that a cache can be
+  # looked after when CArray will not load.  That has to hold when CArray is
+  # not installed at all.
+  def test_status_runs_without_the_carray_gem
+    # Only CArray is made to be missing; the compiler still needs fiddle,
+    # which is an ordinary gem from Ruby 4.0.
+    missing = File.join(@root, "missing_carray.rb")
+    File.write(missing, <<~RUBY)
+      Gem::Specification.singleton_class.prepend(Module.new {
+        def find_by_name (name, *requirements)
+          raise Gem::MissingSpecError.new(name, Gem::Requirement.default) if name == "carray"
+          super
+        end
+      })
+    RUBY
+    output, status = Open3.capture2e({ "CARRAY_JIT_CACHE" => @root },
+                                     RbConfig.ruby, "-r", missing, COMMAND, "status")
+    assert(status.success?, output)
+    assert_match(/environment\s+\S+-carraynone-/, output)
+  end
+
   def test_status_is_the_default_command
     assert_equal(run_command("status").first, run_command.first)
   end
