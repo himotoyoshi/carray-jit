@@ -44,6 +44,10 @@ class CArray
         boolean: "uint8_t",
       }.freeze
 
+      # A shifted read is a node CArray added after 3.0.2; one that does not
+      # have it never hands one over.
+      SHIFTED = defined?(CArray::Fusion::Shifted) ? CArray::Fusion::Shifted : Class.new
+
       def initialize
         @kernels = {}
       end
@@ -54,6 +58,9 @@ class CArray
       def call (plan, out)
         return false unless C_TYPES.key?(plan.data_type)
         aliased = plan.leaves.any? { |array| array.equal?(out) }
+        # A shifted read reaches cells other than the one being written, so
+        # over its own output it would read what it has just written.
+        return false if aliased && shifted_leaves(plan).any? { |i| plan.leaves[i].equal?(out) }
         kernel = kernel_for(plan, aliased) or return false
         arrays = [out, *plan.leaves]
         writable = [true, *Array.new(plan.leaves.size, false)]
@@ -61,7 +68,12 @@ class CArray
           return false unless bases.each_with_index.all? { |basis, i|
             basis[:strides] == end_to_end(arrays[i])
           }
-          kernel.call(out.elements, *pointers(plan, bases))
+          if shifted?(plan)
+            dim = out.dim.pack("q*")
+            kernel.call(out.elements, Fiddle::Pointer[dim], *pointers(plan, bases))
+          else
+            kernel.call(out.elements, *pointers(plan, bases))
+          end
         end
         true
       rescue ZeroDivisionError
@@ -108,7 +120,15 @@ class CArray
 
       def arity (plan)
         plan.leaves.size + plan.leaves.count { |array| array.has_mask? } +
-          (plan.masked ? 1 : 0)
+          (plan.masked ? 1 : 0) + (shifted?(plan) ? 1 : 0)
+      end
+
+      def shifted? (plan)
+        plan.nodes.any? { |node| node.is_a?(SHIFTED) }
+      end
+
+      def shifted_leaves (plan)
+        plan.nodes.grep(SHIFTED).map(&:index)
       end
 
       def pointers (plan, bases)
@@ -136,8 +156,9 @@ class CArray
       def source_for (plan, aliased)
         out_type = C_TYPES.fetch(plan.data_type)
         restrict = aliased ? "" : "restrict "
-        body = plan.nodes.each_with_index.map { |node, i| line(plan, node, i) }
-        return nil if body.any?(&:nil?)
+        body = statements(plan, :edge) or return nil
+        result = ["out[n] = v#{plan.nodes.size - 1};",
+                  *(plan.masked ? ["out_mask[n] = m#{plan.nodes.size - 1};"] : [])]
         <<~C
           #include <math.h>
           #include <stdlib.h>
@@ -154,14 +175,70 @@ class CArray
           typedef double float64_t;
 
           void
-          carray_jit_expression (int64_t elements, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
+          carray_jit_expression (int64_t elements#{shifted?(plan) ? ", const int64_t *dim" : ""}, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
           {
-            for ( int64_t n = 0; n < elements; n++ ) {
-          #{body.flatten.map { |l| "    " + l }.join("\n")}
-              out[n] = v#{plan.nodes.size - 1};#{plan.masked ? "\n    out_mask[n] = m#{plan.nodes.size - 1};" : ""}
-            }
+          #{loop(plan, body + result, shifted?(plan) && (statements(plan, :inside) + result)).join("\n")}
           }
         C
+      end
+
+      # The C for every node, in order.  `where` matters only to a shifted
+      # read: at the :edge it may fall outside the array, :inside it cannot.
+      def statements (plan, where)
+        @where = where
+        body = plan.nodes.each_with_index.map { |node, i| line(plan, node, i) }
+        body.any?(&:nil?) ? nil : body.flatten
+      end
+
+      # Cell by cell in storage order.  A plan that reads an array shifted
+      # needs to know where along each axis the cell is, so it walks the
+      # outer axes and splits the last one in three: the stretch in the
+      # middle, where no shifted read can leave the array, is a plain loop
+      # the compiler can vectorise, and only the ends check.
+      def loop (plan, edge, inside = nil)
+        unless inside
+          return ["  for ( int64_t n = 0; n < elements; n++ ) {",
+                  *edge.map { |l| "    " + l }, "  }"]
+        end
+        ndim = plan.dim.size
+        last = ndim - 1
+        offsets = plan.nodes.grep(SHIFTED).map(&:offset)
+        lines = (0...ndim).map { |k| "  const int64_t d#{k} = dim[#{k}];" }
+        plan.nodes.each_with_index do |node, i|
+          next unless node.is_a?(SHIFTED)
+          flat = (1...ndim).reduce("(int64_t)(#{node.offset[0]})") { |acc, k|
+            "(#{acc}) * d#{k} + (#{node.offset[k]})"
+          }
+          lines << "  const int64_t o#{i} = #{flat};"
+        end
+        (0...ndim).each do |k|
+          below = [0, *offsets.map { |o| -o[k] }].max
+          above = [0, *offsets.map { |o| o[k] }].max
+          lines << "  const int64_t lo#{k} = d#{k} < #{below} ? d#{k} : #{below};"
+          lines << "  const int64_t hi#{k} = d#{k} - #{above} > lo#{k} ? d#{k} - #{above} : lo#{k};"
+        end
+        indent = "  "
+        (0...last).each do |k|
+          lines << "#{indent}for ( int64_t i#{k} = 0; i#{k} < d#{k}; i#{k}++ ) {"
+          indent += "  "
+        end
+        row = (0...last).reduce("(int64_t) 0") { |acc, k| "(#{acc}) * d#{k} + i#{k}" }
+        row = "(#{row}) * d#{last}"
+        outer = (0...last).map { |k| "i#{k} >= lo#{k} && i#{k} < hi#{k}" }
+        lines << "#{indent}const int64_t row = #{row};"
+        lines << "#{indent}const int64_t a = #{outer.empty? ? "lo#{last}" : "(#{outer.join(" && ")}) ? lo#{last} : d#{last}"};"
+        lines << "#{indent}const int64_t b = a < hi#{last} ? hi#{last} : a;"
+        [["0", "a", edge], ["a", "b", inside], ["b", "d#{last}", edge]].each do |from, to, body|
+          lines << "#{indent}for ( int64_t i#{last} = #{from}; i#{last} < #{to}; i#{last}++ ) {"
+          lines << "#{indent}  const int64_t n = row + i#{last};"
+          lines.concat(body.map { |l| "#{indent}  " + l })
+          lines << "#{indent}}"
+        end
+        (last - 1).downto(0) do |k|
+          indent = indent[2..]
+          lines << "#{indent}}"
+        end
+        lines
       end
 
       def mask_parameter (plan, restrict)
@@ -182,6 +259,8 @@ class CArray
         when CArray::Fusion::Leaf
           ["#{type} v#{i} = a#{node.index}[n];",
            *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? "k#{node.index}[n]" : "0"};"] : [])]
+        when SHIFTED
+          shifted_line(plan, node, i, type)
         when CArray::Fusion::Const
           ["#{type} v#{i} = #{literal(node)};",
            *(plan.masked ? ["uint8_t m#{i} = 0;"] : [])]
@@ -191,6 +270,39 @@ class CArray
            "#{type} v#{i};",
            *guarded(node, i, statement, plan.masked)]
         end
+      end
+
+      # The cell `offset` away, read from an index clamped into the array so
+      # that the load is always in bounds, then replaced where it fell out.
+      def shifted_line (plan, node, i, type)
+        bounds = node.bounds.uniq
+        return nil unless bounds.size == 1
+        if @where == :inside
+          return ["#{type} v#{i} = a#{node.index}[n + o#{i}];",
+                  *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? "k#{node.index}[n + o#{i}]" : "0"};"] : [])]
+        end
+        ndim = node.offset.size
+        index = (0...ndim).map { |k| "s#{i}_#{k}" }
+        lines = node.offset.each_with_index.map { |o, k|
+          "int64_t #{index[k]} = i#{k} + (#{o});"
+        }
+        inside = (0...ndim).map { |k| "#{index[k]} >= 0 && #{index[k]} < d#{k}" }.join(" && ")
+        lines << "int s#{i}_in = #{inside};"
+        (0...ndim).each { |k|
+          lines << "int64_t c#{i}_#{k} = #{index[k]} < 0 ? 0 : (#{index[k]} >= d#{k} ? d#{k} - 1 : #{index[k]});"
+        }
+        flat = (1...ndim).reduce("c#{i}_0") { |acc, k| "(#{acc}) * d#{k} + c#{i}_#{k}" }
+        lines << "#{type} v#{i} = a#{node.index}[#{flat}];"
+        if bounds.first == :fill
+          fill = CArray::Fusion::Const.new(node.fill, node.data_type)
+          lines << "if ( ! s#{i}_in ) { v#{i} = #{literal(fill)}; }"
+        end
+        if plan.masked
+          inner = node.masked ? "k#{node.index}[#{flat}]" : "0"
+          outer = bounds.first == :mask ? "1" : "0"
+          lines << "uint8_t m#{i} = s#{i}_in ? #{inner} : #{outer};"
+        end
+        lines
       end
 
       def literal (node)
