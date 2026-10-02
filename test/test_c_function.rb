@@ -529,14 +529,62 @@ class TestCFunction < Minitest::Test
     assert_match(/reaches `scale`, which is a value outside it/, error.message)
   end
 
-  # Taken for a new local of the same name, this reached the C compiler
-  # declared twice.  A parameter is what the function was called with.
-  def test_it_may_not_assign_a_parameter
+  # A parameter is the function's own copy of what it was called with, and a
+  # body may count it down or replace it, as a C body may.  Taken for a new
+  # local of the same name, this once reached the C compiler declared twice.
+  def test_it_may_assign_a_parameter
+    twice = CArray.jit_function("double (*)(double x)") { |x| x = x * 2.0; x }
+    assert_equal 6.0, twice.call(3.0)
+
+    total = CArray.jit_function("int64_t (*)(int64_t n)") { |n|
+      sum = 0
+      while n > 0
+        sum += n
+        n -= 1
+      end
+      sum
+    }
+    assert_equal 15, total.call(5)
+    assert_equal total.block.call(5), total.call(5)
+  end
+
+  # Ruby's rule, not C's: the name holds what was last assigned to it, so an
+  # integer parameter given a Float is a Float from there on.
+  def test_an_assigned_parameter_takes_the_type_of_its_value
+    halve = CArray.jit_function("double (*)(int64_t n)") { |n| n = n / 2.0; n }
+    assert_equal 1.5, halve.call(3)
+  end
+
+  # Under `a, b = b, a`, inside a loop's block, and from a kernel the body is
+  # pasted into: the same local wherever it is written.
+  def test_an_assigned_parameter_wherever_it_is_written
+    swap = CArray.jit_function("double (*)(double a, double b)") { |a, b|
+      a, b = b, a
+      a - b
+    }
+    assert_equal 1.0, swap.call(1.0, 2.0)
+
+    count = CArray.jit_function("double (*)(double c, int64_t n)") { |c, n|
+      n.times { |i| c += 1.0 }
+      c
+    }
+    assert_equal 3.0, count.call(0.0, 3)
+
+    half = CArray.jit_function("double (*)(double x)") { |x| x = x / 2.0; x + 1.0 }
+    a = CArray.double(4).seq!(1.0)
+    out = CArray.double(4)
+    CArray.jit_each { out = half.call(a) }
+    assert_equal [1.5, 2.0, 2.5, 3.0], out.to_a
+  end
+
+  # A pointer parameter is the array the body indexes; another array under
+  # the name is nothing the body's arrays can be.
+  def test_it_may_not_assign_a_pointer_parameter
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_function("double (*)(double x)") { |x| x = x * 2.0; x }
+      CArray.jit_function("void (*)(double *o, const double *p)") { |o, p| o = p }
     end
-    assert_match(/`x` is a parameter/, error.message)
-    assert_match(/a local of its own name/, error.message)
+    assert_match(/`o` is a pointer parameter/, error.message)
+    assert_match(/`o\[0\] = \.\.\.`/, error.message)
   end
 
   def test_it_may_not_close_over_an_array

@@ -263,7 +263,7 @@ class CArray
       COMPARISON_OPERATORS = [:<, :<=, :>, :>=, :==, :!=].freeze
 
       attr_reader :parameter_names, :pointer_names, :address_arrays,
-                  :address_parameters, :random_names
+                  :address_parameters, :random_names, :assigned_parameters
       # An offset that is an integer here rather than when the kernel runs.
       # A literal is one; so is arithmetic over literals, which is the same
       # number written a way that says where it came from -- `w[-RADIUS-1]`
@@ -535,6 +535,7 @@ class CArray
         @scalar_names = []
         @c_function_names = []
         @parameter_names = []
+        @assigned_parameters = []
         @pointer_names = []
         @address_arrays = []
         @address_parameters = {}
@@ -808,7 +809,15 @@ class CArray
           raise Unsupported.new("kernel body is empty")
         end
         @assigned_names = collect_assigned_names(block.body)
-        refuse_parameter_assignment(block.body) if @function
+        read_parameter_assignments(block.body) if @function
+        # A parameter the body assigns is a local from the top of the body
+        # on, starting at the value the call passed.  Bound here, before any
+        # statement is built, so every read of it -- the first included --
+        # is a read of that local.
+        entry = @assigned_parameters.map { |name|
+          @scalar_names << name unless @scalar_names.include?(name)
+          assign_local(name, CaptureRead.new(name), nil)
+        }
 
         # A contraction may end in a bare expression rather than an
         # assignment; that is the form that allocates its result and returns.
@@ -840,7 +849,7 @@ class CArray
           built << (returns_value ? build(last) : build_statement(last))
           @map_value = built.last if @map
         end
-        @body = KernelBody.new(built)
+        @body = KernelBody.new(entry + built)
 
         return if @contract == :probe || @map == :probe
         return if @function
@@ -1240,18 +1249,24 @@ class CArray
         names.uniq
       end
 
-      # A function's parameter is what it was called with, and nothing in a
-      # body writes one.  Left to go through, the assignment was taken for a
-      # new local of the same name -- declared a second time in the C, which
-      # the C compiler refused, or read before it was assigned, which is not
-      # what it is.
+      # A parameter the body assigns.  Left alone, the assignment was taken
+      # for a new local of the same name -- declared a second time in the C,
+      # which the C compiler refused, or read before it was assigned, which
+      # is not what it is.
+      #
+      # In a `jit_function` body it is what C makes of it: the parameter is
+      # the function's own copy of what it was called with, and a body may
+      # count it down or replace it.  So a number is kept, and bound as a
+      # local at the top of the body (see #analyze).  A pointer is not: the
+      # name is the array the body indexes, and a second array under it is
+      # nothing the body's arrays can be.
       #
       # For `jit_call` it is the leak in the block reading as a closure: the
       # name is a local of the method around the call, and assigning it
       # looks like writing that local, which a value passed by value cannot
       # do.  An array parameter does come back, through its cells, so the
       # two look alike and only one of them works.
-      def refuse_parameter_assignment (node)
+      def read_parameter_assignments (node)
         return unless node
         if ASSIGNMENT_NODES.any? { |kind| node.is_a?(kind) } &&
            @parameter_names.include?(node.name)
@@ -1266,13 +1281,16 @@ class CArray
               "one-cell array and write its cell",
               node.location)
           end
-          raise Unsupported.new(
-            "`#{name}` is a parameter, which is what the function was called " \
-            "with, and a body does not assign one; give it a local of its own " \
-            "name",
-            node.location)
+          if @pointers.key?(name)
+            raise Unsupported.new(
+              "`#{name}` is a pointer parameter, and the body's arrays are " \
+              "the ones it was called with; write its cells, as in " \
+              "`#{name}[0] = ...`, rather than the name",
+              node.location)
+          end
+          @assigned_parameters << name unless @assigned_parameters.include?(name)
         end
-        node.compact_child_nodes.each { |child| refuse_parameter_assignment(child) }
+        node.compact_child_nodes.each { |child| read_parameter_assignments(child) }
       end
 
       # Accepts `->(i) { ... }`, `proc { |i| ... }` and `lambda { |i| ... }`.
