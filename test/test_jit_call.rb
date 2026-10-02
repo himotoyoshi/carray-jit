@@ -223,6 +223,55 @@ class TestJitCall < Minitest::Test
     assert_match(/leave the block's off/, error.message)
   end
 
+  # The block reads as a closure and is an argument list.  Assigning a
+  # parameter looks like writing the local around the call, and a number is
+  # passed by value -- so it is refused rather than compiled into a write
+  # that goes nowhere.
+  def test_a_parameter_that_is_assigned
+    count = 0.0
+    n = 4
+    error = assert_raises(CArray::JIT::Unsupported) {
+      CArray.jit_call("void (*)(double count, size_t n)") {
+        n.times { |i| count = count + 1.0 }
+      }
+    }
+    assert_match(/`count` is a parameter of this `jit_call`/, error.message)
+    assert_match(/passed by value/, error.message)
+    assert_equal 0.0, count
+  end
+
+  # Every spelling that writes a name is one, wherever in the body it is.
+  def test_a_parameter_assigned_by_any_spelling
+    count = 0.0
+    n = 4
+    prototype = "void (*)(double count, size_t n)"
+    errors = [
+      assert_raises(CArray::JIT::Unsupported) {
+        CArray.jit_call(prototype) { count = 5.0 }
+      },
+      assert_raises(CArray::JIT::Unsupported) {
+        CArray.jit_call(prototype) { count += 1.0 }
+      },
+      assert_raises(CArray::JIT::Unsupported) {
+        CArray.jit_call(prototype) { count, other = 1.0, 2.0 }
+      },
+      assert_raises(CArray::JIT::Unsupported) {
+        CArray.jit_call(prototype) { n.times { |i| count = 2.0 } }
+      },
+    ]
+    errors.each { |error| assert_match(/`count` is a parameter/, error.message) }
+  end
+
+  # An array's cells are what come back, and writing them is the point.
+  def test_an_array_parameter_is_written_through_its_cells
+    out = CArray.double(1)
+    n = 3
+    CArray.jit_call("void (*)(double *out, size_t n)") {
+      n.times { |i| out[0] = out[0] + 1.0 }
+    }
+    assert_equal [3.0], out.to_a
+  end
+
   def test_no_block
     error = assert_raises(CArray::JIT::Unsupported) {
       CArray.jit_call("void (*)(size_t n)")

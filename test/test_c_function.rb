@@ -529,6 +529,16 @@ class TestCFunction < Minitest::Test
     assert_match(/reaches `scale`, which is a value outside it/, error.message)
   end
 
+  # Taken for a new local of the same name, this reached the C compiler
+  # declared twice.  A parameter is what the function was called with.
+  def test_it_may_not_assign_a_parameter
+    error = assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_function("double (*)(double x)") { |x| x = x * 2.0; x }
+    end
+    assert_match(/`x` is a parameter/, error.message)
+    assert_match(/a local of its own name/, error.message)
+  end
+
   def test_it_may_not_close_over_an_array
     a = CArray.double(3).seq!
     error = assert_raises(CArray::JIT::Unsupported) do

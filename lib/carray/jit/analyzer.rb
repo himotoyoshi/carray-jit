@@ -808,6 +808,7 @@ class CArray
           raise Unsupported.new("kernel body is empty")
         end
         @assigned_names = collect_assigned_names(block.body)
+        refuse_parameter_assignment(block.body) if @function
 
         # A contraction may end in a bare expression rather than an
         # assignment; that is the form that allocates its result and returns.
@@ -1237,6 +1238,41 @@ class CArray
           names.concat(collect_assigned_names(child))
         end
         names.uniq
+      end
+
+      # A function's parameter is what it was called with, and nothing in a
+      # body writes one.  Left to go through, the assignment was taken for a
+      # new local of the same name -- declared a second time in the C, which
+      # the C compiler refused, or read before it was assigned, which is not
+      # what it is.
+      #
+      # For `jit_call` it is the leak in the block reading as a closure: the
+      # name is a local of the method around the call, and assigning it
+      # looks like writing that local, which a value passed by value cannot
+      # do.  An array parameter does come back, through its cells, so the
+      # two look alike and only one of them works.
+      def refuse_parameter_assignment (node)
+        return unless node
+        if ASSIGNMENT_NODES.any? { |kind| node.is_a?(kind) } &&
+           @parameter_names.include?(node.name)
+          name = node.name
+          if @declared_parameters
+            raise Unsupported.new(
+              "`#{name}` is a parameter of this `jit_call`, so assigning it " \
+              "looks like writing the local of that name -- and a parameter " \
+              "is passed by value, so nothing written here would reach it. " \
+              "An array's cells do come back, as in `#{name}[0] = ...`; for " \
+              "a number, give the body a local of its own name, or pass a " \
+              "one-cell array and write its cell",
+              node.location)
+          end
+          raise Unsupported.new(
+            "`#{name}` is a parameter, which is what the function was called " \
+            "with, and a body does not assign one; give it a local of its own " \
+            "name",
+            node.location)
+        end
+        node.compact_child_nodes.each { |child| refuse_parameter_assignment(child) }
       end
 
       # Accepts `->(i) { ... }`, `proc { |i| ... }` and `lambda { |i| ... }`.
