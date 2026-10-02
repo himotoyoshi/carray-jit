@@ -538,6 +538,7 @@ class CArray
         lines = held.map { |statement| emit_statement(statement, "  ") }.join
         lines = local_declarations(@analyzer.body, "  ") + lines
         value = @returns_nothing ? nil : emit(statements.last, return_type)
+        parameter_names = parameter_names.map { |parameter| parameter_c_name(parameter) }
         parameters = parameter_names.zip(parameter_c_types)
                        .map { |parameter, type| type.declare(parameter) }
         # Passed whether or not the body turned out to use it, so that a
@@ -2949,6 +2950,15 @@ class CArray
         bare_names.fetch(name) { c_name(name) }
       end
 
+      # A parameter the body assigns is a local of the same name from the
+      # top of the body on, so the C parameter it starts from goes under a
+      # name of its own -- one only this generator writes.  Every other
+      # name is what it always was.
+      def parameter_c_name (name)
+        return bare_name(name) unless @analyzer.assigned_parameters.include?(name.to_sym)
+        "carray_jit_parameter_#{c_name(name)}"
+      end
+
       # The names this generator writes of its own, beside the kernel's
       # parameters and C's keywords: every decoration of every array the
       # kernel reaches, at every axis it has, and a borrowed function's type.
@@ -3310,7 +3320,7 @@ class CArray
           [ZEROES.fetch(node.type), LEAF_PRECEDENCE]
         when LocalRead        then [local_c_name(node.name, node.binding, node.lane),
                                     LEAF_PRECEDENCE]
-        when CaptureRead      then [bare_name(node.name), LEAF_PRECEDENCE]
+        when CaptureRead      then [parameter_c_name(node.name), LEAF_PRECEDENCE]
         # A read is widened to the type the kernel computes in, because that
         # is the type the Ruby loop computes in: reading a float32 cell in
         # Ruby gives a Float, and reading an int32 cell gives an Integer that
