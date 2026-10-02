@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- New: `CArray.fuse` expressions holding comparisons or `shift` -- a
+  stencil, or a rule like the Game of Life's -- are compiled whole.  This
+  needs CArray 3.0.3; with an earlier CArray they are computed by CArray
+  as before.
+
 - Fix: the `carray-jit` command runs when the carray gem is not installed.
   `status`, `list`, `show` and `clear` used to stop with
   `Gem::MissingSpecError`; they now work on the cache directory named

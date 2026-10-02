@@ -56,12 +56,12 @@ class TestExpression < Minitest::Test
     compiled = expression.call.to_ca
     assert_equal walked.data_type, compiled.data_type
     assert_equal walked.dim, compiled.dim
-    mask = walked.has_mask? ? walked.mask.to_a : Array.new(walked.elements, false)
+    mask = walked.has_mask? ? walked.mask.to_a.flatten : Array.new(walked.elements, false)
     if walked.has_mask? || compiled.has_mask?
       assert compiled.has_mask?, "the compiled answer lost the mask"
-      assert_equal mask, compiled.mask.to_a, "masks differ"
+      assert_equal mask, compiled.mask.to_a.flatten, "masks differ"
     end
-    wanted, got = walked.to_a, compiled.to_a
+    wanted, got = walked.to_a.flatten, compiled.to_a.flatten
     wanted.each_index do |cell|
       next if mask[cell]
       if wanted[cell].is_a?(Float)
@@ -108,6 +108,107 @@ class TestExpression < Minitest::Test
 
   def test_a_comparison
     assert_same_answer { CArray.fuse { @a > @b } }
+  end
+
+  def test_every_comparison
+    x = CArray.int32(N) { |i| (i % 11) - 5 }
+    y = CArray.int32(N) { |i| (i % 7) - 3 }
+    %i[eq ne lt gt le ge].each do |m|
+      assert_same_answer { CArray.fuse { @a.send(m, @b) } }
+      assert_same_answer { CArray.fuse { x.send(m, y) } }
+      assert_same_answer { CArray.fuse { x.send(m, 2) } }
+    end
+  end
+
+  def test_a_predicate
+    z = @a / (@b - 3.0)          # some infinities and a NaN or two
+    %i[is_nan is_inf is_finite signbit].each do |m|
+      assert_same_answer { CArray.fuse { (z * 1.0).send(m) } }
+    end
+  end
+
+  def test_a_comparison_inside_an_expression_is_compiled_with_it
+    assert_same_answer { CArray.fuse { (@a + @b).gt(@c * 3.0) & @a.lt(50.0) } }
+    assert_equal true, computed?(CArray.fuse { (@a + @b).gt(@c * 3.0) })
+  end
+
+  def test_a_masked_comparison
+    masked = @a.copy
+    masked[5] = UNDEF
+    assert_same_answer { CArray.fuse { masked.gt(@b) | @c.eq(2.0) } }
+  end
+
+  # -- shifted reads ------------------------------------------------------
+
+  ROWS, COLUMNS = 200, 150
+  NEIGHBOURS = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]].freeze
+
+  def grid (type = :float64)
+    CArray.new(type, [ROWS, COLUMNS]) { |i, j| ((i * 7 + j * 3) % 5) }
+  end
+
+  def test_a_neighbour_sum
+    %i[uint8 int32 float64].each do |type|
+      g = grid(type)
+      assert_same_answer { CArray.fuse { NEIGHBOURS.map { |di, dj| g.shift(di, dj, fill_value: 0) }.inject(:+) } }
+    end
+  end
+
+  def test_the_game_of_life_rule
+    cells = grid(:uint8).gt(2).uint8
+    alive = cells.eq(1)
+    assert_same_answer {
+      CArray.fuse {
+        n = NEIGHBOURS.map { |di, dj| cells.shift(di, dj, fill_value: 0) }.inject(:+)
+        n.eq(3) | (alive & n.eq(2))
+      }
+    }
+  end
+
+  def test_a_shift_is_compiled_rather_than_handed_back
+    g = grid
+    assert_equal true, computed?(CArray.fuse { g.shift(1, 0, fill_value: 0) - g })
+  end
+
+  def test_a_fill_value
+    g = grid
+    assert_same_answer { CArray.fuse { g.shift(2, -3, fill_value: 9.5) + g } }
+  end
+
+  def test_a_fill_that_masks
+    g = grid
+    assert_same_answer { CArray.fuse { g.shift(1, 1, fill_value: UNDEF) * 2.0 } }
+  end
+
+  def test_a_shift_of_a_masked_array
+    g = grid
+    g[3, 4] = UNDEF
+    g[0, 0] = UNDEF
+    assert_same_answer { CArray.fuse { g.shift(-1, 1, fill_value: 0) + g } }
+  end
+
+  def test_a_shift_further_than_the_array
+    g = grid
+    assert_same_answer { CArray.fuse { g.shift(ROWS + 5, 0, fill_value: 1.0) + g } }
+    assert_same_answer { CArray.fuse { g.shift(0, -COLUMNS - 5, fill_value: 1.0) + g } }
+  end
+
+  def test_one_and_three_axes
+    line = CArray.float64(N) { |i| (i % 9) * 1.0 }
+    assert_same_answer { CArray.fuse { line.shift(1, fill_value: 0) - line.shift(-1, fill_value: 0) } }
+    cube = CArray.float64(40, 30, 20) { |i, j, k| (i + 2 * j + 3 * k) % 11 }
+    assert_same_answer {
+      CArray.fuse { cube.shift(1, 0, 0) + cube.shift(0, -1, 0) + cube.shift(0, 0, 1) - cube * 3.0 }
+    }
+  end
+
+  def test_a_shifted_read_of_the_array_it_writes_into
+    # It would read cells it has already written, so it is handed back.
+    walked = grid
+    without_it { walked[] = CArray.fuse { walked.shift(1, 0, fill_value: 0) + walked } }
+    compiled = grid
+    compiled[] = CArray.fuse { compiled.shift(1, 0, fill_value: 0) + compiled }
+    assert_arrays_bits_equal walked, compiled
   end
 
   # -- storing ------------------------------------------------------------
