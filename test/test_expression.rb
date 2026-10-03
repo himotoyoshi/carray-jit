@@ -94,6 +94,15 @@ class TestExpression < Minitest::Test
     assert_same_answer { CArray.fuse { @a * 2.5 + 1.0 } }
   end
 
+  def test_a_constant_that_is_not_an_ordinary_number
+    assert_same_answer { CArray.fuse { @a * -0.0 } }
+    assert_same_answer { CArray.fuse { @a + Float::NAN } }
+    assert_same_answer { CArray.fuse { @a * -Float::INFINITY } }
+    assert_same_answer { CArray.fuse { @a * 1e300 * 1e10 } }
+    assert_equal true, computed?(CArray.fuse { @a + Float::NAN })
+    assert_equal true, computed?(CArray.fuse { @a * -Float::INFINITY })
+  end
+
   def test_an_array_named_twice
     assert_same_answer { CArray.fuse { @a * @a + @a } }
   end
@@ -178,6 +187,13 @@ class TestExpression < Minitest::Test
   def test_a_fill_that_masks
     g = grid
     assert_same_answer { CArray.fuse { g.shift(1, 1, fill_value: UNDEF) * 2.0 } }
+  end
+
+  def test_a_boolean_fill
+    g = CArray.boolean(100, 200) { |i, j| (i + j) % 3 == 0 }
+    [0, 1, false, true].each do |fill|
+      assert_same_answer { CArray.fuse { g.shift(1, -1, fill_value: fill).eq(g) } }
+    end
   end
 
   def test_a_shift_of_a_masked_array

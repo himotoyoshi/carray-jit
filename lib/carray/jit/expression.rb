@@ -307,10 +307,24 @@ class CArray
 
       def literal (node)
         case node.data_type
-        when :float64, :float32 then "%.17g" % node.value
-        when :boolean           then node.value ? 1 : 0
+        when :float64, :float32 then float_literal(node.value.to_f)
+        when :boolean           then truth(node.value) ? 1 : 0
         else node.value.to_s
         end
+      end
+
+      # `%.17g` writes -0.0 as "-0", which C reads as the integer 0 negated,
+      # and writes NaN and the infinities as words C does not know.
+      def float_literal (value)
+        return "NAN" if value.nan?
+        return (value > 0 ? "INFINITY" : "(-INFINITY)") if value.infinite?
+        text = "%.17g" % value
+        text.match?(/[.e]/) ? text : "#{text}.0"
+      end
+
+      # A boolean cell as CArray stores it: 0 is false, as is false.
+      def truth (value)
+        value.is_a?(Numeric) ? value != 0 : !!value
       end
 
       def substitute (node, i, type)
