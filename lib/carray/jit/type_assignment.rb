@@ -567,6 +567,12 @@ class CArray
           walk(node.right)
           node.type =
             if Analyzer::COMPARISON_OPERATORS.include?(node.operator)
+              # Compared in the wider of the two, which for a uint64 against a
+              # negative literal is a uint64 the literal does not fit.
+              if [node.left.type, node.right.type].include?(:uint64)
+                refuse_negative_literal(node.left, node.right)
+                refuse_negative_literal(node.right, node.left)
+              end
               :boolean
             elsif [:<<, :>>].include?(node.operator)
               # A shift takes its count as a number and keeps the type of the
@@ -875,12 +881,28 @@ class CArray
         return scalar.type if KIND_RANK[scalar_kind] > KIND_RANK[typed_kind]
         if scalar_kind == typed_kind
           refuse_wide_capture(scalar, typed)
+          refuse_negative_literal(scalar, typed)
           # The scalar becomes that type rather than being widened to meet it,
           # and says so: a literal emitted as a double would take the C
           # expression back to double however this node is typed.
           scalar.type = typed.type
         end
         typed.type
+      end
+
+      # A negative literal meeting a uint64 would take that width and compute
+      # as 2**64 minus its magnitude.  CArray refuses the same operand on a
+      # uint64 array (`RangeError: -1 is out of range for uint64`); a captured
+      # one is refused when the kernel is called, since its value is not part
+      # of the kernel.
+      def refuse_negative_literal (scalar, typed)
+        return unless scalar.is_a?(IntegerLiteral) && scalar.value.negative? &&
+                      typed.type == :uint64
+        raise Unsupported.new(
+          "#{scalar.value} is out of range for uint64: a negative Integer " \
+          "meeting a uint64 would compute as 2**64#{scalar.value}. CArray " \
+          "refuses the same operand. Convert the uint64 side first, " \
+          "`x.to_f` or a signed capture", scalar.location)
       end
 
       # A captured Integer above int64 meeting an integer, which absorption

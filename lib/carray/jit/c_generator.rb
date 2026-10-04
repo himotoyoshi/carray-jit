@@ -363,6 +363,10 @@ class CArray
         # order the caller packs them.
         @unsigned_integers =
           carried_names.select { |name| scalar_types[name] == :uint64 }.sort
+        # A captured Integer that rides as int64 but meets a uint64, where it
+        # takes that width.  A negative one has none to take; the caller
+        # refuses it, as CArray refuses the same operand (see Kernel).
+        @unsigned_captures = []
         # Three buffers and no fourth: a capture whose type rides in none of
         # them would be packed into nothing and read as whatever the slot
         # held, so it is caught here rather than at the cell it computes
@@ -420,6 +424,7 @@ class CArray
         @complex_helpers = []
         @uses_floor_divide = false
         @uses_floor_modulo = false
+        @uses_shift = false
         @uses_integer_power = false
         @uses_integer_abs = false
         @uses_whole_number = false
@@ -460,6 +465,7 @@ class CArray
       end
 
       attr_reader :arrays, :reals, :integers, :complexes, :unsigned_integers,
+                  :unsigned_captures,
                   :masked, :extent_slots,
                   :c_functions, :pasted_functions, :address_functions,
                   :address_arrays, :address_parameters,
@@ -723,7 +729,8 @@ class CArray
           :complex => @complex_helpers.dup,
           :index_check => @uses_index_check,
           :floor_divide => @uses_floor_divide,
-          :floor_modulo => @uses_floor_modulo }
+          :floor_modulo => @uses_floor_modulo,
+          :shift => @uses_shift }
       end
 
       # Per compiled object and per thread, and zeroed by whoever is about
@@ -834,6 +841,7 @@ class CArray
           @uses_index_check ||= needs[:index_check]
           @uses_floor_divide ||= needs[:floor_divide]
           @uses_floor_modulo ||= needs[:floor_modulo]
+          @uses_shift ||= needs[:shift]
           # A union rather than an or: two bodies may want a `sort` of one
           # type and length and a `sum` of another, and the preamble owes one
           # helper for each.  The same shape `:clamp` and `:gamma` take.
@@ -904,11 +912,8 @@ class CArray
                 return 0;
               }
               float remainder = fmodf(numerator, denominator);
-              if ( remainder != 0 ) {
-                if ( (remainder < 0) != (denominator < 0) ) remainder += denominator;
-              }
-              else {
-                remainder = copysignf(0.0f, denominator);
+              if ( remainder != 0 && (remainder < 0) != (denominator < 0) ) {
+                remainder += denominator;
               }
               return remainder;
             }
@@ -997,7 +1002,9 @@ class CArray
                not in an int64_t, where the cast is undefined -- CArray raises
                RangeError storing such an Integer, and so does this.  The real
                one is for a value that stays a number: 1e20.floor into a
-               float64 cell is 1e20 in Ruby, and does not pass through int64. */
+               float64 cell is 1e20 in Ruby, and does not pass through int64.
+               Adding zero clears the sign of a zero: (-0.3).ceil is the
+               Integer 0, which has none, where ceil(-0.3) is -0.0. */
             static inline double
             carray_jit_whole_real (double value, int32_t *error)
             {
@@ -1007,7 +1014,7 @@ class CArray
               else if ( isinf(value) ) {
                 if ( error ) *error = value > 0 ? #{FLOAT_INFINITY_CODE} : #{FLOAT_NEGATIVE_INFINITY_CODE};
               }
-              return value;
+              return value + 0.0;
             }
 
             static inline int64_t
@@ -1184,10 +1191,10 @@ class CArray
             /* Ruby's `%` floors with its division: the remainder carries the
                sign of the divisor, where C's `%` and fmod carry the sign of
                the dividend.  So add the divisor back when the remainder is
-               non-zero and disagrees with it in sign -- and, for floats,
-               give a zero remainder the divisor's sign, so the rule holds
-               without exception.  This mirrors CArray's own `:mod` kernel in
-               `ext/mkkernel.rb`.
+               non-zero and disagrees with it in sign.  A zero remainder keeps
+               fmod's sign, the dividend's, as Ruby's Float#% does: -4.0 % 2.0
+               is -0.0.  (CArray's own `%` gives it the divisor's sign instead;
+               a block means what it means in Ruby.)
 
                A zero divisor is Ruby's rather than CArray's: `3.0 % 0.0` raises
                ZeroDivisionError in Ruby, a float divisor as much as an integer
@@ -1200,6 +1207,7 @@ class CArray
                 if ( error ) *error = 1;
                 return 0;
               }
+              if ( denominator == -1 ) return 0;
               int64_t remainder = numerator % denominator;
               if ( remainder != 0 && ((remainder < 0) != (denominator < 0)) ) {
                 remainder += denominator;
@@ -1215,13 +1223,58 @@ class CArray
                 return 0;
               }
               double remainder = fmod(numerator, denominator);
-              if ( remainder != 0 ) {
-                if ( (remainder < 0) != (denominator < 0) ) remainder += denominator;
-              }
-              else {
-                remainder = copysign(0.0, denominator);
+              if ( remainder != 0 && (remainder < 0) != (denominator < 0) ) {
+                remainder += denominator;
               }
               return remainder;
+            }
+
+          C
+        end
+        if @uses_shift
+          text << <<~C
+            /* Integer#<< and #>>: a negative count shifts the other way, and a
+               count of 64 or more shifts every bit out -- to 0, or to -1 for a
+               negative value shifted right.  C leaves both undefined, and a
+               left shift of a negative value too, so the left shift is made in
+               uint64_t.  A count held unsigned is brought into int64_t range
+               first; past 64 they all mean the same. */
+            static inline int64_t
+            carray_jit_shift_count (uint64_t count)
+            {
+              return count > 64 ? 64 : (int64_t) count;
+            }
+
+            static inline int64_t
+            carray_jit_shift_left (int64_t value, int64_t count)
+            {
+              if ( count >= 64 )  return 0;
+              if ( count <= -64 ) return value < 0 ? -1 : 0;
+              if ( count < 0 )    return value >> -count;
+              return (int64_t) ((uint64_t) value << count);
+            }
+
+            static inline int64_t
+            carray_jit_shift_right (int64_t value, int64_t count)
+            {
+              if ( count >= 64 )  return value < 0 ? -1 : 0;
+              if ( count <= -64 ) return 0;
+              if ( count < 0 )    return (int64_t) ((uint64_t) value << -count);
+              return value >> count;
+            }
+
+            static inline uint64_t
+            carray_jit_unsigned_shift_left (uint64_t value, int64_t count)
+            {
+              if ( count >= 64 || count <= -64 ) return 0;
+              return count < 0 ? value >> -count : value << count;
+            }
+
+            static inline uint64_t
+            carray_jit_unsigned_shift_right (uint64_t value, int64_t count)
+            {
+              if ( count >= 64 || count <= -64 ) return 0;
+              return count < 0 ? value << -count : value >> count;
             }
 
           C
@@ -1244,6 +1297,9 @@ class CArray
                 if ( error ) *error = 1;
                 return 0;
               }
+              /* INT64_MIN / -1 does not fit, and x86 traps on it: the
+                 quotient is the negation wrapped, as CArray answers it. */
+              if ( denominator == -1 ) return (int64_t) (0 - (uint64_t) numerator);
               int64_t quotient = numerator / denominator;
               if ( numerator % denominator != 0 && ((numerator < 0) != (denominator < 0)) ) {
                 quotient -= 1;
@@ -2134,14 +2190,53 @@ class CArray
 
         index = loop_node.index
         step = loop_node.step
-        opening = "#{indent}for (int64_t #{index} = #{emit(loop_node.from, :int64)}; " \
-                  "#{index} #{step.positive? ? '<' : '>'} " \
-                  "#{emit(loop_node.to, :int64)}; #{stride_step(index, step)}) {\n"
-        body = local_declarations(loop_node, indent + "  ") +
+        inner = indent + "  "
+        prelude, from, trips = loop_trips(loop_node, inner)
+        count = "#{index}__t"
+        body = local_declarations(loop_node, inner + "  ") +
                loop_node.statements.map { |statement|
-                 emit_statement(statement, indent + "  ")
+                 emit_statement(statement, inner + "  ")
                }.join
-        opening + inner_loop_guard(indent) + body + "#{indent}}\n"
+        "#{indent}{\n" + prelude +
+          "#{inner}for (uint64_t #{count} = 0; #{count} < #{trips}; #{count}++) {\n" \
+          "#{inner}  int64_t #{index} = (int64_t) ((uint64_t) #{from} + " \
+          "#{count} * (uint64_t) INT64_C(#{step}));\n" +
+          inner_loop_guard(inner) + body + "#{inner}}\n" + "#{indent}}\n"
+      end
+
+      # How many passes a loop makes, counted before it starts and in uint64.
+      # Counting by comparing the index with the end overflows at the ends of
+      # int64: an inclusive range ends at its last index plus one, and
+      # `(MAX-2..MAX).each` ended at MAX + 1, which is no int64 at all.  The
+      # analyzer writes an inclusive end, and a `step` loop's end, as that
+      # plus or minus one; read back here, the last index is used as it is.
+      #
+      # Returns [the C declaring the first index, the end and the count,
+      # the first index's C name, the count's C name].
+      def loop_trips (loop_node, inner)
+        index = loop_node.index
+        step = loop_node.step
+        stride = step.abs
+        to = loop_node.to
+        last = to.is_a?(BinaryOperation) &&
+               to.operator == (step.positive? ? :+ : :-) &&
+               to.right.is_a?(IntegerLiteral) && to.right.value == 1 ? to.left : nil
+        from_name, end_name, trips_name = "#{index}__from", "#{index}__end", "#{index}__trips"
+        ahead = step.positive? ? "(uint64_t) #{end_name} - (uint64_t) #{from_name}" :
+                                 "(uint64_t) #{from_name} - (uint64_t) #{end_name}"
+        trips =
+          if last
+            reached = step.positive? ? "#{from_name} <= #{end_name}" : "#{from_name} >= #{end_name}"
+            "(#{reached}) ? (#{ahead}) / #{stride}u + 1 : 0"
+          else
+            reached = step.positive? ? "#{from_name} < #{end_name}" : "#{from_name} > #{end_name}"
+            "(#{reached}) ? (#{ahead} - 1) / #{stride}u + 1 : 0"
+          end
+        prelude =
+          "#{inner}const int64_t #{from_name} = #{emit(loop_node.from, :int64)};\n" \
+          "#{inner}const int64_t #{end_name} = #{emit(last || to, :int64)};\n" \
+          "#{inner}const uint64_t #{trips_name} = #{trips};\n"
+        [prelude, from_name, trips_name]
       end
 
       # The loop is a reduction when its whole body is one local folding a
@@ -2241,7 +2336,6 @@ class CArray
         type  = assignment.type
         index = loop_node.index
         base  = "#{index}__base"
-        limit = "#{index}__end"
         # A lane belongs to the accumulator, so its C name comes the way every
         # local's does.
         lanes = (0...PARTIAL_ACCUMULATORS).map { |lane|
@@ -2250,26 +2344,26 @@ class CArray
         identity = (operator == :* ? ONES : ZEROES).fetch(type)
 
         inner = indent + "  "
-        text  = "#{indent}{\n"
-        text += "#{inner}int64_t #{base} = #{emit(loop_node.from, :int64)};\n"
-        text += "#{inner}const int64_t #{limit} = #{emit(loop_node.to, :int64)};\n"
+        prelude, from, trips = loop_trips(loop_node, inner)
+        text  = "#{indent}{\n" + prelude
+        text += "#{inner}uint64_t #{base} = 0;\n"
         text += "#{inner}#{COMPUTATION_C_TYPES.fetch(type)} #{lanes.first} = #{name}" +
                 lanes.drop(1).map { |lane| ", #{lane} = #{identity}" }.join + ";\n"
         rounds = lanes.each_with_index.map { |lane, offset|
           term = lane_expression(assignment.expression, assignment.local, offset)
           "#{inner}  {\n" \
-          "#{inner}    const int64_t #{index} = #{base} + #{offset};\n" \
+          "#{inner}    const int64_t #{index} = (int64_t) ((uint64_t) #{from} + #{base} + #{offset});\n" \
           "#{inner}    #{lane} = #{emit(term, type)};\n" \
           "#{inner}  }\n"
         }.join
-        text += "#{inner}for (; #{base} + #{PARTIAL_ACCUMULATORS} <= #{limit}; " \
+        text += "#{inner}for (; #{trips} - #{base} >= #{PARTIAL_ACCUMULATORS}; " \
                 "#{base} += #{PARTIAL_ACCUMULATORS}) {\n"
         text += inner_loop_guard(inner) + rounds
         text += "#{inner}}\n"
         text += "#{inner}#{name} = #{combine_partials(lanes, operator)};\n"
-        tail = emit_statement(assignment, inner + "  ")
-        text += "#{inner}for (int64_t #{index} = #{base}; #{index} < #{limit}; " \
-                "#{index}++) {\n"
+        tail = emit_statement(assignment, inner + "    ")
+        text += "#{inner}for (; #{base} < #{trips}; #{base}++) {\n"
+        text += "#{inner}  const int64_t #{index} = (int64_t) ((uint64_t) #{from} + #{base});\n"
         text += inner_loop_guard(inner) + tail
         text += "#{inner}}\n"
         text + "#{indent}}\n"
@@ -3254,11 +3348,21 @@ class CArray
       # Emits `node` so that its value has type `target`, inserting a cast
       # only where the type actually changes.
       def emit (node, target)
+        note_unsigned_capture(node, target)
         return emit_rounded_real(node, target).first if rounded_real?(node, target)
         widen(*emit_raw(node), node.type, target).first
       end
 
+      # A signed capture read where a uint64 is computed -- absorbed into one,
+      # or compared with one.  Kernel refuses a negative value for it.
+      def note_unsigned_capture (node, target)
+        return unless node.is_a?(CaptureRead) && target == :uint64 &&
+                      @integers.include?(node.name)
+        @unsigned_captures |= [node.name]
+      end
+
       def emit_operand (node, target, parent_precedence, right_side = false)
+        note_unsigned_capture(node, target)
         text, precedence =
           if rounded_real?(node, target)
             emit_rounded_real(node, target)
@@ -3320,7 +3424,9 @@ class CArray
           [ZEROES.fetch(node.type), LEAF_PRECEDENCE]
         when LocalRead        then [local_c_name(node.name, node.binding, node.lane),
                                     LEAF_PRECEDENCE]
-        when CaptureRead      then [parameter_c_name(node.name), LEAF_PRECEDENCE]
+        when CaptureRead
+          note_unsigned_capture(node, node.type)
+          [parameter_c_name(node.name), LEAF_PRECEDENCE]
         # A read is widened to the type the kernel computes in, because that
         # is the type the Ruby loop computes in: reading a float32 cell in
         # Ruby gives a Float, and reading an int32 cell gives an Integer that
@@ -3631,6 +3737,8 @@ class CArray
         return emit_integer_division(node) if node.operator == :/ &&
                                              TypeAssignment::INTEGER_TYPES.include?(node.type)
         return emit_modulo(node) if node.operator == :%
+        return emit_shift(node) if [:<<, :>>].include?(node.operator) &&
+                                   TypeAssignment::INTEGER_TYPES.include?(node.type)
         return emit_complex_binary(node) if complex_type?(node.type)
 
         operand_type =
@@ -3842,6 +3950,19 @@ class CArray
          "#{emit(node.right, :int64)}, #{error_argument})", LEAF_PRECEDENCE]
       end
 
+      # A shift is Integer's -- see carray_jit_shift_left.
+      def emit_shift (node)
+        @uses_shift = true
+        direction = node.operator == :<< ? "left" : "right"
+        prefix = node.type == :uint64 ? "carray_jit_unsigned_shift_" : "carray_jit_shift_"
+        count = if node.right.type == :uint64
+                  "carray_jit_shift_count(#{emit(node.right, :uint64)})"
+                else
+                  emit(node.right, :int64)
+                end
+        ["#{prefix}#{direction}(#{emit(node.left, node.type)}, #{count})", LEAF_PRECEDENCE]
+      end
+
       # `%` floors, so it is not C's `%` -- see the helper above.
       def emit_modulo (node)
         if node.type == :uint64
@@ -3872,11 +3993,23 @@ class CArray
         Math.log2(value).to_i
       end
 
+      # A literal past int64 is a uint64 if it fits one, and refused with the
+      # message a capture of the same value gets if it does not -- written
+      # out, it was a compiler error about a constant too large for its type.
       def format_integer (value)
-        "INT64_C(#{value})"
+        case TypeAssignment.integer_type(value)
+        when :uint64 then "UINT64_C(#{value})"
+        else "INT64_C(#{value})"
+        end
       end
 
       def format_float (value, type = :double)
+        # 1e400 is an infinity in Ruby; written out with %g it is the word
+        # `inf`, which C does not know.
+        if value.infinite?
+          text = value.positive? ? "INFINITY" : "(-INFINITY)"
+          return type == :float ? "((float)#{text})" : text
+        end
         # A float literal without the suffix is a double, and one double in an
         # expression takes the whole expression with it -- so the suffix is
         # what keeps a float32 kernel computing in float.

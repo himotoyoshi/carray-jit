@@ -21,7 +21,7 @@ class TestUnsignedBounds < Minitest::Test
   end
 
   def test_the_bound_is_cast_where_the_counter_meets_it
-    assert_match(/for \(int64_t i = INT64_C\(0\); i < \(int64_t\)n;/, scale.c_source)
+    assert_match(/const int64_t i__end = \(int64_t\)n;/, scale.c_source)
   end
 
   # The warning is the visible half; this is what it was warning about.

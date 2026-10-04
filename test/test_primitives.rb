@@ -241,17 +241,17 @@ class TestPrimitives < Minitest::Test
     assert_equal((left % right).to_a, result.to_a)
   end
 
-  # A zero remainder takes the divisor's sign, so the rule holds without an
-  # exception.  Ruby leaves it negative; CArray does not, and this follows
-  # CArray, whose kernel this mirrors.
-  def test_a_zero_remainder_takes_the_divisors_sign
+  # A zero remainder keeps the dividend's sign, as Ruby's Float#% does.
+  # CArray's own `%` gives it the divisor's sign instead; a block means what
+  # it means in Ruby.
+  def test_a_zero_remainder_keeps_the_dividends_sign
     left = CArray.double(1) { |i| -6.0 }
     right = CArray.double(1) { |i| 3.0 }
     result = CArray.double(1)
     CArray.jit_for(1) { |i| result[i] = left[i] % right[i] }
-    assert_equal((left % right)[0].to_s, result[0].to_s)
-    assert_equal("0.0", result[0].to_s)
-    assert_equal("-0.0", (-6.0 % 3.0).to_s, "which is not what Ruby gives")
+    assert_equal((-6.0 % 3.0).to_s, result[0].to_s)
+    assert_equal("-0.0", result[0].to_s)
+    assert_equal("0.0", (left % right)[0].to_s, "which is not what CArray gives")
   end
 
   # Ruby raises for a float divisor of zero too -- `3.0 % 0.0`, `3 % 0.0` --

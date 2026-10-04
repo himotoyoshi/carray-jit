@@ -124,7 +124,7 @@ class TestScopes < Minitest::Test
     }
     assert_match(/i\+\+\) \{\n(\s*if \( \*error \) break;\n)?\s*double x;\n\s*uint8_t x__mask;\n/,
                  kernel.c_source)
-    assert_match(/k\+\+\) \{\n(\s*if \( \*error \) break;\n)?\s*double y;\n\s*uint8_t y__mask;\n/,
+    assert_match(/k__t\+\+\) \{\n\s*int64_t k = [^\n]*\n(\s*if \( \*error \) break;\n)?\s*double y;\n\s*uint8_t y__mask;\n/,
                  kernel.c_source)
     assert_equal([false, false, true, false], out.is_masked.to_a)
     reference = [0, 1, 3].map { |i| x = a[i] * 2.0; y = nil; (0...2).each { |k| y = x + k }; y }

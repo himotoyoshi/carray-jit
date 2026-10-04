@@ -2,10 +2,9 @@ require_relative "test_helper"
 
 # Bit operators, and the integer widths they are usually reached for.
 #
-# Where Ruby's Integer is unbounded and C's is not, the kernel follows C --
-# and so does CArray, whose own `<<` compiles to the same C shift.  So the
-# reference for the edges is CArray's operator rather than plain Ruby, and
-# these tests check against it.
+# A shift means what it means to Ruby's Integer, in the width the kernel
+# computes integers in -- as CArray's own `<<` does.  So the reference for
+# the edges is CArray's operator, and these tests check against it.
 class TestBitOperations < Minitest::Test
 
   def test_and_or_xor_match_ruby
@@ -33,8 +32,8 @@ class TestBitOperations < Minitest::Test
     assert_equal((0...6).map { |i| values[i] << counts[i] }, result.to_a)
   end
 
-  # Past the width of the type, C takes the count modulo the width and Ruby
-  # keeps counting.  CArray's own shift is the C one, and this agrees with it.
+  # Past the width of the type every bit is shifted out, as CArray's own
+  # shift does, where Ruby's Integer keeps growing.
   def test_a_shift_past_the_width_agrees_with_carray
     values = CArray.int64(4) { |i| [1, -1, 255, -256][i] }
     result = CArray.int64(4)

@@ -4,7 +4,7 @@ Decisions that were not obvious, and why.
 
 ## The type is C's, and so is the arithmetic where the width is real
 
-The storage type is CArray's, mapped to C exactly -- `int64_t`, `uint8_t`, `float` -- and everything the type itself decides follows from that: the width, the wrap on store, the bit patterns. There a kernel agrees with CArray, because both are the same C. A shift is the exception that proves it: a kernel shifts an integer in the width it computes in, `int64_t`, and narrows on store, so on an `int32` cell a count past 31 gives the Ruby loop's answer where CArray, shifting in 32 bits, gives another.
+The storage type is CArray's, mapped to C exactly -- `int64_t`, `uint8_t`, `float` -- and everything the type itself decides follows from that: the width, the wrap on store, the bit patterns. There a kernel agrees with CArray, because both are the same C. A shift agrees too, though the two get there differently: a kernel shifts in the width it computes in, `int64_t`, and narrows on store, where CArray shifts in the cell's own width -- and since both take a shift to mean what Ruby's Integer means by it, the low bits that survive the narrowing are the same.
 
 The arithmetic follows the same rule where the width makes a difference to the answer, and Ruby's where it does not. That splits the types in two.
 

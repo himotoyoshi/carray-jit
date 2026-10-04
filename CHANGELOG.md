@@ -39,6 +39,27 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: a block loop whose range ends at the top of int64 runs as Ruby's
+  does: `(MAX-2..MAX).each` ran no passes.
+- Fix: a literal past a double, `1e400`, is an infinity as in Ruby, and an
+  Integer literal past uint64 is refused; both were a C compiler error.
+- Change: a negative Integer meeting a uint64 in a block is refused, as
+  CArray refuses the same operand: a literal when the block is compiled, a
+  captured value with `RangeError` when it is called. `w[i] > -1` used to
+  be false for every cell.
+- Change: in a block, `round`, `ceil`, `truncate` and `to_i` stored into
+  a float cell give `0.0` for a value that rounds to zero, never `-0.0`,
+  as Ruby's Integer has no sign of zero.
+- Change: in a block, a zero float remainder keeps the dividend's sign, as
+  Ruby's `Float#%` does: `-4.0 % 2.0` is `-0.0`. CArray's own `%` still
+  answers `0.0`.
+- Change: in a block, a shift means what it means to `Integer#<<` and
+  `#>>`: a negative count shifts the other way, and a count of 64 or more
+  shifts every bit out. It was C's shift, with no defined answer there.
+- Fix: signed overflow wraps consistently within a kernel. Compiled
+  without `-fwrapv`, a kernel could contradict itself: `y = -a; y > 0 ?
+  y : 0` stored a negative value for `a = INT64_MIN`. `INT64_MIN / -1` in
+  a block is `INT64_MIN` rather than a trap on x86.
 - New: `CArray.fuse` expressions holding comparisons or `shift` -- a
   stencil, or a rule like the Game of Life's -- are compiled whole.  This
   needs CArray 3.0.3; with an earlier CArray they are computed by CArray

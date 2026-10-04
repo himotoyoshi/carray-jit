@@ -45,6 +45,7 @@ class CArray
         @integers = generator.integers
         @complexes = generator.complexes
         @unsigned_integers = generator.unsigned_integers
+        @unsigned_captures = generator.unsigned_captures
         # Per array, the axes read at an index only the running kernel knows,
         # and the extents it checks them against.
         @extent_slots = generator.extent_slots
@@ -497,11 +498,19 @@ class CArray
       # counter, and the arrays' half, which is the shape and travels in the
       # plan.  Two methods because `#call` packs the first and takes the
       # second from what it prepared earlier; `#sweep` still wants both.
+      # A captured Integer that meets a uint64 takes that width, and a
+      # negative one has none to take: it would compute as 2**64-1.  CArray
+      # refuses the same operand on a uint64 array, and so does this.
       def packed_scalar_integers (scalar_values)
-        @integers.map { |name| Integer(scalar_values.fetch(name)) }.pack("q*") +
-          @unsigned_integers.map { |name|
-            Integer(scalar_values.fetch(name))
-          }.pack("Q*")
+        @integers.map { |name|
+          value = Integer(scalar_values.fetch(name))
+          if value.negative? && @unsigned_captures.include?(name)
+            raise RangeError, "#{value} is out of range for uint64 " \
+                              "(`#{name}` meets a uint64)"
+          end
+          value
+        }.pack("q*") +
+          @unsigned_integers.map { |name| Integer(scalar_values.fetch(name)) }.pack("Q*")
       end
 
       def packed_extents (array_values)

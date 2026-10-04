@@ -66,7 +66,11 @@ class CArray
         (RbConfig::CONFIG["host_os"] =~ /darwin|mswin|mingw|cygwin/ ?
            [] : ["-Wl,-Bsymbolic"]).freeze
 
-      FLAGS = ["-O3", "-fPIC", "-shared", "-ffp-contract=off", *SYMBOLIC].freeze
+      # -fwrapv makes signed overflow wrap, as CArray's own operators do and
+      # as the documentation promises.  Without it the compiler is free to
+      # assume a sum cannot overflow, so one kernel contradicts itself:
+      # `y = -a; y > 0 ? y : 0` stored a negative value for a = INT64_MIN.
+      FLAGS = ["-O3", "-fPIC", "-shared", "-ffp-contract=off", "-fwrapv", *SYMBOLIC].freeze
 
       # A compiled body calls a function borrowed with `jit_extern` by name,
       # and the library it came from is one the process opened -- which is

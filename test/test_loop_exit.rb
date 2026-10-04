@@ -259,9 +259,9 @@ class TestLoopExit < Minitest::Test
                                  scalar_values: {}, reassociate: true)
     source = kernel.c_source
     assert_includes(source, "acc__p0")
-    assert_match(/for \(; k__base \+ 8 <= k__end; k__base \+= 8\) \{\n\s*if \( \*error \) break;\n/,
+    assert_match(/for \(; k__trips - k__base >= 8; k__base \+= 8\) \{\n\s*if \( \*error \) break;\n/,
                  source)
-    assert_match(/for \(int64_t k = k__base; k < k__end; k\+\+\) \{\n\s*if \( \*error \) break;\n/,
+    assert_match(/for \(; k__base < k__trips; k__base\+\+\) \{\n\s*const int64_t k = [^\n]*\n\s*if \( \*error \) break;\n/,
                  source)
   end
 
