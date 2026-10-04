@@ -419,6 +419,7 @@ class CArray
         @uses_clamp = false
         @uses_wrap = false
         @uses_real_arg = false
+        @uses_real_power_complex = false
         @clamp_types = []
         @gamma_types = []
         @complex_helpers = []
@@ -724,6 +725,7 @@ class CArray
           :unsigned_power => @uses_unsigned_power,
           :floor_modulo_float => @uses_floor_modulo_float,
           :real_arg => @uses_real_arg,
+          :real_power_complex => @uses_real_power_complex,
           :clamp => @clamp_types.dup,
           :gamma => @gamma_types.dup,
           :complex => @complex_helpers.dup,
@@ -835,6 +837,7 @@ class CArray
           @uses_unsigned_power ||= needs[:unsigned_power]
           @uses_floor_modulo_float ||= needs[:floor_modulo_float]
           @uses_real_arg ||= needs[:real_arg]
+          @uses_real_power_complex ||= needs[:real_power_complex]
           @clamp_types |= needs[:clamp] || []
           @gamma_types |= needs[:gamma] || []
           @complex_helpers |= needs[:complex] || []
@@ -1131,6 +1134,33 @@ class CArray
             {
               if ( isnan(x) ) return x;
               return signbit(x) ? M_PI : 0.0;
+            }
+
+          C
+        end
+        if @uses_real_power_complex
+          text << <<~C
+            /* A real power read as complex.  Ruby answers a negative base
+               raised to a power that is not an integer with a Complex, in
+               polar form: (-x)**y at the angle y*pi, exact on the axes.
+               Anything else is the real power. */
+            static double _Complex
+            carray_jit_real_power_complex (double x, double y)
+            {
+              double fi, fr, a;
+              if ( ! ( x < 0.0 ) || y == round(y) ) return CMPLX(pow(x, y), 0.0);
+              a  = pow(-x, y);
+              fr = modf(y, &fi);
+              if ( fr == 0.5 || fr == -0.5 ) {
+                int up = ( fr == 0.5 );
+                if ( ( modf(fi / 2.0, &fi) != fr ) ^ up ) a = -a;
+                return CMPLX(0.0, a);
+              }
+            #if defined(__APPLE__)
+              return CMPLX(a * __cospi(y), a * __sinpi(y));
+            #else
+              return CMPLX(a * cos(y * M_PI), a * sin(y * M_PI));
+            #endif
             }
 
           C
@@ -2574,8 +2604,8 @@ class CArray
             "#{indent}#{target} = " \
             "#{cast_to_storage(temporary, type, write.storage)};\n" + mask
         else
-          value = cast_to_storage(emit(expression, expression.type),
-                                  expression.type, write.storage)
+          type = complex_storage_of_power(expression, write.storage) || expression.type
+          value = cast_to_storage(emit(expression, type), type, write.storage)
           "#{indent}#{target} = #{value};\n" + mask
         end
       end
@@ -2739,10 +2769,19 @@ class CArray
           if real && rounded_real?(expression, real)
             return "#{indent}#{target} = #{emit(expression, real)};\n"
           end
-          value = cast_to_storage(emit(expression, expression.type),
-                                  expression.type, storage)
+          type = complex_storage_of_power(expression, storage) || expression.type
+          value = cast_to_storage(emit(expression, type), type, storage)
           "#{indent}#{target} = #{value};\n"
         end
+      end
+
+      # A real power stored in a complex cell is read as complex; see
+      # complex_read_power?.
+      COMPLEX_STORAGE_TYPES = { "cmplx128" => :complex, "cmplx64" => :float_complex }.freeze
+
+      def complex_storage_of_power (expression, storage)
+        type = COMPLEX_STORAGE_TYPES[storage]
+        type if type && complex_read_power?(expression, type)
       end
 
       # A float cell, by what it computes in: the storage a rounding written
@@ -3349,6 +3388,7 @@ class CArray
       # only where the type actually changes.
       def emit (node, target)
         note_unsigned_capture(node, target)
+        return emit_complex_read_power(node, target).first if complex_read_power?(node, target)
         return emit_rounded_real(node, target).first if rounded_real?(node, target)
         widen(*emit_raw(node), node.type, target).first
       end
@@ -3364,7 +3404,9 @@ class CArray
       def emit_operand (node, target, parent_precedence, right_side = false)
         note_unsigned_capture(node, target)
         text, precedence =
-          if rounded_real?(node, target)
+          if complex_read_power?(node, target)
+            emit_complex_read_power(node, target)
+          elsif rounded_real?(node, target)
             emit_rounded_real(node, target)
           else
             widen(*emit_raw(node), node.type, target)
@@ -3664,6 +3706,24 @@ class CArray
           @uses_real_arg = true
           ["carray_jit_real_arg(#{emit(node.operand, :double)})", LEAF_PRECEDENCE]
         end
+      end
+
+      # A real power read where a complex is wanted -- stored in a complex
+      # cell or joined with a complex.  pow answers a negative base raised to
+      # a power that is not an integer with NaN; Ruby answers with a Complex,
+      # and as the value is going to be complex anyway, so does the kernel.
+      # Read as a real, the power stays pow's.
+      def complex_read_power? (node, target)
+        node.is_a?(Power) && [:double, :float].include?(node.type) &&
+          complex_type?(target)
+      end
+
+      def emit_complex_read_power (node, target)
+        @uses_real_power_complex = true
+        text = "carray_jit_real_power_complex(#{emit(node.base, :double)}, " \
+               "#{emit(node.exponent, :double)})"
+        return [text, LEAF_PRECEDENCE] if target == :complex
+        ["(float _Complex)#{text}", UNARY_PRECEDENCE]
       end
 
       # An integer power is squared out rather than sent through pow, whose

@@ -103,4 +103,27 @@ class TestRubyEdges < Minitest::Test
       CArray.jit_for(1) { |i| out[i] = 1180591620717411303424 * 1.0 }
     end
   end
+
+  # Ruby answers a negative base to a power that is not an integer with a
+  # Complex.  Stored in a complex cell, or joined with one, the kernel gives
+  # that Complex; read as a real it stays pow's NaN.
+  def test_a_negative_base_to_a_fractional_power_is_complex_where_complex_is_wanted
+    x = CA_FLOAT64([-8.0, -8.0, -8.0, 4.0, -2.0, -0.5, -3.0, -8.0])
+    y = CA_FLOAT64([1.0 / 3, 2.5, 2.0, 0.5, 0.25, -1.5, 0.1, Float::INFINITY])
+    n = x.size
+    expected = x.to_a.zip(y.to_a).map { |a, b| (a ** b).to_c }
+    z = CArray.cmplx128(n)
+    CArray.jit_for(n) { |i| z[i] = x[i] ** y[i] }
+    z.to_a.zip(expected).each do |got, want|
+      assert_equal [want.real, want.imag.to_f].map { |v| [v].pack("G") },
+                   [got.real, got.imag].map { |v| [v].pack("G") }
+    end
+    w = CArray.cmplx128(n)
+    CArray.jit_for(n) { |i| w[i] = x[i] ** y[i] + 1i }
+    assert_equal expected.map { |v| v + 1i }, w.to_a
+    r = CArray.double(n)
+    CArray.jit_for(n) { |i| r[i] = x[i] ** y[i] }
+    assert_equal [true, true, false, false, true, true, true, false],
+                 r.to_a.map(&:nan?)
+  end
 end

@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: in a block, a negative real raised to a power that is not an
+  integer, stored into a complex cell or joined with a Complex
+  (`z[i] = x ** y`, `x ** y + 1i`), is now the Complex Ruby gives,
+  to the last bit, where it was `NaN`. Read as a real -- a float cell,
+  or a local assigned the power -- it stays `NaN`.
+
 - Fix: a block loop whose range ends at the top of int64 runs as Ruby's
   does: `(MAX-2..MAX).each` ran no passes.
 - Fix: a literal past a double, `1e400`, is an infinity as in Ruby, and an
