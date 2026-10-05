@@ -2,7 +2,7 @@
 
 This chapter states what a block may contain, what each construct means, and what is refused. The other chapters teach the language by example. This one is for looking things up, and it tries to be complete rather than gentle.
 
-The block language is a subset of Ruby. A construct in the subset means what Ruby means by it, except where §10 says otherwise. A construct outside the subset is refused when the block is read, with `CArray::JIT::Unsupported`, before anything is compiled or run. Nothing falls back to running the block as Ruby.
+The block language is a subset of Ruby. A construct in the subset means what Ruby means by it, except where §10 says otherwise; §11 lists where it differs from what CArray's own array operations answer. A construct outside the subset is refused when the block is read, with `CArray::JIT::Unsupported`, before anything is compiled or run. Nothing falls back to running the block as Ruby.
 
 ## 1. Notation and terms
 
@@ -99,7 +99,7 @@ A generator may be captured in `jit_for`, `jit_each` and `jit_map`. It is refuse
 
 **Accepted anywhere an expression is:**
 
-- integer literals, which compute as `int64`. A literal in `2**63 ... 2**64` is written to C as a `uint64` constant; a larger one is refused;
+- integer literals, which compute as `int64`. A literal in `2**63 ... 2**64` is a `uint64`: it may meet a `uint64` or a real, or be stored into a uint64 or real array, and is refused where it would be computed as an `int64`. A larger one is refused;
 - float literals, which compute as `double`. An infinite literal such as `1e400` is `INFINITY`;
 - imaginary literals (`2i`, `2.5i`), which compute as `complex`;
 - `true` and `false`;
@@ -163,7 +163,9 @@ A local first assigned inside a `while` cannot be read after it.
 | `from.step(to, s) { \|k\| }` | `from` towards `to`, including `to`, in steps of `s` |
 | `(a...b).step(s) { \|k\| }` | `a` up to `b`, excluding `b`, in steps of `s` |
 
-The block takes exactly one parameter. A step is a non-zero integer literal, optionally negated; a Range may not step down. The bounds are integers. In a kernel, they must be built from literals, captured scalars and enclosing indices; a bound read from a local or a cell is refused when the kernel is called. A function body has no such restriction.
+The block takes exactly one parameter. A step is a non-zero integer literal, optionally negated; a Range may not step down. The bounds are integers, and may be any integer expression.
+
+Where the bounds are built from literals, captured scalars and the ranges of the enclosing indices, the range is known before the kernel runs, and a subscript the index walks is checked against its array before the first cell (§6.6). Where a bound reads a local or a cell, the range is known only when the loop is reached; a subscript that index walks is checked at each access instead, as a computed position is. An inner range written over such an index is in the same position.
 
 An inner index may not reuse the name of an index in scope. Two loops side by side may reuse a name.
 
@@ -267,7 +269,7 @@ A subscript must be an integer. An array must be indexed with the same number of
 **Bounds:**
 
 - Walked subscripts and fixed positions are checked before the kernel runs. A position out of range is refused; a negative position is refused rather than counted from the end.
-- A computed position is checked as it runs. Out of range, a read gives cell 0, a write does nothing, and the kernel raises `IndexError` at the end of the pass.
+- A computed position, and a subscript walked by an inner index whose range reads a local or a cell (§5.7), is checked as it runs. Out of range, a read gives cell 0, a write does nothing, and the kernel raises `IndexError` at the end of the pass.
 
 In `jit_for`, an array that is written may be read through an inner index only if every axis it is written on uses the same outer index.
 
@@ -375,18 +377,51 @@ A block that is accepted can still raise when the kernel runs. The kernel finish
 
 ## 10. Where the answer differs from Ruby
 
-These are deliberate. Everything not listed here gives Ruby's answer.
+These are deliberate. Everything not listed here gives Ruby's answer, to the last bit.
 
-- **Overflow wraps.** Integers wrap modulo 2^64, as CArray's do; Ruby would make a Bignum. `INT64_MIN / -1` is `INT64_MIN`.
-- **Narrow types compute narrow.** A float32 cell computes as `float`, and a cmplx64 cell as `float _Complex`, as CArray computes them. Ruby would widen to double.
-- **An Integer compared with a Float** is compared as two doubles.
-- **Outside a function's domain, `Math` answers NaN** rather than raising `Math::DomainError`. The exception is `gamma`. `Math.sqrt(-0.0)` is `-0.0`.
+**Integers**
+
+- **Integers have a width.** A kernel computes integers in `int64` (or `uint64` for a uint64 cell). Where Ruby's Integer would grow past 2^63, a kernel wraps modulo 2^64. `INT64_MIN / -1` is `INT64_MIN` and `INT64_MIN % -1` is 0; `INT64_MIN.abs` is `INT64_MIN`.
+- **A value stored into a narrower cell wraps.** `int8` cell `= 200` stores `-56`, where Ruby keeps 200.
+- **An Integer that no width holds is refused** where Ruby would carry on: a literal or a captured Integer above 2^64 - 1 or below -2^63; a literal above 2^63 - 1 computed as an `int64`; a captured Integer above 2^63 - 1 meeting an integer; and a negative Integer meeting a `uint64` (a literal is refused when the block is read, a captured one raises `RangeError` when the kernel is called).
+- **An integer raised to a power that is not a literal** is refused; a literal power is exact by squaring and wraps like any product. A negative literal power is refused (Ruby answers a Rational).
+- **An Integer compared with a Float** is compared as two doubles. Below 2^53 every `int64` is a double exactly and nothing differs; above it, `(2**53 + 1) == 2.0**53` is true here and false in Ruby.
+
+**Floating point**
+
+- **Narrow types compute narrow.** A float32 cell computes as `float`, and a cmplx64 cell as `float _Complex`. Ruby has no narrower Float, so the same expression run in Ruby rounds at double width.
+- **`Math` answers NaN outside its domain** rather than raising `Math::DomainError`, except `Math.gamma`. `Math.sqrt(-0.0)` is `-0.0`, where Ruby answers `0.0`.
 - **A negative real raised to a fractional power** is NaN where the result is read as a real. Stored into a complex cell, or joined with a complex value, it is Ruby's Complex.
-- **A complex raised to a power** uses `cpow`, which can differ from Ruby in the last bit.
-- **A sine beside a cosine** may be computed together, which can change the last bit.
+- **A complex raised to a power** uses C's `cpow`, which can differ from Ruby in the last bit.
+- **A sine beside a cosine of the same argument** may be computed together by the C compiler, which can change the last bit.
 - **A reduction is reassociated** into partial sums unless `reassociate: false` is given, so its last bits can differ from adding in order.
-- **Storing a real out of range into an integer array** is C's conversion, whose result depends on the machine. Storing an integer into a narrower array wraps.
-- **`uint64`** follows CArray's wrapping and C's ordering of uint64 over int64.
-- **Assigning a captured name** makes a local inside the kernel; the outer variable is not changed.
+- **A real stored into an integer array** is C's conversion: past the type's range, or for a NaN, the result depends on the machine. Ruby would raise or grow.
+
+**The language**
+
+- **Numbers are not conditions.** There is no truthiness; a condition is boolean, and `&&`, `||` and `!` take booleans.
+- **Assigning a captured name** makes a local inside the kernel; the variable outside keeps its value.
 - **A local first assigned on one branch** cannot be read after the branch, where Ruby would give `nil`.
-- **A loop's direction** is the step of its extent, whatever the body reads.
+- **A loop's direction** is the step of its extent, whatever the body reads; the kernel runs the order it is given, as the same Ruby loop would.
+- **A subscript counts from the start.** A negative position is refused or raises `IndexError`, where Ruby's `Array` would count from the end. (CArray's `a[-1]` counts from the end too.)
+- **An error raised at a cell** is raised when the pass ends, not at the cell. A computed subscript out of range has read cell 0, or skipped its write, in the meantime.
+
+## 11. Where the answer differs from CArray's array operations
+
+A block reads like Ruby run over one cell at a time, and it answers as that Ruby would. CArray's own operations on whole arrays answer some of the same expressions differently. Where the two disagree, the block takes Ruby's side.
+
+| Expression | CArray on arrays | A block |
+|---|---|---|
+| float `x % 0.0` | NaN | `ZeroDivisionError`, as Ruby |
+| float `-4.0 % 2.0` | `0.0` (the divisor's sign) | `-0.0` (the dividend's sign), as Ruby |
+| `int8` cells: `a * 2 / 4` with `a = 100` | `-14`: each operation wraps at 8 bits | `50`: computed in `int64`, wrapped only when stored |
+| `int8` + `uint8` | computed and returned in `uint8` | computed in `int64` |
+| a uint8 cell `+ 300` | `RangeError`: 300 does not fit uint8 | `301`, computed in `int64` |
+| `x.round`, `floor`, `ceil`, `truncate` | a float array | an Integer, as Ruby |
+| boolean arithmetic, `b + b` | `2`: a boolean is 0/1 | refused, as Ruby refuses `true + true` |
+| a boolean compared with a number, `b == 1` | compares as 0/1 | refused: in Ruby `true == 1` is false |
+| storing a boolean into a numeric array | 0/1 | refused |
+| `\|` and `&` of a masked boolean (`UNDEF \| true`) | Kleene: `true` | `\|\|` and `&&`: masked whenever an operand is |
+| a `uint64` compared with a negative `int64` | compares by value: `7 < -7` is false | compared as two `uint64`: `7 < -7` is true |
+
+Where they agree, the block keeps CArray's answer: integer `/` and `%` floor, a shift means what it means to `Integer`, `INT64_MIN / -1` is `INT64_MIN`, overflow wraps, an Integer meets a Float as two doubles, narrow types compute narrow, `Math` outside its domain is NaN, a real out of range stored into an integer cell is C's conversion, and a masked operand gives a masked result.
