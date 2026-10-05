@@ -365,19 +365,66 @@ class TestIndexDependentRanges < Minitest::Test
 
   # ---------- what a range still may not be ----------
 
-  def test_a_range_over_a_local_variable_is_still_refused
+  # ---------- a range the data decides ----------
+
+  # A range read from a local or a cell is known only when its loop is
+  # reached.  The loop runs it; a subscript it walks is checked at each
+  # access, as a computed position is.
+  def test_a_range_over_a_local_variable_runs
     out = CArray.double(2)
-    error = assert_raises(CArray::JIT::Unsupported) do
+    CArray.jit_for(2) { |i|
+      s = 0.0
+      n = 2
+      (n...3).each { |k| s = s + k }
+      out[i] = s
+    }
+    assert_equal [2.0, 2.0], out.to_a
+  end
+
+  def test_a_range_read_from_a_cell_bounds_a_walked_subscript
+    bound = CA_INT32([2, 3])
+    m = CA_INT32([[1, 2, 3], [4, 5, 6]])
+    out = CArray.int32(2)
+    CArray.jit_for(2) { |i|
+      s = 0
+      (0...bound[i]).each { |j| s = s + m[i, j] }
+      out[i] = s
+    }
+    assert_equal [3, 15], out.to_a
+  end
+
+  def test_a_subscript_past_a_range_read_from_a_cell_raises_index_error
+    bound = CA_INT32([2, 4])
+    m = CA_INT32([[1, 2, 3], [4, 5, 6]])
+    out = CArray.int32(2)
+    assert_raises(IndexError) do
       CArray.jit_for(2) { |i|
-        s = 0.0
-        n = 2
-        (n...3).each { |k| s = s + k }
+        s = 0
+        (0...bound[i]).each { |j| s = s + m[i, j] }
         out[i] = s
       }
     end
-    assert_match(/an inner loop's range is an integer expression over/,
-                 error.message)
-    assert_match(/the indices around it/, error.message)
+  end
+
+  def test_a_range_read_from_a_cell_writes_through_its_index
+    bound = CA_INT32([1, 3])
+    w = CArray.int32(2, 4)
+    CArray.jit_for(2) { |i|
+      (0...bound[i]).each { |j| w[i, j + 1] = j + 1 }
+    }
+    assert_equal [[0, 1, 0, 0], [0, 1, 2, 3]], w.to_a
+  end
+
+  def test_a_range_over_an_index_whose_range_the_data_decides
+    bound = CA_INT32([1, 2])
+    m = CA_INT32([[1, 2], [3, 4]])
+    out = CArray.int32(2)
+    CArray.jit_for(2) { |i|
+      s = 0
+      (0...bound[i]).each { |k| (0..k).each { |j| s = s + m[i, j] } }
+      out[i] = s
+    }
+    assert_equal [1, 10], out.to_a
   end
 
   def test_a_range_over_a_sibling_loops_index_is_refused

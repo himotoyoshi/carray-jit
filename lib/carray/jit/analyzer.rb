@@ -310,7 +310,7 @@ class CArray
       attr_reader :windows
       attr_reader :index_names, :array_names, :scalar_names, :c_function_names, :body,
                   :written_arrays, :array_ranks, :subscripts, :inner_ranges,
-                  :index_sources,
+                  :index_sources, :unbounded_indices,
                   :contracted_names
       # The C arrays the body declares, as [scope, name, storage, shape].
       # Nothing in the operand tables says a body has any, so this is how the
@@ -503,6 +503,7 @@ class CArray
         @inner_names_seen = []
         @array_ranks = {}
         @inner_ranges = {}
+        @unbounded_indices = []
         @subscripts = Hash.new { |hash, key| hash[key] = [] }
         @write_subscripts = Hash.new { |hash, key| hash[key] = [] }
         @given_rank = rank
@@ -1769,6 +1770,10 @@ class CArray
         @inner_aliases[index] = internal
         @index_sources[internal] = index
         @inner_ranges[internal] = [from, to, step]
+        unless Analyzer.boundable_range?(from, @unbounded_indices) &&
+               Analyzer.boundable_range?(to, @unbounded_indices)
+          @unbounded_indices << internal
+        end
         @loop_depth += 1
         @scopes.push([])
         statements = statements_of(node.block.body).map { |inner|
@@ -3766,9 +3771,13 @@ class CArray
       # in scope, so that the offset is a compile-time constant.
       def read_subscript (node, location)
         name = index_name(node)
-        return [index_identifier(name), 0] if name && index_in_scope?(name)
+        if name && index_in_scope?(name)
+          return [nil, pinned_subscript(node)] if unbounded_index?(name)
+          return [index_identifier(name), 0]
+        end
         if node.is_a?(Prism::CallNode) && [:+, :-].include?(node.name) &&
            (receiver = index_name(node.receiver)) && index_in_scope?(receiver)
+          return [nil, pinned_subscript(node)] if unbounded_index?(receiver)
           return walked_subscript(node)
         end
         # Anything else pins the axis at a position the loop does not walk:
@@ -3780,6 +3789,30 @@ class CArray
 
       def pinned_subscript (node)
         build(node)
+      end
+
+      # An inner index whose range reads a local or a cell.  Its range is not
+      # known until the loop is reached, so a subscript it walks cannot be
+      # checked before the kernel runs; it is checked at each access instead,
+      # as `a[b[i]]` is.
+      def unbounded_index? (name)
+        @unbounded_indices.include?(index_identifier(name))
+      end
+
+      # Whether an inner loop's range can be worked out before the kernel
+      # runs: literals, captured integers, the extents, and indices whose own
+      # range can, under `+`, `-` and `*`.
+      def self.boundable_range? (node, unbounded)
+        case node
+        when IntegerLiteral, CaptureRead, BoundsValue then true
+        when IndexVariable then !unbounded.include?(node.name)
+        when UnaryMinus    then boundable_range?(node.operand, unbounded)
+        when BinaryOperation
+          [:+, :-, :*].include?(node.operator) &&
+            boundable_range?(node.left, unbounded) &&
+            boundable_range?(node.right, unbounded)
+        else false
+        end
       end
 
       # The one cell a CScalar has: position zero on its one axis, which is a

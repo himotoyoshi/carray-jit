@@ -444,34 +444,33 @@ CArray.jit_for(4) { |i|
 found.to_a                          #=> [0, 2, 3, 3]
 ```
 
-#### 28. 配列から読んだ `bound[i]` まで数える。何に止められ、何で通るか (★★★)
+#### 28. 配列から読んだ `bound[i]` 個ぶん、行 `i` の先頭から足す。何がいつ確かめられるか (★★★)
 
-`ヒント: 内側の range はループの前に分かっている`
+`ヒント: データが決める範囲は、ループに着くまで分からない`
 
 ```ruby
 bound = CA_INT32([2, 3])
+m = CA_INT32([[1, 2, 3], [4, 5, 6]])
 out = CArray.int32(2)
 
 CArray.jit_for(2) { |i|
-  count = 0
-  (0...bound[i]).each { |j| count = count + 1 }
-  out[i] = count
+  s = 0
+  (0...bound[i]).each { |j| s = s + m[i, j] }
+  out[i] = s
 }
-#=> CArray::JIT::Unsupported: an inner loop's range is an integer expression
-#   over literals, captured scalars and the indices around it
+out.to_a                            #=> [3, 15]
 ```
 
+リテラルと捕捉した整数で書いた範囲はカーネルが走る前に分かるので、`m[i, j]` が `m` の内側にあることは最初のセルの前に確かめられる。この範囲はループに着くまで分からないので、`m[i, j]` は `m[i, b[i]]` と同じく、アクセスのたびに確かめられる。行の端を越えると、カーネルはその回を終えてから raise する:
+
 ```ruby
+bound = CA_INT32([2, 4])
 CArray.jit_for(2) { |i|
-  count = 0
-  j = 0
-  while j < bound[i]                # データが決める上限を運ぶのは while
-    count = count + 1
-    j = j + 1
-  end
-  out[i] = count
+  s = 0
+  (0...bound[i]).each { |j| s = s + m[i, j] }
+  out[i] = s
 }
-out.to_a                            #=> [2, 3]
+#=> IndexError: index out of range
 ```
 
 #### 29. 複素配列の二乗を `squared` へ、元の絶対値を `size` へ (★★☆)

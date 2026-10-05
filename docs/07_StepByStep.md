@@ -444,34 +444,33 @@ CArray.jit_for(4) { |i|
 found.to_a                          #=> [0, 2, 3, 3]
 ```
 
-#### 28. Count up to `bound[i]`, read from an array. What stops it, and what gets past it? (★★★)
+#### 28. Sum the first `bound[i]` cells of row `i`, where `bound` is read from an array. What is checked, and when? (★★★)
 
-`hint: an inner range is known before the loop runs`
+`hint: a range the data decides is known only when the loop is reached`
 
 ```ruby
 bound = CA_INT32([2, 3])
+m = CA_INT32([[1, 2, 3], [4, 5, 6]])
 out = CArray.int32(2)
 
 CArray.jit_for(2) { |i|
-  count = 0
-  (0...bound[i]).each { |j| count = count + 1 }
-  out[i] = count
+  s = 0
+  (0...bound[i]).each { |j| s = s + m[i, j] }
+  out[i] = s
 }
-#=> CArray::JIT::Unsupported: an inner loop's range is an integer expression
-#   over literals, captured scalars and the indices around it
+out.to_a                            #=> [3, 15]
 ```
 
+A range written in literals and captured integers is known before the kernel runs, so `m[i, j]` is proved inside `m` before the first cell. This one is not known until the loop is reached, so `m[i, j]` is checked at each access instead, as `m[i, b[i]]` would be. Past the end of a row, the kernel finishes its pass and raises:
+
 ```ruby
+bound = CA_INT32([2, 4])
 CArray.jit_for(2) { |i|
-  count = 0
-  j = 0
-  while j < bound[i]                # `while` carries a bound the data decides
-    count = count + 1
-    j = j + 1
-  end
-  out[i] = count
+  s = 0
+  (0...bound[i]).each { |j| s = s + m[i, j] }
+  out[i] = s
 }
-out.to_a                            #=> [2, 3]
+#=> IndexError: index out of range
 ```
 
 #### 29. Write the square of a complex array into `squared`, and the magnitude of the original into `size` (★★☆)

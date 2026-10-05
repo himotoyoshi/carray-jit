@@ -56,6 +56,7 @@ class CArray
         @written_arrays = analyzer.written_arrays
         @array_ranks = analyzer.array_ranks
         @inner_ranges = analyzer.inner_ranges
+        @unbounded_indices = analyzer.unbounded_indices
         # An index the block wrote twice has two identifiers here; the
         # messages speak the name it was written with.
         @index_sources = analyzer.index_sources
@@ -618,6 +619,9 @@ class CArray
         # In source order, outermost first, so an index a range is written
         # over has its own range settled before it is read.
         @inner_ranges.each do |name, (from, to, step)|
+          # A range read from a local or a cell has no span before the loop
+          # is reached; the subscripts it walks are checked at each access.
+          next if @unbounded_indices.include?(name)
           step ||= 1
           first = span_of(from, scalar_values, flat, ranges, name)
           last = span_of(to, scalar_values, flat, ranges, name)
