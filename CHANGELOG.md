@@ -39,6 +39,16 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Change: in `jit_for`, an inner loop whose range is read from a local or
+  a cell (`(0...bound[i]).each`) runs, where it was refused. A subscript
+  that loop's index walks is checked at each access, as `a[b[i]]` is, and
+  raises `IndexError` past the end; a range written in literals and
+  captured integers is still checked before the kernel runs.
+- Change: in a block, an integer literal above `2**63 - 1` is refused where
+  it would be computed as an int64 (it wrapped to a negative number).
+  Meeting a uint64 or a Float, or stored into a uint64 or float array, it
+  keeps its value as before.
+
 - Fix: in a block, a negative real raised to a power that is not an
   integer, stored into a complex cell or joined with a Complex
   (`z[i] = x ** y`, `x ** y + 1i`), is now the Complex Ruby gives,
