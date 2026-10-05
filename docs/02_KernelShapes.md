@@ -275,7 +275,7 @@ CArray.jit_for(rows, columns) { |i, j|
 }
 ```
 
-`each` rather than `for`, because `for` does not open a scope: it would assign an enclosing variable of the same name and leave the index bound afterwards, neither of which the generated loop does. The range must be a literal `Range`; `Enumerator::ArithmeticSequence` -- `(0...n).step(2)` -- is not handled yet.
+`each` rather than `for`, because `for` does not open a scope: it would assign an enclosing variable of the same name and leave the index bound afterwards, neither of which the generated loop does. The range is a literal `Range`; to step by more than one, write `(0...n).step(2) { |t| ... }`.
 
 Inner loops nest, and an index binds to an axis by name rather than by position. One index may walk two axes of the same array (a trace), two indices may walk one axis of it (`c[p,a] * c[p,b]`, which is a covariance), the outer indices need not address axes in their own order (a transposing read), and a full contraction is the same thing written into a one-cell box.
 

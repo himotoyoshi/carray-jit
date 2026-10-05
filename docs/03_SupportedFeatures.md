@@ -130,7 +130,7 @@ The aliases are CArray's too, and two of them are worth reading twice: **`CArray
 
 `CArray.empty(data_type, dim)` is carray 3.0.2's spelling. A block is read rather than run, so a kernel takes it whatever version of CArray is loaded -- but calling it outside a kernel needs 3.0.2.
 
-The shape is **written out**: an integer, or integers joined by `+`, `-` and `*`, so `CArray.double(2 * 4 + 1)` is a nine-cell array. A length only the call knows is refused -- there would be no C array to declare and no bound to check against -- and so is a length of zero or less. One axis in this release; `CArray.double(3, 4)` says which release takes more.
+The shape is **written out**: an integer, or integers joined by `+`, `-` and `*`, so `CArray.double(2 * 4 + 1)` is a nine-cell array. A length worked out from the integers the block captured is computed when the kernel starts, and that array is allocated on the heap (see below). A length from an index, a local or a cell is refused -- there would be no C array to declare and no bound to check against -- and so is a length of zero or less.
 
 **More than one axis** is written the way CArray writes it, and each axis is checked against its own extent:
 
@@ -472,7 +472,7 @@ Two things are refused rather than compiled:
 
 ```ruby
 result[i] = flags[i] + 1
-#=> cannot combine types boolean and double
+#=> cannot combine types boolean and int64
 
 result[i] = flags[i] == 1 ? 9.0 : 0.0
 #=> a boolean cell compares with `true` and `false`, not with a number: in
@@ -1171,15 +1171,15 @@ Anything outside it raises `CArray::JIT::Unsupported`, naming the construct and 
 - Integer, Float, imaginary (`2i`), `true` and `false` literals
 - The block's parameters: the loop indices
 - Block-local variables, assigned before use, reassignable -- including to a different type (see [Locals](#locals-types-and-postfix-math))
-- Captured CArrays, read and written; captured scalars, read only, Float, Integer or Complex. In a block with no indices an array may be named bare -- `a` -- which is `a[]`
+- Captured CArrays, read and written; captured scalars, Float, Integer or Complex, read where they are used; assigning one inside the block makes a local of the kernel, and the variable outside keeps its value. In a block with no indices an array may be named bare -- `a` -- which is `a[]`
 - `+ - * /`, unary `-`, `**`, comparisons `< <= > >= == !=`
 - `&&`, `||`, `!`
 - `abs`, `floor`, `ceil`, `round`, `truncate`, `to_i`, `to_f`
 - `real`, `imag`, `conjugate`, `arg` and their other Ruby spellings, on a Complex or on a real number; `Complex(x, y)` and `Complex(x)` to build one
 - `Math::PI`, `Math::E`
-- `if`/`elsif`/`else` and the ternary operator, as expressions and as statements
+- `if`/`elsif`/`else` as statements; `if`/`else` and the ternary operator as expressions. `elsif` in an expression is refused -- nest the ternary instead
 - `a[i] == UNDEF` and `a[i] != UNDEF`, either way round; `a[i] = UNDEF`. A cell of a local array is asked and marked the same way, `w[k] == UNDEF` and `w[k] = UNDEF`, where the kernel carries masks -- which gives every local array a shadow of one byte a cell (see [Masks in a local array](#masks-in-a-local-array))
-- `Math.sqrt`, `cbrt`, `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `hypot`, `asinh`, `acosh`, `atanh`
+- `Math.sqrt`, `cbrt`, `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `hypot`, `erf`, `erfc`, `gamma`, `asinh`, `acosh`, `atanh`
 - the postfix spelling of those -- `x.sqrt`, `(0.0415 * (t[i] - 218.8)).tanh` -- which `CArray::CoreExtensions` provides (see [Postfix math](#postfix-math))
 - `a[i - c]` and `a[i + c]`, with `c` a non-negative integer literal or an integer built from literals and captured integers, one subscript per axis of the array; a constant subscript pins an axis, and a computed one gathers or scatters
 - `x.nan?` and `x.finite?`, C's `isnan` and `isfinite`, answering true or false as Ruby's do. `nan?` is a Float's: an Integer and a Complex have no method by that name and raise `NoMethodError` in Ruby, so both are refused. `finite?` answers for all three, a Complex's being both parts finite as Ruby asks it. `infinite?` is **not** here -- it answers nil, 1 or -1 rather than true or false, and a kernel has no nil; ask `x.abs == Float::INFINITY`, or `x == Float::INFINITY` where the sign is the question. `negative?`, `positive?` and `zero?` are not here either, for the reason `signbit` is not: the comparison is the thing, and it is already in the subset
@@ -1190,10 +1190,12 @@ Anything outside it raises `CArray::JIT::Unsupported`, naming the construct and 
 - `& | ^ ~ << >>` on integers, and `& | ^` on booleans. A shift means what it means to Ruby's Integer: a negative count shifts the other way, and a count of 64 or more shifts every bit out (`0`, or `-1` for a negative value shifted right). It is made in the width the kernel computes integers in, `int64_t` (`uint64_t` for an unsigned cell), and its result is narrowed on store like any other, so a left shift past bit 63 wraps where Ruby's Integer would grow
 - `(from...to).each { |j| ... }` and `n.times { |j| ... }`, an inner loop whose index addresses reads and writes alike -- `work[i, j] = ...` is a row of workspace for the cell (see [A row of workspace per cell](02_KernelShapes.md#a-row-of-workspace-per-cell)); `next` and `break` inside it, and `next` in the kernel block to skip the cell
 - an inner loop's range written over another index -- `(p+1...3)`, `(0...4-m)`, the shape a triangular loop takes -- where the index is one of the loops around it. Such a range is read at its widest when a subscript is held to its array (see [Known limitations](#known-limitations))
+- an inner loop's range read from a local or a cell -- `(0...bound[i]).each` -- which is known only when the loop is reached. The loop runs it, and a subscript its index walks is checked at each access, as `a[b[i]]` is: past the end, a read gives cell 0, a write does nothing, and the kernel raises `IndexError` when the pass is over
+- `printf("format", args...)`, C's `printf` followed by a flush: an integer argument takes `%d %i %u %x %X %o`, a real one `%e %E %f %F %g %G %a %A`, a complex one prints as two reals and a boolean as an integer. A count that does not match the directives is refused
 - `from.step(to, s) { |j| ... }` and `(from...to).step(s) { |j| ... }`, the same loop counting by a literal stride: `(n-1).step(0, -1)` is a downward sweep, and `to` is included there as Ruby includes it. Two loops in one body may both be written `{ |k| ... }`; each keeps its own range
 - `while cond ... end`, and its modifier form, with `next` and `break` inside it; the condition is read at the top of every pass, and a local it reads must be a local before the loop.  `while true` is allowed where the body holds a `break` or a `raise`, and refused where it holds neither
 - a call to a C function -- one from `jit_extern` or `jit_function`, the function's own name inside its body, or, inside a `jit_function` body, another function written with `jit_function` -- as an expression, and *as a statement*, where its value is dropped as Ruby drops it and what it did is wherever its pointer parameters pointed. It is the only call that may stand alone; a `void` function -- borrowed or written here -- may only be called there. Under a mask the call does not happen (see [Calling a C function](#a-call-may-stand-alone))
-- assignment to a cell: `out[i] = ...`, at a cell the loop walks onto -- every axis of it either walks with an index at no offset or is pinned, so `out[i, 0]` writes a column and `out[i, i]` a diagonal.  Pin every axis and nothing walks: `box[0] = ...` writes one cell for every iteration and keeps the last, as the same Ruby loop does.  A pinned position is checked against the extent before the first cell, so reaching outside is a message rather than a store past the end
+- assignment to a cell: `out[i] = ...`, at a cell the loop walks onto -- every axis of it either walks with an index, at any offset, or is pinned, so `out[i, 0]` writes a column and `out[i, i]` a diagonal.  Pin every axis and nothing walks: `box[0] = ...` writes one cell for every iteration and keeps the last, as the same Ruby loop does.  A pinned position is checked against the extent before the first cell, so reaching outside is a message rather than a store past the end
 
 **Rejected**
 
@@ -1203,6 +1205,7 @@ Everything else: `for` and `until`, `begin ... end while`, strings, hashes, symb
 
 - **Integer overflow wraps**, as CArray's own operators wrap. Ruby's Integer is arbitrary precision; the generated C uses `int64_t`, so a kernel that would grow past 2^63 wraps instead, consistently within a kernel (it is compiled with `-fwrapv`, so `y = -a; y > 0` asks about the wrapped `y`). `INT64_MIN / -1` is `INT64_MIN`. Float kernels are unaffected.
 - **A negative Integer meeting a uint64** is refused, as CArray refuses the same operand: a literal when the block is compiled, a captured value (`RangeError`) when the kernel is called.
+- **An integer literal above 2^63 - 1 is refused where it is computed as an int64**, since it would wrap to a negative number there. Meeting a uint64 or a Float, or stored into a uint64 or float array, it keeps its value.
 - **An Integer compared with a Float is compared as two doubles**, as CArray compares them. Ruby compares the two exactly, so past 2^53 the answers part: `(2**53 + 1) == 2.0**53` is false in Ruby and true here, and `2**63 - 1` equals `2.0**63` here. Below 2^53 every int64 is a double exactly, and nothing differs. Where both sides may be that large, compare two integers.
 - **A negative Float to a fractional power is `NaN` where it is read as a real**, as `pow` answers and CArray does. Ruby answers a Complex -- `(-8.0) ** (1.0/3)` is `1.0+1.73i` -- which no real cell could hold anyway: storing it into a float array raises in Ruby too. **Stored in a complex cell, or joined with a Complex** (`z[i] = x ** y`, `x ** y + 1i`), the power is Ruby's Complex, to the last bit. A local takes the type of the power, so `v = x ** y; z[i] = v` is the real power and `NaN`. A whole-number exponent, or a non-negative base, gives Ruby's number. For a cube root, `Math.cbrt` keeps the sign.
 - **Object arrays are not handled.** `CA_OBJECT` holds Ruby values rather than numbers, and reaching into Ruby from inside a kernel would give up what compiling it was for.

@@ -37,9 +37,9 @@ class CArray
   # no extent, and is written with CArray.jit_each or CArray.jit_map instead.
   #
   # Arrays and scalars are the variables the block closes over, so nothing has
-  # to be named twice.  Which way each axis runs is derived from the kernel's
-  # own dependencies, not chosen: reading a cell the kernel will later write
-  # means that cell has to be reached in one particular order.
+  # to be named twice.  Which way each axis runs is the extent's: a Range runs
+  # up, a step of -1 runs down, and the kernel runs the order it is given
+  # without checking it against the cells the body reads.
   #
   # A block outside the compilable subset raises CArray::JIT::Unsupported
   # rather than falling back to a Ruby loop.  Nobody calls this method except

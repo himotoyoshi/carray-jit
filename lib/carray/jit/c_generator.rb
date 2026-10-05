@@ -1744,10 +1744,8 @@ class CArray
         lines.empty? ? "" : lines.join + "\n"
       end
 
-      # Which way each axis runs is derived, not chosen: reading a cell the
-      # kernel will later write means that cell has to be reached in one
-      # particular order, and any other order would read what was never
-      # written.
+      # Which way each axis runs is the extent's step, and the loop runs that
+      # order; nothing here checks it against the cells the body reads.
       # Each axis carries a start, a limit and a step.  The step is a compiled
       # constant when it is one, because `i++` is what lets the loop vectorise
       # and that is the case nearly every kernel is in.

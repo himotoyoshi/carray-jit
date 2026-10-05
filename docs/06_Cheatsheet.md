@@ -1,6 +1,6 @@
 # Cheatsheet
 
-Nine entry points: the eight `jit_` methods this gem puts on `CArray`, and
+Ten entry points: the nine `jit_` methods this gem puts on `CArray`, and
 `CArray.fuse`, which is CArray's own and gets the compiler from this gem being
 installed. Every example here runs as written.
 
@@ -63,8 +63,8 @@ CArray.jit_for(1...6) { |i| x[i] = x[i-1] * 2 }
 
 The parameters are the loop indices and the arguments are their extents, one
 each, an Integer `n` standing for `0...n`. Naming an index is what lets a cell
-reach `x[i-1]`, and reaching a cell the kernel will later write is what fixes
-the direction the axis runs -- derived from the dependencies, not chosen.
+reach `x[i-1]`. The direction an axis runs is the extent's -- a Range runs up,
+`(n-2).step(0, -1)` runs down -- and is not checked against what the body reads.
 
 An inner loop counts up with `(a...b).each` or `n.times`, and by a stride with
 `a.step(b, s)` -- `(n-1).step(0, -1)` for a sweep back down a row. Its index

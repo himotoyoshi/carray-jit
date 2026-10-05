@@ -35,7 +35,7 @@ Installing this gem also puts the compiler behind `CArray.fuse`. An array expres
 * [Supported features](03_SupportedFeatures.md) — locals and types, branches, raising, the types that are not just a number, calling C, and the recognized subset with what it refuses
 * [Compiling, caching and inspecting](04_Compiling.md) — what the first call costs, where kernels are kept, reading the generated C, the `carray-jit` command, a call site answered from somewhere else, and what the suite checks
 * [Design notes](05_DesignNotes.md) — decisions that were not obvious, and why
-* [Cheatsheet](06_Cheatsheet.md) — the eight `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
+* [Cheatsheet](06_Cheatsheet.md) — the nine `jit_` methods and `CArray.fuse` on one page, to look up rather than to read
 * [31 exercises, with solutions](07_StepByStep.md) — thirty-one small tasks in the order this guide introduces things, each with its solution and what it answers ([日本語](07_StepByStep.ja.md))
 * [Language reference](08_LanguageReference.md) — what a block may contain, what each construct means, and what is refused, stated in full to look up
 
