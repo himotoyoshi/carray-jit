@@ -126,4 +126,29 @@ class TestRubyEdges < Minitest::Test
     assert_equal [true, true, false, false, true, true, true, false],
                  r.to_a.map(&:nan?)
   end
+
+  # 2**63 is an Integer in Ruby.  Computed as an int64 it would wrap to a
+  # negative number, so the kernel refuses it there; meeting a uint64 or a
+  # Float it keeps its value.
+  def test_an_integer_literal_past_int64_is_refused_where_it_is_an_int64
+    o = CArray.int64(2)
+    a = CA_INT64([1, -1])
+    assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(2) { |i| o[i] = 9223372036854775808 }
+    end
+    assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(2) { |i| o[i] = a[i] + 9223372036854775808 }
+    end
+    b = CArray.boolean(2)
+    assert_raises(CArray::JIT::Unsupported) do
+      CArray.jit_for(2) { |i| b[i] = a[i] < 9223372036854775808 }
+    end
+    u = CArray.uint64(2)
+    ua = CA_UINT64([1, 2])
+    CArray.jit_for(2) { |i| u[i] = ua[i] + 9223372036854775808 }
+    assert_equal [2**63 + 1, 2**63 + 2], u.to_a
+    d = CArray.double(2)
+    CArray.jit_for(2) { |i| d[i] = 9223372036854775808 }
+    assert_equal [2.0**63, 2.0**63], d.to_a
+  end
 end

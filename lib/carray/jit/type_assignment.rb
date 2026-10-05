@@ -432,7 +432,9 @@ class CArray
           node.alternative.each { |statement| walk(statement) }
           @bindings = merge_bindings(from_consequent, @bindings)
         when IntegerLiteral
-          node.type = :int64
+          # Above 2**63-1 a literal is a uint64, as a captured Integer is;
+          # where it then meets an int64 it is refused (#refuse_wide_literal).
+          node.type = TypeAssignment.integer_type(node.value)
         when FloatLiteral
           node.type = :double
         when ImaginaryLiteral
@@ -572,6 +574,8 @@ class CArray
               if [node.left.type, node.right.type].include?(:uint64)
                 refuse_negative_literal(node.left, node.right)
                 refuse_negative_literal(node.right, node.left)
+                refuse_wide_literal(node.left, node.right)
+                refuse_wide_literal(node.right, node.left)
               end
               :boolean
             elsif [:<<, :>>].include?(node.operator)
@@ -821,6 +825,11 @@ class CArray
             "too. Store `.real`, `.imag` or `.abs`",
             location)
         end
+        if wanted == :int64 && expression.is_a?(IntegerLiteral) &&
+           expression.value > INT64_MAX
+          raise Unsupported.new(wide_literal_message(expression.value),
+                                location)
+        end
         return if !boolean?(wanted) && numeric?(given)
         if boolean?(wanted) && expression.is_a?(IntegerLiteral) &&
            [0, 1].include?(expression.value)
@@ -882,6 +891,7 @@ class CArray
         if scalar_kind == typed_kind
           refuse_wide_capture(scalar, typed)
           refuse_negative_literal(scalar, typed)
+          refuse_wide_literal(scalar, typed)
           # The scalar becomes that type rather than being widened to meet it,
           # and says so: a literal emitted as a double would take the C
           # expression back to double however this node is typed.
@@ -903,6 +913,22 @@ class CArray
           "meeting a uint64 would compute as 2**64#{scalar.value}. CArray " \
           "refuses the same operand. Convert the uint64 side first, " \
           "`x.to_f` or a signed capture", scalar.location)
+      end
+
+      # An integer literal above 2**63-1 computed as an int64, where it would
+      # wrap to a negative number.  In Ruby it is an Integer, which has no
+      # width; meeting a uint64 or a Float it keeps its value and is accepted.
+      def refuse_wide_literal (scalar, typed)
+        return unless scalar.is_a?(IntegerLiteral) &&
+                      scalar.value > INT64_MAX && typed.type == :int64
+        raise Unsupported.new(wide_literal_message(scalar.value),
+                              scalar.location)
+      end
+
+      def wide_literal_message (value)
+        "#{value} does not fit an int64, which is what it is computed in " \
+        "here, and would wrap to a negative number. Meet it with a uint64 " \
+        "or a Float, or store it into a uint64 array"
       end
 
       # A captured Integer above int64 meeting an integer, which absorption
