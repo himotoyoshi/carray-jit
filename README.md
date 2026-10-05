@@ -73,6 +73,7 @@ The `jit_` methods are this gem's, and exist once `require "carray/jit"` has run
 * [Design notes](docs/05_DesignNotes.md) — why things are the way they are
 * [Cheatsheet](docs/06_Cheatsheet.md) — every method on one page
 * [Exercises](docs/07_StepByStep.md) — 31 small tasks, each with its solution
+* [Language reference](docs/08_LanguageReference.md) — the block language, construct by construct
 
 ## Contributing
 
