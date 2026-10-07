@@ -249,6 +249,79 @@ class TestExpression < Minitest::Test
     assert_arrays_bits_equal walked, compiled
   end
 
+  # -- views --------------------------------------------------------------
+  #
+  # An operand that is not laid out end to end is read where it lies, by its
+  # strides, rather than handed back.
+
+  def test_a_column_of_a_wider_array
+    wide = CArray.float64(N, 3) { |i, j| i + j * 0.5 }
+    column = wide[nil, 1]
+    assert_equal true, computed?(CArray.fuse { column * 2.0 })
+    assert_same_answer { CArray.fuse { column * 2.0 } }
+  end
+
+  def test_a_slice_and_a_stepped_slice
+    wide = CArray.float64(ROWS, 2 * COLUMNS) { |i, j| 0.001 * (i + j) + 0.5 }
+    g = grid
+    plain = wide[nil, 0...COLUMNS]
+    stepped = wide[nil, (0...2 * COLUMNS).step(2)]
+    assert_equal true, computed?(CArray.fuse { stepped.sin })
+    assert_same_answer { CArray.fuse { stepped.sin } }
+    assert_same_answer { CArray.fuse { plain * g + stepped } }
+  end
+
+  def test_a_broadcast_operand
+    column = CArray.float64(ROWS, 1) { |i, _| 0.01 * i + 0.3 }
+    row = CArray.float64(1, COLUMNS) { |_, j| 0.02 * j - 0.1 }
+    g = grid
+    assert_equal true, computed?(column.lazy * g.lazy)
+    assert_same_answer { column.lazy * g.lazy }
+    assert_same_answer { column.lazy * row.lazy + g.lazy }
+  end
+
+  def test_a_masked_broadcast_operand
+    column = CArray.float64(ROWS, 1) { |i, _| 0.01 * i + 0.3 }
+    column[3, 0] = UNDEF
+    g = grid
+    g[5, 7] = UNDEF
+    assert_same_answer { column.lazy * g.lazy }
+  end
+
+  def test_a_transpose_and_a_reversal
+    g = grid
+    across = CArray.float64(COLUMNS, ROWS) { |i, j| (i * 5 + j) % 17 }
+    assert_same_answer { CArray.fuse { across.transpose + g } }
+    assert_same_answer { CArray.fuse { g.reverse * 2.0 - g } }
+  end
+
+  def test_a_gathered_operand
+    # No strides of its own: CArray lends a packed copy of it.
+    g = grid
+    picked = CArray.float64(2 * ROWS, COLUMNS) { |i, j| (i + 2 * j) % 13 }[CArray.int64(ROWS).seq! * 2, nil]
+    assert_equal true, computed?(CArray.fuse { picked + g })
+    assert_same_answer { CArray.fuse { picked + g } }
+  end
+
+  def test_a_shift_of_a_slice
+    wide = CArray.float64(ROWS, 2 * COLUMNS) { |i, j| (i * 3 + j) % 7 }
+    wide[4, 4] = UNDEF
+    slice = wide[nil, (0...2 * COLUMNS).step(2)]
+    assert_same_answer { CArray.fuse { slice.shift(1, -1, fill_value: 0.0) + slice } }
+  end
+
+  def test_a_store_into_a_view
+    g = grid
+    walked = CArray.float64(ROWS, 2 * COLUMNS) { |i, j| i - j * 0.5 }
+    without_it { walked[nil, (0...2 * COLUMNS).step(2)] = CArray.fuse { g * 3.0 + 1.0 } }
+    compiled = CArray.float64(ROWS, 2 * COLUMNS) { |i, j| i - j * 0.5 }
+    compiled[nil, (0...2 * COLUMNS).step(2)] = CArray.fuse { g * 3.0 + 1.0 }
+    assert_arrays_bits_equal walked, compiled
+    across = CArray.float64(COLUMNS, ROWS)
+    across.transpose[] = CArray.fuse { g.sin }
+    assert_arrays_bits_equal without_it { CArray.fuse { g.sin }.to_ca }, across.transpose.to_ca
+  end
+
   # -- storing ------------------------------------------------------------
 
   def test_a_store_fills_the_array_it_was_given
@@ -323,10 +396,20 @@ class TestExpression < Minitest::Test
 
   # -- declining ----------------------------------------------------------
 
-  def test_an_operand_not_laid_out_end_to_end_is_left_to_CArray
-    grid = CArray.float64(N, 3) { |i, j| i + j * 0.5 }
-    column = grid[nil, 1]
-    assert_same_answer { CArray.fuse { column * 2.0 } }
+  def test_a_destination_that_writes_one_cell_twice_is_left_to_CArray
+    # Every row of the view is one cell of `row`, so which value it keeps
+    # is the order the cells are written in, and that is the walk's.
+    g = grid
+    walked = CArray.float64(ROWS) { |i| i * 1.0 }
+    without_it {
+      walked.as_strided(shape: [ROWS, COLUMNS], strides: [8, 0])[] = CArray.fuse { g * 2.0 }
+    }
+    row = CArray.float64(ROWS) { |i| i * 1.0 }
+    target = row.as_strided(shape: [ROWS, COLUMNS], strides: [8, 0])
+    plan = CArray::Fusion.plan(CArray.fuse { g * 2.0 })
+    assert_equal false, CArray.expression_evaluator.call(plan, target)
+    target[] = CArray.fuse { g * 2.0 }
+    assert_arrays_bits_equal walked, row
   end
 
   def test_an_object_array_is_left_to_CArray

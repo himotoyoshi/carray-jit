@@ -11,8 +11,15 @@ class CArray
     # nothing here restates any of that: it substitutes operands into bodies
     # it was given and wraps the result in a loop.
     #
-    # Declining is ordinary.  An expression this cannot address -- an operand
-    # that is not laid out end to end, a data type with no C to write it in --
+    # An operand need not be laid out end to end.  A slice, a transpose or a
+    # broadcast column is read where it lies, by the byte strides CArray
+    # lends for it -- a broadcast axis is a stride of 0 -- and a view with no
+    # strides of its own is lent as a packed copy of it.  The strides are
+    # handed over at the call, so one kernel serves every view of the same
+    # kind; which operands are read that way is part of what it is cached by.
+    #
+    # Declining is ordinary.  An expression this cannot address -- a data
+    # type with no C to write it in, a destination whose cells overlap --
     # goes back to CArray, which walks it and arrives at the same answer.
     class Expression
 
@@ -61,19 +68,19 @@ class CArray
         # A shifted read reaches cells other than the one being written, so
         # over its own output it would read what it has just written.
         return false if aliased && shifted_leaves(plan).any? { |i| plan.leaves[i].equal?(out) }
-        kernel = kernel_for(plan, aliased) or return false
+        return false unless out.dim == plan.dim
         arrays = [out, *plan.leaves]
         writable = [true, *Array.new(plan.leaves.size, false)]
         Access.open(arrays, writable) do |bases|
-          return false unless bases.each_with_index.all? { |basis, i|
-            basis[:strides] == end_to_end(arrays[i])
-          }
-          if shifted?(plan)
-            dim = out.dim.pack("q*")
-            kernel.call(out.elements, Fiddle::Pointer[dim], *pointers(plan, bases))
-          else
-            kernel.call(out.elements, *pointers(plan, bases))
-          end
+          strided = strided_slots(arrays, bases) or return false
+          kernel = kernel_for(plan, aliased, strided) or return false
+          # Held here so that the buffers outlive the call.
+          dim = out.dim.pack("q*")
+          steps = strided.flat_map { |slot| slot_strides(bases, slot) }.pack("q*")
+          args = [out.elements]
+          args << Fiddle::Pointer[dim] if walks_axes?(plan, strided)
+          args << Fiddle::Pointer[steps] unless strided.empty?
+          kernel.call(*args, *pointers(plan, bases))
         end
         true
       rescue ZeroDivisionError
@@ -100,27 +107,38 @@ class CArray
       private
 
       # An expression of the same shape compiles to the same kernel whatever
-      # arrays it is over, which is what the plan's signature says.
-      def kernel_for (plan, aliased)
-        @kernels.fetch([plan.signature, aliased]) do
-          @kernels[[plan.signature, aliased]] = compile(plan, aliased)
+      # arrays it is over, which is what the plan's signature says -- given
+      # the same operands read by strides.  The strides themselves are
+      # arguments, not part of the kernel.
+      def kernel_for (plan, aliased, strided)
+        key = [plan.signature, aliased, strided]
+        @kernels.fetch(key) do
+          @kernels[key] = compile(plan, aliased, strided)
         end
       end
 
-      def compile (plan, aliased)
+      def compile (plan, aliased, strided)
+        @strided = strided
         source = source_for(plan, aliased) or return nil
         handle, = Compiler.build(source, "carray_jit_expression", flags: FLAGS)
         Fiddle::Function.new(handle["carray_jit_expression"],
                              [Fiddle::TYPE_LONG_LONG] +
-                               [Fiddle::TYPE_VOIDP] * (1 + arity(plan)),
+                               [Fiddle::TYPE_VOIDP] * (1 + arity(plan, strided)),
                              Fiddle::TYPE_VOID)
       rescue CompilationError
         nil
       end
 
-      def arity (plan)
+      def arity (plan, strided)
         plan.leaves.size + plan.leaves.count { |array| array.has_mask? } +
-          (plan.masked ? 1 : 0) + (shifted?(plan) ? 1 : 0)
+          (plan.masked ? 1 : 0) + (walks_axes?(plan, strided) ? 1 : 0) +
+          (strided.empty? ? 0 : 1)
+      end
+
+      # A plan that reads an operand shifted, or by strides, needs to know
+      # where along each axis the cell is; any other is one flat loop.
+      def walks_axes? (plan, strided)
+        shifted?(plan) || ! strided.empty?
       end
 
       def shifted? (plan)
@@ -141,14 +159,68 @@ class CArray
         args
       end
 
-      def end_to_end (array)
-        steps = Array.new(array.ndim)
-        step = array.bytes
-        (array.ndim - 1).downto(0) do |axis|
+      def end_to_end (dim, bytes)
+        steps = Array.new(dim.size)
+        step = bytes
+        (dim.size - 1).downto(0) do |axis|
           steps[axis] = step
-          step *= array.dim[axis]
+          step *= dim[axis]
         end
         steps
+      end
+
+      # The C names of the pointers that are not laid out end to end, in the
+      # order their strides are handed over: the destination, its mask, then
+      # each operand and its mask.  Nil where the destination has two cells
+      # at one address -- writing them one at a time is not what the walk
+      # does -- or where an operand is not the shape of the destination.
+      def strided_slots (arrays, bases)
+        slots = []
+        bases.each_with_index do |basis, i|
+          return nil unless basis[:dim] == arrays[0].dim
+          data, mask = i == 0 ? ["out", "out_mask"] : ["a#{i - 1}", "k#{i - 1}"]
+          if i == 0
+            return nil unless one_to_one?(basis[:strides], basis[:dim], basis[:bytes])
+            return nil if basis[:mask_strides] && ! one_to_one?(basis[:mask_strides], basis[:dim], 1)
+          end
+          slots << data unless basis[:strides] == end_to_end(basis[:dim], basis[:bytes])
+          if basis[:mask_strides] && basis[:mask_strides] != end_to_end(basis[:dim], 1)
+            slots << mask
+          end
+        end
+        slots.freeze
+      end
+
+      def slot_strides (bases, slot)
+        index = slot.start_with?("out") ? 0 : slot[1..].to_i + 1
+        slot.start_with?("k", "out_mask") ? bases[index][:mask_strides] : bases[index][:strides]
+      end
+
+      # Whether every cell has an address of its own.  Taken axis by axis
+      # from the shortest stride up, each has to step past everything the
+      # ones below it reach.  A layout that interleaves axes without sharing
+      # an address fails this too, and is declined though it need not be.
+      def one_to_one? (strides, dim, bytes)
+        reach = bytes
+        strides.zip(dim).reject { |_, d| d == 1 }.sort_by { |s, _| s.abs }.all? do |s, d|
+          fits = s.abs >= reach
+          reach += s.abs * (d - 1)
+          fits
+        end
+      end
+
+      # A cell of the array `slot` names: at the flat index `flat` where it
+      # is laid out end to end, and at the sum of `axes` times its strides
+      # where it is not.
+      def cell (slot, type, flat, axes)
+        return "#{slot}[#{flat}]" unless @strided.include?(slot)
+        offset = axes.each_with_index.map { |a, k| "(#{a}) * s_#{slot}_#{k}" }.join(" + ")
+        qualifier = slot.start_with?("out") ? "" : "const "
+        "*(#{qualifier}#{type} *) ((#{qualifier}char *) #{slot} + #{offset})"
+      end
+
+      def axes (plan)
+        (0...plan.dim.size).map { |k| "i#{k}" }
       end
 
       # -- the C ------------------------------------------------------------
@@ -157,8 +229,10 @@ class CArray
         out_type = C_TYPES.fetch(plan.data_type)
         restrict = aliased ? "" : "restrict "
         body = statements(plan, :edge) or return nil
-        result = ["out[n] = v#{plan.nodes.size - 1};",
-                  *(plan.masked ? ["out_mask[n] = m#{plan.nodes.size - 1};"] : [])]
+        last = plan.nodes.size - 1
+        result = ["#{cell("out", out_type, "n", axes(plan))} = v#{last};",
+                  *(plan.masked ? ["#{cell("out_mask", "uint8_t", "n", axes(plan))} = m#{last};"] : [])]
+        walking = walks_axes?(plan, @strided)
         <<~C
           #include <math.h>
           #include <stdlib.h>
@@ -176,9 +250,10 @@ class CArray
 
           #{helpers}
           void
-          carray_jit_expression (int64_t elements#{shifted?(plan) ? ", const int64_t *dim" : ""}, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
+          carray_jit_expression (int64_t elements#{walking ? ", const int64_t *dim" : ""}#{@strided.empty? ? "" : ", const int64_t *steps"}, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
           {
-          #{loop(plan, body + result, shifted?(plan) && (statements(plan, :inside) + result)).join("\n")}
+          #{stride_lines(plan).join("\n")}
+          #{loop(plan, body + result, walking && (statements(plan, :inside) + result)).join("\n")}
           }
         C
       end
@@ -191,11 +266,20 @@ class CArray
         body.any?(&:nil?) ? nil : body.flatten
       end
 
+      # The strides handed over, one per axis for each slot, named.
+      def stride_lines (plan)
+        ndim = plan.dim.size
+        @strided.each_with_index.flat_map { |slot, j|
+          (0...ndim).map { |k| "  const int64_t s_#{slot}_#{k} = steps[#{j * ndim + k}];" }
+        }
+      end
+
       # Cell by cell in storage order.  A plan that reads an array shifted
-      # needs to know where along each axis the cell is, so it walks the
-      # outer axes and splits the last one in three: the stretch in the
-      # middle, where no shifted read can leave the array, is a plain loop
-      # the compiler can vectorise, and only the ends check.
+      # or by strides needs to know where along each axis the cell is, so it
+      # walks the outer axes and then the last.  A shifted read splits the
+      # last one in three: the stretch in the middle, where no shifted read
+      # can leave the array, is a plain loop the compiler can vectorise, and
+      # only the ends check.
       def loop (plan, edge, inside = nil)
         unless inside
           return ["  for ( int64_t n = 0; n < elements; n++ ) {",
@@ -213,6 +297,7 @@ class CArray
           lines << "  const int64_t o#{i} = #{flat};"
         end
         (0...ndim).each do |k|
+          break if offsets.empty?
           below = [0, *offsets.map { |o| -o[k] }].max
           above = [0, *offsets.map { |o| o[k] }].max
           lines << "  const int64_t lo#{k} = d#{k} < #{below} ? d#{k} : #{below};"
@@ -227,9 +312,16 @@ class CArray
         row = "(#{row}) * d#{last}"
         outer = (0...last).map { |k| "i#{k} >= lo#{k} && i#{k} < hi#{k}" }
         lines << "#{indent}const int64_t row = #{row};"
-        lines << "#{indent}const int64_t a = #{outer.empty? ? "lo#{last}" : "(#{outer.join(" && ")}) ? lo#{last} : d#{last}"};"
-        lines << "#{indent}const int64_t b = a < hi#{last} ? hi#{last} : a;"
-        [["0", "a", edge], ["a", "b", inside], ["b", "d#{last}", edge]].each do |from, to, body|
+        unless offsets.empty?
+          lines << "#{indent}const int64_t a = #{outer.empty? ? "lo#{last}" : "(#{outer.join(" && ")}) ? lo#{last} : d#{last}"};"
+          lines << "#{indent}const int64_t b = a < hi#{last} ? hi#{last} : a;"
+        end
+        stretches = if offsets.empty?
+                      [["0", "d#{last}", edge]]
+                    else
+                      [["0", "a", edge], ["a", "b", inside], ["b", "d#{last}", edge]]
+                    end
+        stretches.each do |from, to, body|
           lines << "#{indent}for ( int64_t i#{last} = #{from}; i#{last} < #{to}; i#{last}++ ) {"
           lines << "#{indent}  const int64_t n = row + i#{last};"
           lines.concat(body.map { |l| "#{indent}  " + l })
@@ -258,8 +350,8 @@ class CArray
         type = C_TYPES[node.data_type] or return nil
         case node
         when CArray::Fusion::Leaf
-          ["#{type} v#{i} = a#{node.index}[n];",
-           *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? "k#{node.index}[n]" : "0"};"] : [])]
+          ["#{type} v#{i} = #{cell("a#{node.index}", type, "n", axes(plan))};",
+           *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? cell("k#{node.index}", "uint8_t", "n", axes(plan)) : "0"};"] : [])]
         when SHIFTED
           shifted_line(plan, node, i, type)
         when CArray::Fusion::Const
@@ -278,11 +370,12 @@ class CArray
       def shifted_line (plan, node, i, type)
         bounds = node.bounds.uniq
         return nil unless bounds.size == 1
-        if @where == :inside
-          return ["#{type} v#{i} = a#{node.index}[n + o#{i}];",
-                  *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? "k#{node.index}[n + o#{i}]" : "0"};"] : [])]
-        end
         ndim = node.offset.size
+        if @where == :inside
+          moved = (0...ndim).map { |k| "i#{k} + (#{node.offset[k]})" }
+          return ["#{type} v#{i} = #{cell("a#{node.index}", type, "n + o#{i}", moved)};",
+                  *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? cell("k#{node.index}", "uint8_t", "n + o#{i}", moved) : "0"};"] : [])]
+        end
         index = (0...ndim).map { |k| "s#{i}_#{k}" }
         lines = node.offset.each_with_index.map { |o, k|
           "int64_t #{index[k]} = i#{k} + (#{o});"
@@ -293,13 +386,14 @@ class CArray
           lines << "int64_t c#{i}_#{k} = #{index[k]} < 0 ? 0 : (#{index[k]} >= d#{k} ? d#{k} - 1 : #{index[k]});"
         }
         flat = (1...ndim).reduce("c#{i}_0") { |acc, k| "(#{acc}) * d#{k} + c#{i}_#{k}" }
-        lines << "#{type} v#{i} = a#{node.index}[#{flat}];"
+        clamped = (0...ndim).map { |k| "c#{i}_#{k}" }
+        lines << "#{type} v#{i} = #{cell("a#{node.index}", type, flat, clamped)};"
         if bounds.first == :fill
           fill = CArray::Fusion::Const.new(node.fill, node.data_type)
           lines << "if ( ! s#{i}_in ) { v#{i} = #{literal(fill)}; }"
         end
         if plan.masked
-          inner = node.masked ? "k#{node.index}[#{flat}]" : "0"
+          inner = node.masked ? cell("k#{node.index}", "uint8_t", flat, clamped) : "0"
           outer = bounds.first == :mask ? "1" : "0"
           lines << "uint8_t m#{i} = s#{i}_in ? #{inner} : #{outer};"
         end

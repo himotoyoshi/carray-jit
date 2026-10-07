@@ -39,6 +39,13 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: a lazy expression or `CArray.fuse` over an operand that is not
+  laid out end to end -- a slice, a stepped slice, a transpose, a gather,
+  or an operand broadcast against the others (`col.lazy * y.lazy` with
+  `col` of shape (n, 1)) -- is compiled; it was declined and walked by
+  CArray. Storing one into such a view is compiled too. A destination
+  that writes one cell more than once is still left to CArray.
+
 - Fix: an integer power in a lazy expression -- `x.lazy ** 2` over a
   Float array, or any power of an integer array -- is compiled; it was
   declined and left to CArray every time, since the C it calls was not in
