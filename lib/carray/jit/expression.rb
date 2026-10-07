@@ -174,6 +174,7 @@ class CArray
           typedef float  float32_t;
           typedef double float64_t;
 
+          #{helpers}
           void
           carray_jit_expression (int64_t elements#{shifted?(plan) ? ", const int64_t *dim" : ""}, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
           {
@@ -327,10 +328,26 @@ class CArray
         value.is_a?(Numeric) ? value != 0 : !!value
       end
 
+      # `<type>` names a helper by CArray's spelling of the type -- the
+      # float64_t of op_powi_float64_t -- not by its C spelling.
       def substitute (node, i, type)
         text = node.body.dup
         node.args.each_with_index { |arg, k| text = text.gsub("##{k + 1}", "v#{arg}") }
-        text.gsub("##{node.args.size + 1}", "v#{i}").gsub("<type>", type).lines.map(&:strip)
+        text.gsub("##{node.args.size + 1}", "v#{i}")
+            .gsub("<type>", carray_type(node.data_type, type)).lines.map(&:strip)
+      end
+
+      def carray_type (data_type, c_type)
+        case data_type
+        when :float32, :float64 then "#{data_type}_t"
+        else c_type
+        end
+      end
+
+      # The C a body may call beyond the standard library, as CArray hands it
+      # over.  A CArray without it has no body that needs it.
+      def helpers
+        CArray.respond_to?(:__kernel_helpers__) ? CArray.__kernel_helpers__ : ""
       end
 
       # A masked cell is not computed where computing it would raise: the

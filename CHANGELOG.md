@@ -39,6 +39,12 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- Fix: an integer power in a lazy expression -- `x.lazy ** 2` over a
+  Float array, or any power of an integer array -- is compiled; it was
+  declined and left to CArray every time, since the C it calls was not in
+  the generated source. Needs a CArray that has `__kernel_helpers__`
+  (3.0.3); with an older one these expressions are still declined.
+
 - Change: in `jit_for`, an inner loop whose range is read from a local or
   a cell (`(0...bound[i]).each`) runs, where it was refused. A subscript
   that loop's index walks is checked at each access, as `a[b[i]]` is, and

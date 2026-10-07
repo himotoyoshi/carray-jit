@@ -119,6 +119,28 @@ class TestExpression < Minitest::Test
     assert_same_answer { CArray.fuse { @a > @b } }
   end
 
+  # An Integer power is its own node for a Float array (ipow) and the power
+  # kernel for an integer one; both call CArray's op_powi_<type>, which
+  # CArray hands over with the bodies.
+  def test_integer_powers
+    x = CArray.float64(N) { |i| (i - N / 2) * 0.0013 }
+    k = CArray.int32(N) { |i| (i % 9) - 4 }
+    u = CArray.uint8(N) { |i| i % 5 }
+    [2, 3, 0, -2, -7, 2**31, -(2**63)].each do |p|
+      assert_same_answer { x.lazy ** p }
+      assert_same_answer { x.to_type(:float32).lazy ** p }
+    end
+    [2, 3, 7].each do |p|
+      assert_same_answer { k.lazy ** p }
+      assert_same_answer { u.lazy ** p }
+    end
+    assert_same_answer { (x.lazy * 1.5 + 0.25) ** 3 - x.lazy ** 2 }
+    return unless CArray.respond_to?(:__kernel_helpers__)
+    assert_equal true, computed?(x.lazy ** 3)
+    assert_equal true, computed?(x.lazy ** -2)
+    assert_equal true, computed?(k.lazy ** 3)
+  end
+
   def test_every_comparison
     x = CArray.int32(N) { |i| (i % 11) - 5 }
     y = CArray.int32(N) { |i| (i % 7) - 3 }
