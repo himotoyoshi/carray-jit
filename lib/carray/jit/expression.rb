@@ -459,6 +459,9 @@ class CArray
         case node.mask
         when :pass  then "uint8_t m#{i} = m#{args[0]};"
         when :union then "uint8_t m#{i} = #{args.map { |a| "m#{a}" }.join(" | ")};"
+        # The condition's mask, else the mask of the operand it chooses.
+        when :select
+          "uint8_t m#{i} = m#{args[0]} | (v#{args[0]} ? m#{args[1]} : m#{args[2]});"
         when :kleene_or, :kleene_and
           known = if node.mask == :kleene_or
                     "((!m#{args[0]} && v#{args[0]}) || (!m#{args[1]} && v#{args[1]}))"

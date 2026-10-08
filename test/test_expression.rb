@@ -141,6 +141,41 @@ class TestExpression < Minitest::Test
     assert_equal true, computed?(k.lazy ** 3)
   end
 
+  # An operand of another type is converted first; the conversion is a node
+  # of its own (cast_<type>) with the C cast CArray's walk applies.
+  def test_operands_of_different_types
+    f = @a.to_type(:float32)
+    k = CArray.int32(N) { |i| (i % 9) - 4 }
+    t = CArray.boolean(N) { |i| i % 3 == 0 ? 1 : 0 }
+    assert_same_answer { f.lazy + @b.lazy }
+    assert_same_answer { k.lazy.sin }
+    assert_same_answer { k.lazy * f.lazy + @a.lazy }
+    assert_same_answer { t.lazy + t.lazy }
+    assert_same_answer { f.lazy < @b.lazy }
+    return unless CArray.__kernel_body__(:monop, :cast_float64, :int32)
+    assert_equal true, computed?(f.lazy + @b.lazy)
+    assert_equal true, computed?(k.lazy.sin)
+  end
+
+  # A lazy then_else is a select node: masked where its condition is, else
+  # where the branch it chooses is.
+  def test_a_selection
+    return unless defined?(CATriOp::OP_SELECT)
+    k = CArray.int32(N) { |i| (i % 9) - 4 }
+    m = @b.copy
+    m[CArray.boolean(N) { |i| i % 4 == 0 ? 1 : 0 }] = UNDEF
+    c = (@a.lazy > @c.lazy)
+    mc = c.copy
+    mc[CArray.boolean(N) { |i| i % 5 == 0 ? 1 : 0 }] = UNDEF
+    assert_same_answer { (@a.lazy > 3.0).then_else(@a.lazy, 0.0) }
+    assert_same_answer { c.then_else(k.lazy, @b.lazy) * 2 }
+    assert_same_answer { c.then_else(m.lazy, @a.lazy) + 1 }
+    assert_same_answer { mc.lazy.then_else(@a.lazy, m.lazy) }
+    assert_same_answer { (@a.lazy > 2).then_else(@a.lazy.sqrt, (@b.lazy < 0).then_else(-@b.lazy, 0.5)) }
+    assert_equal true, computed?((@a.lazy > 3.0).then_else(@a.lazy, 0.0))
+    assert_equal true, computed?(mc.lazy.then_else(@a.lazy, m.lazy))
+  end
+
   # CArray adds mask rules as it adds operations.  One this gem does not
   # know is a plan it declines, not one it raises on: raising would take
   # the evaluator out of service for every expression after it.
