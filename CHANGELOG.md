@@ -39,6 +39,14 @@ version you have and a newer one.
 
 ## 0.1.4 (unreleased)
 
+- New: a lazy `then_else` (a lazy condition or branch, with CArray 3.0.3)
+  is compiled with the expression around it, masked cells included. With
+  0.1.3, a masked one made this gem raise, and CArray stopped asking it
+  for the rest of the process.
+
+- Fix: a plan holding a mask rule this gem does not know is declined and
+  walked by CArray, rather than raising.
+
 - Fix: a lazy expression or `CArray.fuse` over an operand that is not
   laid out end to end -- a slice, a stepped slice, a transpose, a gather,
   or an operand broadcast against the others (`col.lazy * y.lazy` with
