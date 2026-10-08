@@ -359,7 +359,9 @@ class CArray
            *(plan.masked ? ["uint8_t m#{i} = 0;"] : [])]
         when CArray::Fusion::Op
           statement = substitute(node, i, type) or return nil
-          [*(plan.masked ? [mask_line(node, i)] : []),
+          # A mask rule this gem does not know is a plan it declines.
+          mask = plan.masked ? (mask_line(node, i) or return nil) : nil
+          [*mask,
            "#{type} v#{i};",
            *guarded(node, i, statement, plan.masked)]
         end

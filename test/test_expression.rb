@@ -141,6 +141,19 @@ class TestExpression < Minitest::Test
     assert_equal true, computed?(k.lazy ** 3)
   end
 
+  # CArray adds mask rules as it adds operations.  One this gem does not
+  # know is a plan it declines, not one it raises on: raising would take
+  # the evaluator out of service for every expression after it.
+  def test_an_unknown_mask_rule_is_declined
+    m = @b.copy
+    m[0] = UNDEF
+    plan = CArray::Fusion.plan(@a.lazy + m.lazy)
+    plan.nodes.last.mask = :a_rule_added_later
+    out = CArray.new(plan.data_type, plan.dim)
+    out.mask = 0
+    assert_equal false, CArray.expression_evaluator.call(plan, out)
+  end
+
   def test_every_comparison
     x = CArray.int32(N) { |i| (i % 11) - 5 }
     y = CArray.int32(N) { |i| (i % 7) - 3 }
