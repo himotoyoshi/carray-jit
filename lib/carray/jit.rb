@@ -1837,29 +1837,11 @@ class CArray
           case value
           when CArray then arrays[name] = value
           when CFunction  then c_functions[name] = value
-          else
-            if generator_class && value.is_a?(generator_class)
-              randoms[name] = refuse_an_unpasteable(name, value)
-            else
-              scalars[name] = value
-            end
+          when CArray::Rng then randoms[name] = refuse_an_unpasteable(name, value)
+          else scalars[name] = value
           end
         end
         [arrays, scalars, c_functions, randoms]
-      end
-
-      # `CArray::Rng`, or nil where the CArray in use has none.
-      #
-      # Asked of the object rather than of the version, because the version
-      # cannot answer: 3.0.2 is where the class arrived and 3.0.2 is also
-      # what the release before it called itself.  Asked once and remembered,
-      # and reached only after a capture has failed to be an array or a
-      # function -- a bare `when CArray::Rng` is evaluated for every captured
-      # number, and against a CArray without the class that is a NameError
-      # loose in a kernel that never mentions a generator.
-      def generator_class
-        return @generator_class unless @generator_class.nil?
-        @generator_class = defined?(CArray::Rng) ? CArray::Rng : false
       end
 
       # A generator CArray can run but cannot hand the source of.
@@ -2071,13 +2053,5 @@ end
 #  installed, and the same answer without it.
 # ---------------------------------------------------------------------------
 
-# The expression front end needs things CArray gained after 3.0.0 -- the
-# plan, the kernel bodies as text, the flags they were built with, and
-# somewhere to register.  Without them the Prism front end above is the
-# whole of this gem, exactly as before.
-if CArray.respond_to?(:expression_evaluator) &&
-   CArray.respond_to?(:__kernel_body__) &&
-   CArray.const_defined?(:BUILD_FLAGS)
-  require "carray/jit/expression"
-  CArray.expression_evaluator = CArray::JIT::Expression.new
-end
+require "carray/jit/expression"
+CArray.expression_evaluator = CArray::JIT::Expression.new

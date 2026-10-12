@@ -51,10 +51,6 @@ class CArray
         boolean: "uint8_t",
       }.freeze
 
-      # A shifted read is a node CArray added after 3.0.2; one that does not
-      # have it never hands one over.
-      SHIFTED = defined?(CArray::Fusion::Shifted) ? CArray::Fusion::Shifted : Class.new
-
       def initialize
         @kernels = {}
       end
@@ -142,11 +138,11 @@ class CArray
       end
 
       def shifted? (plan)
-        plan.nodes.any? { |node| node.is_a?(SHIFTED) }
+        plan.nodes.any? { |node| node.is_a?(CArray::Fusion::Shifted) }
       end
 
       def shifted_leaves (plan)
-        plan.nodes.grep(SHIFTED).map(&:index)
+        plan.nodes.grep(CArray::Fusion::Shifted).map(&:index)
       end
 
       def pointers (plan, bases)
@@ -287,10 +283,10 @@ class CArray
         end
         ndim = plan.dim.size
         last = ndim - 1
-        offsets = plan.nodes.grep(SHIFTED).map(&:offset)
+        offsets = plan.nodes.grep(CArray::Fusion::Shifted).map(&:offset)
         lines = (0...ndim).map { |k| "  const int64_t d#{k} = dim[#{k}];" }
         plan.nodes.each_with_index do |node, i|
-          next unless node.is_a?(SHIFTED)
+          next unless node.is_a?(CArray::Fusion::Shifted)
           flat = (1...ndim).reduce("(int64_t)(#{node.offset[0]})") { |acc, k|
             "(#{acc}) * d#{k} + (#{node.offset[k]})"
           }
@@ -352,7 +348,7 @@ class CArray
         when CArray::Fusion::Leaf
           ["#{type} v#{i} = #{cell("a#{node.index}", type, "n", axes(plan))};",
            *(plan.masked ? ["uint8_t m#{i} = #{node.masked ? cell("k#{node.index}", "uint8_t", "n", axes(plan)) : "0"};"] : [])]
-        when SHIFTED
+        when CArray::Fusion::Shifted
           shifted_line(plan, node, i, type)
         when CArray::Fusion::Const
           ["#{type} v#{i} = #{literal(node)};",
@@ -441,9 +437,9 @@ class CArray
       end
 
       # The C a body may call beyond the standard library, as CArray hands it
-      # over.  A CArray without it has no body that needs it.
+      # over.
       def helpers
-        CArray.respond_to?(:__kernel_helpers__) ? CArray.__kernel_helpers__ : ""
+        CArray.__kernel_helpers__
       end
 
       # A masked cell is not computed where computing it would raise: the

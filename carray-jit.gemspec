@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.executables   = ["carray-jit"]
 
   # A kernel reaches CArray's C by address, so the ceiling is the next minor.
-  spec.add_dependency "carray", ">= 3.0.2", "< 3.1"
+  spec.add_dependency "carray", ">= 3.0.3", "< 3.1"
   # fiddle ships as a bundled gem; depend on it explicitly so Ruby 3.5+ resolves it.
   spec.add_dependency "fiddle"
 end
