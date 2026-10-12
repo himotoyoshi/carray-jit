@@ -152,7 +152,7 @@ class TestAddressArrays < Minitest::Test
     v = CArray.double(4).seq!(2.0)
     out = CArray.double(7)
     f = sum4
-    error = assert_raises(RuntimeError) do
+    error = assert_raises(ArgumentError) do
       CArray.jit_each { out = v + f.call(v) }
     end
     assert_match(/broadcast/, error.message,
