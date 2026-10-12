@@ -37,12 +37,84 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.4 (unreleased)
+## 0.1.4
 
-- New: a lazy `then_else` (a lazy condition or branch, with CArray 3.0.3)
-  is compiled with the expression around it, masked cells included. With
-  0.1.3, a masked one made this gem raise, and CArray stopped asking it
-  for the rest of the process.
+- New: a lazy `then_else` (a lazy condition or branch) is compiled with
+  the expression around it, masked cells included. With 0.1.3, a masked
+  one made this gem raise, and CArray stopped asking it for the rest of
+  the process.
+
+- New: `CArray.fuse` expressions holding comparisons or `shift` -- a
+  stencil, or a rule like the Game of Life's -- are compiled whole.
+
+- New: `stand_in:` on `CArray::JIT.watching` and `CFunction#watching` is the
+  number a failed body answers its C caller with, for a caller that reads
+  the return value as a status rather than as a value -- GSL's callbacks
+  return `int`, where 0 is `GSL_SUCCESS`, so a failed body handed the
+  default is read as a step that went well. It is cast to whatever the body
+  returns, reaches the call that failed and every call turned away after it,
+  and is put back when the window closes. The default is 0, which is what a
+  failed call has always answered.
+
+- New: `CArray::JIT.watching(*functions, on_error: [hook, data]) { ... }`
+  opens one window over several compiled bodies -- an objective and its
+  gradient, a function and its jacobian. Every flag goes down before the
+  block and every one is read after it, and the failure raised is the first
+  in the argument list. `on_error:` sets that pair on each of them for the
+  window's length and puts back whatever hook was there before.
+
+- New: `CFunction#on_error(hook, data)` names a C function,
+  `void (*)(void *)`, that a compiled body calls with `data` when it fails,
+  once, from the call that failed -- so a library holding the address can
+  be told to stop, as `nlopt_force_stop` tells NLopt. `#call` from Ruby
+  does not call it, and `on_error(nil)` takes it away. A body that cannot
+  fail accepts one and never calls it.
+
+- New: a `jit_function` body may ask whether a pointer parameter was handed
+  an address -- `if grad`, `grad.nil?`, `grad == nil`, `grad != nil` -- and
+  `f.call` passes `nil` there as `NULL`. This is what a callback needs where
+  the caller leaves a pointer out per call, as NLopt does with the gradient
+  under a derivative-free method. A bare pointer name outside a condition is
+  still refused, and a `void *` may be asked but not reached through.
+
+- Change: needs CArray 3.0.3 or later in the 3.0 series. Lazy `then_else`,
+  integer powers, and comparisons and `shift` in `CArray.fuse` are compiled
+  from that version; install it alongside this release.
+
+- Change: in a block, an integer literal above `2**63 - 1` is refused where
+  it would be computed as an int64 (it wrapped to a negative number).
+  Meeting a uint64 or a Float, or stored into a uint64 or float array, it
+  keeps its value as before.
+
+- Change: a negative Integer meeting a uint64 in a block is refused, as
+  CArray refuses the same operand: a literal when the block is compiled, a
+  captured value with `RangeError` when it is called. `w[i] > -1` used to
+  be false for every cell.
+
+- Change: in `jit_for`, an inner loop whose range is read from a local or
+  a cell (`(0...bound[i]).each`) runs, where it was refused. A subscript
+  that loop's index walks is checked at each access, as `a[b[i]]` is, and
+  raises `IndexError` past the end; a range written in literals and
+  captured integers is still checked before the kernel runs.
+
+- Change: in a block, `round`, `ceil`, `truncate` and `to_i` stored into
+  a float cell give `0.0` for a value that rounds to zero, never `-0.0`,
+  as Ruby's Integer has no sign of zero.
+
+- Change: in a block, a zero float remainder keeps the dividend's sign, as
+  Ruby's `Float#%` does: `-4.0 % 2.0` is `-0.0`. CArray's own `%` still
+  answers `0.0`.
+
+- Change: in a block, a shift means what it means to `Integer#<<` and
+  `#>>`: a negative count shifts the other way, and a count of 64 or more
+  shifts every bit out. It was C's shift, with no defined answer there.
+
+- Change: a body lent out answers its C caller the same way whichever way it
+  failed. A `raise` answered 0, while a division that had no divisor ran on
+  to the end and answered whatever the body made of the zero the helper
+  handed back -- `100 + a / 0` answered 100. Both now answer the window's
+  `stand_in:`, which is 0 where none was given. A caller reading the flag
+  rather than the return value sees no change.
 
 - Fix: a plan holding a mask rule this gem does not know is declined and
   walked by CArray, rather than raising.
@@ -57,18 +129,7 @@ version you have and a newer one.
 - Fix: an integer power in a lazy expression -- `x.lazy ** 2` over a
   Float array, or any power of an integer array -- is compiled; it was
   declined and left to CArray every time, since the C it calls was not in
-  the generated source. Needs a CArray that has `__kernel_helpers__`
-  (3.0.3); with an older one these expressions are still declined.
-
-- Change: in `jit_for`, an inner loop whose range is read from a local or
-  a cell (`(0...bound[i]).each`) runs, where it was refused. A subscript
-  that loop's index walks is checked at each access, as `a[b[i]]` is, and
-  raises `IndexError` past the end; a range written in literals and
-  captured integers is still checked before the kernel runs.
-- Change: in a block, an integer literal above `2**63 - 1` is refused where
-  it would be computed as an int64 (it wrapped to a negative number).
-  Meeting a uint64 or a Float, or stored into a uint64 or float array, it
-  keeps its value as before.
+  the generated source.
 
 - Fix: in a block, a negative real raised to a power that is not an
   integer, stored into a complex cell or joined with a Complex
@@ -78,29 +139,14 @@ version you have and a newer one.
 
 - Fix: a block loop whose range ends at the top of int64 runs as Ruby's
   does: `(MAX-2..MAX).each` ran no passes.
+
 - Fix: a literal past a double, `1e400`, is an infinity as in Ruby, and an
   Integer literal past uint64 is refused; both were a C compiler error.
-- Change: a negative Integer meeting a uint64 in a block is refused, as
-  CArray refuses the same operand: a literal when the block is compiled, a
-  captured value with `RangeError` when it is called. `w[i] > -1` used to
-  be false for every cell.
-- Change: in a block, `round`, `ceil`, `truncate` and `to_i` stored into
-  a float cell give `0.0` for a value that rounds to zero, never `-0.0`,
-  as Ruby's Integer has no sign of zero.
-- Change: in a block, a zero float remainder keeps the dividend's sign, as
-  Ruby's `Float#%` does: `-4.0 % 2.0` is `-0.0`. CArray's own `%` still
-  answers `0.0`.
-- Change: in a block, a shift means what it means to `Integer#<<` and
-  `#>>`: a negative count shifts the other way, and a count of 64 or more
-  shifts every bit out. It was C's shift, with no defined answer there.
+
 - Fix: signed overflow wraps consistently within a kernel. Compiled
   without `-fwrapv`, a kernel could contradict itself: `y = -a; y > 0 ?
   y : 0` stored a negative value for `a = INT64_MIN`. `INT64_MIN / -1` in
   a block is `INT64_MIN` rather than a trap on x86.
-- New: `CArray.fuse` expressions holding comparisons or `shift` -- a
-  stencil, or a rule like the Game of Life's -- are compiled whole.  This
-  needs CArray 3.0.3; with an earlier CArray they are computed by CArray
-  as before.
 
 - Fix: the `carray-jit` command runs when the carray gem is not installed.
   `status`, `list`, `show` and `clear` used to stop with
@@ -116,29 +162,6 @@ version you have and a newer one.
   four are static now, and the one function that answers where they stand
   carries the body's digest.
 
-- New: `stand_in:` on `CArray::JIT.watching` and `CFunction#watching` is the
-  number a failed body answers its C caller with, for a caller that reads
-  the return value as a status rather than as a value -- GSL's callbacks
-  return `int`, where 0 is `GSL_SUCCESS`, so a failed body handed the
-  default is read as a step that went well. It is cast to whatever the body
-  returns, reaches the call that failed and every call turned away after it,
-  and is put back when the window closes. The default is 0, which is what a
-  failed call has always answered.
-
-- Change: a body lent out answers its C caller the same way whichever way it
-  failed. A `raise` answered 0, while a division that had no divisor ran on
-  to the end and answered whatever the body made of the zero the helper
-  handed back -- `100 + a / 0` answered 100. Both now answer the window's
-  `stand_in:`, which is 0 where none was given. A caller reading the flag
-  rather than the return value sees no change.
-
-- New: `CArray::JIT.watching(*functions, on_error: [hook, data]) { ... }`
-  opens one window over several compiled bodies -- an objective and its
-  gradient, a function and its jacobian. Every flag goes down before the
-  block and every one is read after it, and the failure raised is the first
-  in the argument list. `on_error:` sets that pair on each of them for the
-  window's length and puts back whatever hook was there before.
-
 - Fix: the flag a lent body reports through, and the hook `CFunction#on_error`
   sets, belong to the thread rather than to the compiled object, so two
   threads lending one body no longer read each other's failures -- which
@@ -153,26 +176,12 @@ version you have and a newer one.
   failed with "Undefined symbols". Nothing changes elsewhere: Linux linked
   it already.
 
-- New: `CFunction#on_error(hook, data)` names a C function,
-  `void (*)(void *)`, that a compiled body calls with `data` when it fails,
-  once, from the call that failed -- so a library holding the address can
-  be told to stop, as `nlopt_force_stop` tells NLopt. `#call` from Ruby
-  does not call it, and `on_error(nil)` takes it away. A body that cannot
-  fail accepts one and never calls it.
-
 - Fix: a prototype given to `jit_function` or `jit_extern` reads C's integer
   types in any word order and without `int`, as C does -- `unsigned n`,
   `long unsigned int`, `short unsigned` -- so a header's declaration can be
   copied as it stands. `int unsigned`, which was taken as a signed `int`,
   is now unsigned. A combination C does not have, such as `short long`, is
   refused.
-
-- New: a `jit_function` body may ask whether a pointer parameter was handed
-  an address -- `if grad`, `grad.nil?`, `grad == nil`, `grad != nil` -- and
-  `f.call` passes `nil` there as `NULL`. This is what a callback needs where
-  the caller leaves a pointer out per call, as NLopt does with the gradient
-  under a derivative-free method. A bare pointer name outside a condition is
-  still refused, and a `void *` may be asked but not reached through.
 
 ## 0.1.3
 
