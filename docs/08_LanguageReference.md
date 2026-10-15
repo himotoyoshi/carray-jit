@@ -417,6 +417,7 @@ A block reads like Ruby run over one cell at a time, and it answers as that Ruby
 | `int8` cells: `a * 2 / 4` with `a = 100` | `-14`: each operation wraps at 8 bits | `50`: computed in `int64`, wrapped only when stored |
 | `int8` + `uint8` | computed and returned in `uint8` | computed in `int64` |
 | a uint8 cell `+ 300` | `RangeError`: 300 does not fit uint8 | `301`, computed in `int64` |
+| `int8` cell `= 300` | `RangeError`: 300 does not fit int8 (`to_type` gives `44`) | `44`: narrowed as C converts |
 | `x.round`, `floor`, `ceil`, `truncate` | a float array | an Integer, as Ruby |
 | boolean arithmetic, `b + b` | `2`: a boolean is 0/1 | refused, as Ruby refuses `true + true` |
 | a boolean compared with a number, `b == 1` | compares as 0/1 | refused: in Ruby `true == 1` is false |

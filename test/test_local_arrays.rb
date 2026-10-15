@@ -96,18 +96,17 @@ class TestLocalArrays < Minitest::Test
         }
       RUBY
       kernel.call({ :source => source, :out => out }, {}, [[0, 4, 1]], {})
-      # The reference stores its answer in an array of the same type, as the
-      # kernel does: a narrow integer wraps on the way in, and comparing
-      # against a Ruby Integer would be comparing against a wider type.
-      reference = CArray.new(type.to_sym, [4])
-      (0...4).each { |i|
-        w = CArray.new(type.to_sym, [5])
-        (0...5).each { |k| w[k] = source[i, k] + k }
-        total = w[0]
-        (1...5).each { |k| total = total + w[k] }
-        reference[i] = total
+      # The reference narrows each store to the same type, as the kernel
+      # does: a narrow integer wraps on the way in, and comparing against a
+      # Ruby Integer would be comparing against a wider type.  It narrows
+      # with `to_type`, which converts as C does; a plain store of a value
+      # the cell cannot hold raises RangeError since CArray 3.0.4.
+      narrow = ->(value) { CArray.object(1) { value }.to_type(type.to_sym)[0] }
+      reference = (0...4).map { |i|
+        w = (0...5).map { |k| narrow.(source[i, k] + k) }
+        narrow.(w.drop(1).reduce(w[0]) { |total, x| total + x })
       }
-      assert_equal(reference.to_a, out.to_a)
+      assert_equal(reference, out.to_a)
     end
   end
 

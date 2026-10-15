@@ -206,12 +206,13 @@ class TestTypes < Minitest::Test
     assert_equal((0...3).map { |i| source[i] * 1000 }, result.to_a)
   end
 
-  # What the type does decide is the store, and there C's answer is CArray's.
+  # What the type does decide is the store, and there C's answer is CArray's
+  # conversion.  The reference converts with `to_type`, which narrows as C
+  # does; `reference[0] = 300` raises RangeError since CArray 3.0.4.
   def test_the_store_wraps_as_carray_wraps
     result = CArray.int8(1)
     CArray.jit_for(1) { |i| result[i] = 300 }
-    reference = CArray.int8(1)
-    reference[0] = 300
+    reference = CArray.int64(1) { 300 }.to_type(:int8)
     assert_equal(reference.to_a, result.to_a)
     assert_equal([44], result.to_a)
   end

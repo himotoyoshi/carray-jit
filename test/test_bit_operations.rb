@@ -86,12 +86,13 @@ class TestBitOperations < Minitest::Test
   end
 
   def test_an_unsigned_store_wraps_as_carray_wraps
-    source = CArray.uint8(4) { |i| 200 + i * 20 }
+    source = CArray.int64(4) { |i| 200 + i * 20 }.to_type(:uint8)
     result = CArray.uint8(4)
     CArray.jit_for(4) { |i| result[i] = source[i] + 60 }
 
-    reference = CArray.uint8(4)
-    4.times { |i| reference[i] = source[i] + 60 }
+    # `to_type` narrows as C does; a plain store of a value the cell cannot
+    # hold raises RangeError since CArray 3.0.4.
+    reference = CArray.int64(4) { |i| source[i] + 60 }.to_type(:uint8)
     assert_equal(reference.to_a, result.to_a)
   end
 
