@@ -235,9 +235,10 @@ class CArray
 
         held = [buffer(reals), buffer(integers), buffer(functions),
                 buffer(data), masks, masks, error]
-        context = held.map { |item| Fiddle::Pointer[item].to_i }.pack("Q*")
-
-        Sweep.call(slab_pointer, fsync, arrays, Fiddle::Pointer[context])
+        error = in_one_block(held) { |context, slots|
+          Sweep.call(slab_pointer, fsync, arrays, context)
+          slots.last[0, error.bytesize]
+        }
 
         packed.each_with_index do |(array, item), index|
           next if array.equal?(item)
@@ -556,6 +557,31 @@ class CArray
       # and a kernel with no scalars has an empty buffer.
       def buffer (packed)
         packed.empty? ? "\0" * 8 : packed
+      end
+
+      # Copies `parts` into one block of C memory, each part 8-byte aligned,
+      # after a table of their addresses, and yields a pointer to the table
+      # and a pointer to each part; the block is freed when this returns.
+      #
+      # For a call that is handed addresses inside other memory rather than
+      # arguments: a Ruby String's bytes may be moved by GC compaction, and
+      # an address taken from one and packed elsewhere is not one Ruby knows
+      # to keep in place.  Memory from malloc is never moved.
+      def in_one_block (parts)
+        table = parts.size * Fiddle::SIZEOF_VOIDP
+        offsets = parts.each_with_object([]) { |part, list|
+          last = list.empty? ? table : list.last + parts[list.size - 1].bytesize
+          list << ((last + 7) & ~7)
+        }
+        size = offsets.last + parts.last.bytesize
+        Fiddle::Pointer.malloc(size, Fiddle::RUBY_FREE) do |block|
+          slots = parts.zip(offsets).map { |part, offset|
+            block[offset, part.bytesize] = part
+            block + offset
+          }
+          block[0, table] = slots.map(&:to_i).pack("Q*")
+          yield block, slots
+        end
       end
 
       # The xfer tier transfers a box rather than the whole view.  The box
