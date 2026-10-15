@@ -32,7 +32,7 @@ class TestRunPlan < Minitest::Test
   end
 
   def tier (array)
-    CArray::JIT::Access.classify(array)[:tier]
+    CArray::JIT::Access.tier(array)
   end
 
   # Eight cells at each of the three tiers.  The values are the same, so the

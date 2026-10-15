@@ -933,7 +933,7 @@ class CArray
       # 0.9 ns/cell with the driver here against 6.1 ns/cell swept, and no
       # scratch either way -- there was nothing the re-gather was buying.
       def walkable_in_place? (arrays)
-        tiers = arrays.map { |array| Access.classify(array)[:tier] }
+        tiers = arrays.map { |array| Access.tier(array) }
         return true if tiers.include?(Access::TIER_XFER)
         tiers.none? { |tier| tier == Access::TIER_STRIDE }
       end
@@ -1368,7 +1368,7 @@ class CArray
         arrays.each do |name, array|
           rank = array.rank
           key << name << array.data_type << rank << array.is_a?(CScalar) <<
-                 array.has_mask? << Access.classify(array)[:tier]
+                 array.has_mask? << Access.tier(array)
           case rank
           when 1 then key << array.elements
           when 2 then key << array.dim0 << array.dim1
@@ -1553,7 +1553,7 @@ class CArray
         return if written.empty?
         roots = written.map { |array| root_of(array) }
         arrays.each do |name, array|
-          next unless Access.classify(array)[:tier] == Access::TIER_XFER
+          next unless Access.tier(array) == Access::TIER_XFER
           root = root_of(array)
           # Another operand on the same storage, and one of the two written:
           # a copy taken before the loop cannot answer for either of them.
