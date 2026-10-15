@@ -1214,6 +1214,23 @@ class CArray
       # common case allocates nothing.
       EMPTY_ARRAYS = {}.freeze
 
+      # What an element-wise pass works out from its operands' shapes and
+      # types, and not from their data: which of them are walked and which
+      # are handed to a C function whole, the shape the pass covers, whether
+      # lining the walked ones up to it changes any of them, which loop runs
+      # it, the kernel, and what type a map's result is made as.
+      #
+      # @private
+      RunPlan = Data.define(:walked, :addressed, :stretched, :shape,
+                            :sweeping, :kernel, :result_type)
+
+      # How many plans one block keeps.  Not one: a caller alternating
+      # between two model states would miss on every call, and pay for the
+      # asking on top of what every call paid before.  Eight, as a kernel
+      # keeps of its own calls (CompiledKernel::PLAN_LIMIT), and for no
+      # better-measured reason.
+      RUN_PLAN_LIMIT = 8
+
       # @private
       def run_over_whole_arrays (block, map: false)
         node, source, origin = read_block(block)
@@ -1238,11 +1255,185 @@ class CArray
         # is before the broadcast.
         made = local_array_names(source, node)
         refuse_a_shadowed_array(made, outside)
-        arrays = arrays.merge(assigned_arrays(assigned - made, outside))
+        written = assigned_arrays(made.empty? ? assigned : assigned - made,
+                                  outside)
+        arrays = arrays.merge(written) unless written.empty?
         if arrays.empty?
           raise Unsupported, "the block reaches no array"
         end
 
+        # Everything from here to the kernel answers the same for two calls
+        # whose operands agree on shape and type, so it is worked out once
+        # per such agreement rather than once per call (#plan_run).  What the
+        # plan leaves to the call is what it has to: the operands themselves,
+        # the views the broadcast makes of them, a generator's state, the
+        # map's result, and the masks.
+        key = run_key(arrays, scalars, c_functions, randoms, map)
+        plan = key && found_run_plan(source, key)
+        unless plan
+          plan = plan_run(source, node, origin, arrays, scalars, c_functions,
+                          randoms, map)
+          keep_run_plan(source, key, plan) if key
+        end
+
+        walked = plan.addressed.empty? ? arrays : arrays.slice(*plan.walked)
+        # Where no operand is stretched the broadcast hands back the operands
+        # it was given, so it is not asked.  Where one is, the views it makes
+        # are views of these arrays and are made again: a view is exactly
+        # what a plan must not keep.
+        #
+        # Unstretched, `aligned` can be `arrays` itself.  That is sound only
+        # because every write into it below puts back the array already
+        # there.
+        aligned = plan.stretched ? broadcast(walked).first : walked
+        plan.addressed.each { |name| aligned[name] = arrays.fetch(name) }
+        # A generator's state joins after the broadcast, never before it.
+        # It is passed whole rather than walked, so the expression's shape
+        # has nothing to say about it -- and it has a shape of its own that
+        # would not line up anyway: four cells, against however many the
+        # expression covers.  Lining it up first is what `jit_each` did to a
+        # one-cell state before 314d6cb, and a four-cell one does not even
+        # stretch.
+        unless randoms.empty?
+          states = random_states(randoms)
+          arrays = arrays.merge(states)
+          aligned = aligned.merge(states)
+        end
+        shape = plan.shape
+        if map
+          result = CArray.send(plan.result_type, *(shape.empty? ? [1] : shape))
+          arrays = arrays.merge(MAP_RESULT => result)
+          aligned = aligned.merge(MAP_RESULT => result)
+        end
+
+        kernel = plan.kernel
+        # The shape of each of these was checked against the pass's when the
+        # plan was made, and the key holds the shapes.
+        kernel.written_arrays.each do |name|
+          next if name == MAP_RESULT
+          aligned[name] = arrays.fetch(name)
+        end
+
+        aligned = read_once_where_the_pass_writes(aligned, kernel.written_arrays)
+
+        # An array handed to a C function by address is passed whole rather
+        # than walked, so the expression's shape has nothing to say about it.
+        # Broadcasting it would stretch a one-cell state array into a
+        # read-only `CARepeat`, which the copy-back after the call cannot
+        # write through -- and a state array is exactly the shape a caller
+        # reaches for.
+        kernel.address_arrays.each do |name|
+          aligned[name] = arrays.fetch(name)
+        end
+
+        if kernel.masked
+          kernel.written_arrays.each do |name|
+            array = arrays.fetch(name)
+            array.mask = 0 unless array.has_mask?
+          end
+        end
+
+        result.mask = 0 if map && kernel.masked && !result.has_mask?
+        drive(kernel, aligned, scalars, c_functions, shape, plan.sweeping)
+        map ? result : kernel
+      end
+
+      # What two calls of one block have to agree on for one to be run as
+      # the other was.
+      #
+      # Each operand's name, type and shape, because that is what the kernel
+      # is compiled for and the broadcast lines up; whether it is a CScalar,
+      # because the broadcast stretches one where it leaves a one-cell array
+      # standing.  Whether it has a mask, because a mask is runtime state that
+      # leaves the shape and the type alone -- one appearing makes a masked
+      # kernel, and nothing else here would notice it.  And the tier it would
+      # be opened at, because that decides whether CArray's sweep or the
+      # tiers here run the pass (#walkable_in_place?).  All of it read off
+      # the operand on this call; none of it kept from the last.
+      #
+      # Then the type of each scalar, each C function's signature and each
+      # generator's kind, which is what the kernel is compiled for of those.
+      # Not a scalar's value: a clock or a coefficient changes every step,
+      # and keying on it would miss on every call of the loop this is for.
+      #
+      # Values only, never an operand: a block's plans live as long as the
+      # process, and holding an array would hold its memory as long.  Shapes
+      # from `rank`, `elements` and `dim0`.. rather than `dim`, which builds
+      # an Array on every call.
+      #
+      # nil where a scalar is not one a kernel takes, so that the call is
+      # refused where and as it always was rather than here.
+      def run_key (arrays, scalars, c_functions, randoms, map)
+        key = [map, arrays.size]
+        arrays.each do |name, array|
+          rank = array.rank
+          key << name << array.data_type << rank << array.is_a?(CScalar) <<
+                 array.has_mask? << Access.classify(array)[:tier]
+          case rank
+          when 1 then key << array.elements
+          when 2 then key << array.dim0 << array.dim1
+          when 3 then key << array.dim0 << array.dim1 << array.dim2
+          else        key.concat(array.dim)
+          end
+        end
+        key << scalars.size
+        scalars.each do |name, value|
+          key << name << TypeAssignment.scalar_type(value)
+        end
+        key << c_functions.size
+        c_functions.each { |name, function| key << name << function.kernel_key }
+        randoms.each { |name, generator| key << name << generator.generator }
+        key
+      rescue Unsupported
+        nil
+      end
+
+      # @private
+      def run_plans
+        @run_plans ||= {}
+      end
+
+      # The block's plan for this key, if it has one.  The list a plan sits
+      # in is never changed once it is published -- a kernel's call lets go
+      # of the GVL, so another thread may be reading it -- and bringing a
+      # plan to the front replaces the list rather than editing it.
+      def found_run_plan (source, key)
+        plans = run_plans[source]
+        return nil unless plans
+        found = plans.assoc(key)
+        return nil unless found
+        unless plans.first.equal?(found)
+          run_plans[source] =
+            [found, *plans.reject { |entry| entry.equal?(found) }].freeze
+        end
+        found[1]
+      end
+
+      # @private
+      def keep_run_plan (source, key, plan)
+        entry = [frozen_throughout(key), plan].freeze
+        run_plans[source] =
+          [entry, *run_plans[source]].first(RUN_PLAN_LIMIT).freeze
+      end
+
+      # A copy that nothing outside can change under it, and that changes
+      # nothing outside by being frozen: a C function's signature is its own
+      # strings, and freezing those in place would freeze them in the
+      # function.
+      def frozen_throughout (value)
+        case value
+        when Array  then value.map { |item| frozen_throughout(item) }.freeze
+        when String then value.frozen? ? value : value.dup.freeze
+        else value
+        end
+      end
+
+      # Works out what #run_over_whole_arrays keeps between calls, the way it
+      # always worked it out on every call.  Every refusal a pass can meet is
+      # met here, before a plan exists, so a plan is only ever of a call that
+      # ran.
+      def plan_run (source, node, origin, arrays, scalars, c_functions,
+                    randoms, map)
         # An array the block only hands to a C function whole is not walked,
         # so the expression's shape has nothing to say about it -- and it has
         # a shape of its own that need not line up with anything.  Left in,
@@ -1250,15 +1441,10 @@ class CArray
         # axis rather than the call it was written for.
         #
         # So it joins after the broadcast, which is what a generator's state
-        # already does and for the same reason.  The re-substitution further
-        # down stays: this is a static reading, and the analyzer's answer is
-        # the final one.
+        # already does and for the same reason.  The re-substitution in the
+        # caller stays: this is a static reading, and the analyzer's answer
+        # is the final one.
         handed_over = address_array_names(source, node, c_functions)
-        # The common case is that there are none, and it pays nothing: no
-        # hash is built and the broadcast is handed the operands it always
-        # was.  Every call comes through here -- `jit_each` is re-entered per
-        # call -- so the work that is only needed sometimes is done only
-        # then.
         addressed = handed_over.empty? ? EMPTY_ARRAYS
                                        : arrays.slice(*handed_over)
         walked = addressed.empty? ? arrays
@@ -1274,22 +1460,13 @@ class CArray
         end
 
         aligned, shape = broadcast(walked)
-        addressed.each { |name, array| aligned[name] = array }
-        # A generator's state joins after the broadcast, never before it.
-        # It is passed whole rather than walked, so the expression's shape
-        # has nothing to say about it -- and it has a shape of its own that
-        # would not line up anyway: four cells, against however many the
-        # expression covers.  Lining it up first is what `jit_each` did to a
-        # one-cell state before 314d6cb, and a four-cell one does not even
-        # stretch.
-        states = random_states(randoms)
-        arrays = arrays.merge(states)
-        aligned = aligned.merge(states)
+        stretched = aligned.any? { |name, array| !array.equal?(walked[name]) }
+        arrays = arrays.merge(random_states(randoms))
         if map
-          result = allocate_map_result(source, node, arrays, scalars, shape,
-                                       c_functions, randoms)
+          result_type = probe_map(source, node, arrays, scalars, c_functions,
+                                  randoms)
+          result = CArray.send(result_type, *(shape.empty? ? [1] : shape))
           arrays = arrays.merge(MAP_RESULT => result)
-          aligned = aligned.merge(MAP_RESULT => result)
         end
         # Both questions are about the arrays the loop walks.  An array
         # handed over whole is not one of them: its mask is not something the
@@ -1321,31 +1498,13 @@ class CArray
                   "expression covers #{shape.inspect}; a stretched array " \
                   "cannot be written to"
           end
-          aligned[name] = written
         end
 
-        aligned = read_once_where_the_pass_writes(aligned, kernel.written_arrays)
-
-        # An array handed to a C function by address is passed whole rather
-        # than walked, so the expression's shape has nothing to say about it.
-        # Broadcasting it would stretch a one-cell state array into a
-        # read-only `CARepeat`, which the copy-back after the call cannot
-        # write through -- and a state array is exactly the shape a caller
-        # reaches for.
-        kernel.address_arrays.each do |name|
-          aligned[name] = arrays.fetch(name)
-        end
-
-        if kernel.masked
-          kernel.written_arrays.each do |name|
-            array = arrays.fetch(name)
-            array.mask = 0 unless array.has_mask?
-          end
-        end
-
-        result.mask = 0 if map && kernel.masked && !result.has_mask?
-        drive(kernel, aligned, scalars, c_functions, shape, sweeping)
-        map ? result : kernel
+        RunPlan.new(walked: walked.keys.freeze,
+                    addressed: addressed.keys.freeze,
+                    stretched: stretched, shape: shape.freeze,
+                    sweeping: sweeping, kernel: kernel,
+                    result_type: result_type)
       end
 
       # `a = b * 2.0` reads the whole of the right-hand side and then assigns,
@@ -1695,6 +1854,9 @@ class CArray
         @undef_cache = {}
         @probe_cache = {}
         @local_array_name_cache = {}
+        # A plan holds the kernel it runs, so one left behind would hand the
+        # next call a kernel the registry no longer has.
+        @run_plans = {}
       end
 
       # @return [String] the directory this environment's kernels are kept in,
