@@ -37,6 +37,25 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
+## 0.1.5
+
+- Change: needs CArray 3.0.4 or later in the 3.0 series; install it
+  alongside this release. 0.1.4 accepts CArray 3.0.4 but does not run
+  under it, so the two are upgraded together. A store in a block into a
+  cell that cannot hold the value still wraps as C does, where CArray
+  3.0.4's own `int8[0] = 300` raises RangeError.
+
+- Change: `jit_each` and `jit_map` called again with operands of the same
+  shapes, types and masking cost less per call -- about 9 us rather than 11
+  for a small two-array block -- which a time-stepping loop calling one
+  block thousands of times will notice. Nothing changes in what they
+  compute; a scalar's value may differ from call to call as before.
+
+- Fix: an element-wise `jit_each` or `jit_map` run through CArray's sweep
+  could read its scalars and C functions from where they had been before
+  GC compaction moved them, and answer wrongly or crash. Only a process
+  that compacts (`GC.compact`, `GC.auto_compact = true`) was exposed.
+
 ## 0.1.4
 
 - New: a lazy `then_else` (a lazy condition or branch) is compiled with

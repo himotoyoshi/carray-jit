@@ -8,7 +8,7 @@ The block is read with Prism, translated to C if it falls inside that subset, co
 
 ## Status
 
-0.1.4 is the current release, and it still moves: behaviour can change between releases.
+0.1.5 is the current release, and it still moves: behaviour can change between releases.
 
 ## Features
 
