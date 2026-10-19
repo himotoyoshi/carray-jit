@@ -3623,12 +3623,15 @@ class CArray
          "#{emit(node.high, type)}, #{error_argument})", LEAF_PRECEDENCE]
       end
 
-      # `isnan` and `isfinite` are C's own, and take a number of any width.
-      # A Complex answers `finite?` the way Ruby answers it -- both parts
-      # finite -- through a helper, so that the number is computed once.
-      # An Integer is finite whatever it holds, and goes through `isfinite`
-      # all the same rather than being answered here: the read it stands for
-      # is a read, and dropping it would drop what the read reports.
+      # `isnan` and `isfinite` are C's own, and take a real floating number
+      # of either width.  A Complex answers `finite?` the way Ruby answers
+      # it -- both parts finite -- through a helper, so that the number is
+      # computed once.  An Integer is finite whatever it holds, and goes
+      # through `isfinite` all the same rather than being answered here: the
+      # read it stands for is a read, and dropping it would drop what the
+      # read reports.  It goes in as a double, because C asks for a floating
+      # argument and gcc refuses an integer one where clang lets it pass;
+      # every integer converts to a finite double.
       def emit_numeric_predicate (node)
         type = node.operand.type
         function = node.name == :nan? ? "isnan" : "isfinite"
@@ -3636,7 +3639,11 @@ class CArray
           return emit_helper_call("complex_finite", [emit(node.operand, type)],
                                   type == :float_complex)
         end
-        ["#{function}(#{emit(node.operand, type)})", LEAF_PRECEDENCE]
+        operand = emit(node.operand, type)
+        if TypeAssignment::INTEGER_TYPES.include?(type)
+          operand = "(double)(#{operand})"
+        end
+        ["#{function}(#{operand})", LEAF_PRECEDENCE]
       end
 
       def emit_mask_test (node)

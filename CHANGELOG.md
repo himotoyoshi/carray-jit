@@ -39,6 +39,10 @@ version you have and a newer one.
 
 ## 0.1.6 (unreleased)
 
+- Fix: `finite?` on an integer cell in a block compiles with gcc; it
+  raised CompilationError there, while clang accepted it. It is true for
+  every integer, as in Ruby.
+
 - Fix: a lazy expression or `CArray.fuse` computed here now gives the
   same bits as CArray's own walk where gcc is the compiler. On x86 with
   `-march=native`, a multiply followed by an add could come out one
