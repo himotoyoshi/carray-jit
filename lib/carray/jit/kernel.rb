@@ -804,9 +804,9 @@ class CArray
           unless array.is_a?(CArray)
             raise Unsupported, "`#{name}` is not a CArray"
           end
-          unless array.rank == array_rank(name)
+          unless array.ndim == array_rank(name)
             raise Unsupported,
-                  "`#{name}` has rank #{array.rank}, but is indexed with " \
+                  "`#{name}` has rank #{array.ndim}, but is indexed with " \
                   "#{array_rank(name)} #{array_rank(name) == 1 ? 'index' : 'indices'}"
           end
           unless array.data_type_name == @storage_types.fetch(name)

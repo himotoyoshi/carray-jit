@@ -638,10 +638,10 @@ class CArray
                   "the indices of a term are symbols naming its axes, as in " \
                   "`[a, [:i, :k]]`; got #{subscripts.inspect}"
           end
-          unless subscripts.size == array.rank
+          unless subscripts.size == array.ndim
             raise Unsupported,
                   "a term names one index per axis: this array has rank " \
-                  "#{array.rank} and #{subscripts.size} " \
+                  "#{array.ndim} and #{subscripts.size} " \
                   "#{subscripts.size == 1 ? 'index' : 'indices'} were given"
           end
         end
@@ -680,9 +680,9 @@ class CArray
           raise Unsupported, "`into:` is an array to write into"
         end
         expected = free.empty? ? 1 : free.size
-        unless into.rank == expected
+        unless into.ndim == expected
           raise Unsupported,
-                "`into:` has rank #{into.rank}, and the result's axes are " \
+                "`into:` has rank #{into.ndim}, and the result's axes are " \
                 "#{free.empty? ? 'none, which is one cell' : free.map { |name| "`#{name}`" }.join(', ')}"
         end
       end
@@ -909,7 +909,7 @@ class CArray
         return false if masked
         return false if arrays.empty? || arrays.size > Sweep::MAX_ARITY
         return false unless arrays.each_value.all? { |array|
-          array.rank.zero? || array.dim == shape
+          array.ndim.zero? || array.dim == shape
         }
         walkable_in_place?(arrays.each_value)
       end
@@ -1358,7 +1358,7 @@ class CArray
       #
       # Values only, never an operand: a block's plans live as long as the
       # process, and holding an array would hold its memory as long.  Shapes
-      # from `rank`, `elements` and `dim0`.. rather than `dim`, which builds
+      # from `ndim`, `elements` and `dim0`.. rather than `dim`, which builds
       # an Array on every call.
       #
       # nil where a scalar is not one a kernel takes, so that the call is
@@ -1366,7 +1366,7 @@ class CArray
       def run_key (arrays, scalars, c_functions, randoms, map)
         key = [map, arrays.size]
         arrays.each do |name, array|
-          rank = array.rank
+          rank = array.ndim
           key << name << array.data_type << rank << array.is_a?(CScalar) <<
                  array.has_mask? << Access.tier(array)
           case rank
@@ -1593,7 +1593,7 @@ class CArray
       def broadcast (arrays)
         values = arrays.values
         rank = values.reject { |value| value.is_a?(CScalar) }
-                     .map(&:rank).max || 1
+                     .map(&:ndim).max || 1
         values = values.map { |value|
           value.is_a?(CScalar) ? value.refer(value.data_type, [1] * rank) : value
         }
