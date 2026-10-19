@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.6 (unreleased)
 
+- Fix: an int64 array handed to a C function declared to take
+  `long long *` compiles with gcc, as it did with clang; gcc 14 raised
+  CompilationError. An array of the wrong element type raises Unsupported,
+  naming the type the function takes, under gcc as under clang.
+
 - Fix: `finite?` on an integer cell in a block compiles with gcc; it
   raised CompilationError there, while clang accepted it. It is true for
   every integer, as in Ruby.

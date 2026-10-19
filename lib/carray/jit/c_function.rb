@@ -55,6 +55,13 @@ class CArray
         "#{text.sub(/\s*\[.*\]\z/, "")} #{name}[#{array if sized?}]"
       end
 
+      # The pointer an array argument decays to, as C spells it:
+      # `const double coef[3]` takes a `const double *`.
+      def decayed
+        return text unless array
+        "#{text.sub(/\s*\[.*\]\z/, "")} *"
+      end
+
       # @return [String] the type, as C spells it.
       def to_s
         text

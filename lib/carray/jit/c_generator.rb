@@ -2999,6 +2999,23 @@ class CArray
         @storage_types.fetch(array)
       end
 
+      # A captured array's element type is matched at the call
+      # (`address_buffer`), after the build, and raises before the kernel
+      # runs.  Where the declaration spells the pointer differently from the
+      # array's own, the address is cast to it, so that check is the one that
+      # answers: gcc refuses an incompatible pointer at compile time where
+      # clang only warns.  `long long *` is such a spelling for an int64
+      # array, which the check accepts and gcc does not.  A body's own
+      # pointer parameter is no captured array and is handed on as it is:
+      # its type was declared in C.
+      def emit_array_argument (argument, parameter)
+        address = emit(argument, :address)
+        return address unless @storage_types.key?(argument.array)
+        own = "#{storage_c_type(array_storage(argument.array))} *"
+        declared = parameter.decayed.sub(/\Aconst\s+/, "")
+        declared == own ? address : "(#{parameter.decayed})#{address}"
+      end
+
       def cast_to_storage (text, type, storage)
         # Storing into a boolean array normalises: CArray's boolean is a byte
         # holding 0 or 1, and a kernel is not the place that invariant stops
@@ -3563,8 +3580,9 @@ class CArray
           c_function = @c_functions.fetch(node.name)
           arguments = node.arguments.zip(c_function.parameters)
                           .map { |argument, parameter|
-                            if argument.is_a?(ArrayAddress) ||
-                               argument.is_a?(LocalArrayAddress)
+                            if argument.is_a?(ArrayAddress)
+                              emit_array_argument(argument, parameter)
+                            elsif argument.is_a?(LocalArrayAddress)
                               emit(argument, :address)
                             else
                               emit(argument, parameter.computation)
