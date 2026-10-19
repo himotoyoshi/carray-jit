@@ -37,6 +37,13 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
+## 0.1.6 (unreleased)
+
+- Fix: a lazy expression or `CArray.fuse` computed here now gives the
+  same bits as CArray's own walk where gcc is the compiler. On x86 with
+  `-march=native`, a multiply followed by an add could come out one
+  rounding off in the last bit. Builds with clang were not affected.
+
 ## 0.1.5
 
 - Change: needs CArray 3.0.4 or later in the 3.0 series; install it

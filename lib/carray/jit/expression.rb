@@ -40,7 +40,17 @@ class CArray
       # multiply and an add into one rounding, so it compiles with
       # -ffp-contract=off.  Here the reference is the eager kernel, which was
       # built with whatever CArray settled on.
-      FLAGS = ["-fPIC", "-shared", *CArray::BUILD_FLAGS.split, *DYNAMIC_LOOKUP].freeze
+      #
+      # Except between nodes.  CArray computes each node in a kernel of its
+      # own, so no node's multiply meets the next node's add; this object
+      # writes the expression as one statement per node in a single loop.
+      # clang contracts within a statement by default, which leaves that
+      # alone, but gcc defaults to -ffp-contract=fast and contracts across
+      # statements: on x86 with -march=native, `a * b + c` lost a rounding in
+      # 3296 of 30000 cells.  -ffp-contract=on keeps a contraction inside a
+      # node's own body, as CArray's kernel has it, and none between nodes.
+      FLAGS = ["-fPIC", "-shared", *CArray::BUILD_FLAGS.split,
+               "-ffp-contract=on", *DYNAMIC_LOOKUP].freeze
 
       C_TYPES = {
         float64: "double",  float32: "float",
