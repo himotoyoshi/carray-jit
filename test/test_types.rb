@@ -217,6 +217,72 @@ class TestTypes < Minitest::Test
     assert_equal([44], result.to_a)
   end
 
+  # A real stored into an integer cell keeps its integer part, as CArray's
+  # store does, up to the edge of the type and not past it.
+  def test_a_real_store_keeps_the_integer_part
+    [[:int8,   [-128.9, 127.9, -0.5]],
+     [:uint8,  [-0.9, 255.9, 7.5]],
+     [:int64,  [-(2.0**63), 9.2e18, -3.7]],
+     [:uint64, [2.0**64 - 2048, 0.0, 1.5]]].each do |type, values|
+      source = CArray.float64(3) { values }
+      result = CArray.new(type, [3])
+      CArray.jit_for(3) { |i| result[i] = source[i] }
+      reference = CArray.new(type, [3])
+      reference[] = source
+      assert_equal(reference.to_a, result.to_a, type.to_s)
+    end
+  end
+
+  # And one the type has no integer for is refused as CArray refuses it.  C
+  # leaves the conversion undefined, and x86 and ARM gave different numbers.
+  def test_a_real_store_out_of_range_raises
+    [[:int8, 128.0], [:int32, 1e20], [:int64, 2.0**63], [:uint8, -1.0],
+     [:uint64, 2.0**64]].each do |type, value|
+      source = CArray.float64(2) { [1.0, value] }
+      result = CArray.new(type, [2])
+      assert_raises(RangeError, type.to_s) do
+        CArray.jit_for(2) { |i| result[i] = source[i] }
+      end
+      reference = CArray.new(type, [2])
+      assert_raises(RangeError, type.to_s) { reference[] = source }
+    end
+    [Float::NAN, Float::INFINITY, -Float::INFINITY].each do |value|
+      source = CArray.float64(1) { [value] }
+      result = CArray.int32(1)
+      assert_raises(FloatDomainError, value.to_s) do
+        CArray.jit_for(1) { |i| result[i] = source[i] }
+      end
+    end
+  end
+
+  # A float32 cell is checked at its own value: 2147483647.0 is 2**31 in
+  # float, which no int32 holds.
+  def test_a_float32_store_is_checked_at_its_value
+    source = CArray.float32(1) { [2147483647.0] }
+    result = CArray.int32(1)
+    assert_raises(RangeError) do
+      CArray.jit_for(1) { |i| result[i] = source[i] }
+    end
+  end
+
+  # A masked cell has no value to refuse, and the element-wise form and a
+  # local array are checked as an indexed write is.
+  def test_the_real_store_check_reaches_every_write
+    source = CArray.float64(3) { [1.0, 1e20, 2.0] }
+    source[1] = UNDEF
+    result = CArray.int32(3)
+    CArray.jit_each { result = source }
+    assert_equal([1, UNDEF, 2], result.to_a)
+
+    wide = CArray.float64(2) { [1.0, 1e20] }
+    narrow = CArray.int32(2)
+    assert_raises(RangeError) { CArray.jit_each { narrow = wide } }
+    out = CArray.float64(2)
+    assert_raises(RangeError) do
+      CArray.jit_for(2) { |i| w = CArray.int32(2); w[i] = wide[i]; out[i] = w[i] }
+    end
+  end
+
   # ---------- what a guard asks ----------
 
   # The sets the guards are written against are derived from one table, so

@@ -39,6 +39,14 @@ version you have and a newer one.
 
 ## 0.1.6 (unreleased)
 
+- Change: a Float stored into an integer array in a block, captured or
+  local, that the type has no integer for raises `RangeError`, or
+  `FloatDomainError` for a NaN or an infinity, as CArray 3.0.5's own
+  store does. Before, it stored whatever the machine's C conversion gave,
+  which differed between x86 and ARM. Round and clamp first where the
+  value may leave the range. A masked cell, and a `jit_function`'s return
+  value or pointer parameter, are not checked.
+
 - Fix: an int64 array handed to a C function declared to take
   `long long *` compiles with gcc, as it did with clang; gcc 14 raised
   CompilationError. An array of the wrong element type raises Unsupported,

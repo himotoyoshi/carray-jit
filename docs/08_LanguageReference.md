@@ -395,7 +395,7 @@ These are deliberate. Everything not listed here gives Ruby's answer, to the las
 - **A complex raised to a power** uses C's `cpow`, which can differ from Ruby in the last bit.
 - **A sine beside a cosine of the same argument** may be computed together by the C compiler, which can change the last bit.
 - **A reduction is reassociated** into partial sums unless `reassociate: false` is given, so its last bits can differ from adding in order.
-- **A real stored into an integer array** is C's conversion: past the type's range, or for a NaN, the result depends on the machine. Ruby would raise or grow.
+- **A real stored into an integer array** keeps its integer part, as CArray's store does, and one past the type's range raises `RangeError` where Ruby's `to_i` would grow. A NaN or an infinity raises `FloatDomainError`, as `to_i` does.
 
 **The language**
 
@@ -425,4 +425,4 @@ A block reads like Ruby run over one cell at a time, and it answers as that Ruby
 | `\|` and `&` of a masked boolean (`UNDEF \| true`) | Kleene: `true` | `\|\|` and `&&`: masked whenever an operand is |
 | a `uint64` compared with a negative `int64` | compares by value: `7 < -7` is false | compared as two `uint64`: `7 < -7` is true |
 
-Where they agree, the block keeps CArray's answer: integer `/` and `%` floor, a shift means what it means to `Integer`, `INT64_MIN / -1` is `INT64_MIN`, overflow wraps, an Integer meets a Float as two doubles, narrow types compute narrow, `Math` outside its domain is NaN, a real out of range stored into an integer cell is C's conversion, and a masked operand gives a masked result.
+Where they agree, the block keeps CArray's answer: integer `/` and `%` floor, a shift means what it means to `Integer`, `INT64_MIN / -1` is `INT64_MIN`, overflow wraps, an Integer meets a Float as two doubles, narrow types compute narrow, `Math` outside its domain is NaN, a real stored into an integer cell keeps its integer part and raises `RangeError` past the type's range (`FloatDomainError` for a NaN or an infinity), and a masked operand gives a masked result.

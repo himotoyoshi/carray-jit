@@ -421,6 +421,7 @@ class CArray
         @uses_real_arg = false
         @uses_real_power_complex = false
         @clamp_types = []
+        @store_types = []
         @gamma_types = []
         @complex_helpers = []
         @uses_floor_divide = false
@@ -727,6 +728,7 @@ class CArray
           :real_arg => @uses_real_arg,
           :real_power_complex => @uses_real_power_complex,
           :clamp => @clamp_types.dup,
+          :store => @store_types.dup,
           :gamma => @gamma_types.dup,
           :complex => @complex_helpers.dup,
           :index_check => @uses_index_check,
@@ -839,6 +841,7 @@ class CArray
           @uses_real_arg ||= needs[:real_arg]
           @uses_real_power_complex ||= needs[:real_power_complex]
           @clamp_types |= needs[:clamp] || []
+          @store_types |= needs[:store] || []
           @gamma_types |= needs[:gamma] || []
           @complex_helpers |= needs[:complex] || []
           @uses_index_check ||= needs[:index_check]
@@ -1095,6 +1098,31 @@ class CArray
           C
         end
         text << intrinsic_helpers
+        @store_types.each do |storage|
+          low, high = STORE_BOUNDS.fetch(storage)
+          c_type = storage_c_type(storage)
+          text << <<~C
+            /* A real number stored into an #{storage} cell keeps its integer
+               part, as CArray's store does.  One with no #{storage} to keep --
+               a NaN, an infinity, a number past the range -- is refused as
+               CArray refuses it: C leaves that conversion undefined, and the
+               machines answer it differently. */
+            static inline #{c_type}
+            carray_jit_store_#{storage} (double value, int32_t *error)
+            {
+              if ( value > #{low} && value < #{high} ) {
+                return (#{c_type}) value;
+              }
+              if ( error ) {
+                *error = isnan(value) ? #{FLOAT_NAN_CODE} :
+                         isinf(value) ? ( value > 0 ? #{FLOAT_INFINITY_CODE} : #{FLOAT_NEGATIVE_INFINITY_CODE} ) :
+                         #{STORE_RANGE_CODES.fetch(storage)};
+              }
+              return 0;
+            }
+
+          C
+        end
         @clamp_types.each do |type|
           suffix, c_type, has_nan = CLAMP_C_TYPES.fetch(type)
           refusal = lambda { |test, code|
@@ -1834,6 +1862,14 @@ class CArray
       FLOAT_NEGATIVE_INFINITY_CODE = -5
       INTEGER_RANGE_CODE = -6
 
+      # And what a real number stored into an integer cell reports where the
+      # cell's type has no integer for it, one code for each type, so the
+      # message can name the type as CArray's own store does.
+      STORE_RANGE_CODES = {
+        "int8"  => -7,  "int16"  => -8,  "int32"  => -9,  "int64"  => -10,
+        "uint8" => -11, "uint16" => -12, "uint32" => -13, "uint64" => -14,
+      }.freeze
+
       # The fixed failures a body reports, as the exception each one raises.
       # A kernel and a compiled function both look here, so the two say the
       # same thing for the same cell.
@@ -1842,6 +1878,24 @@ class CArray
         FLOAT_INFINITY_CODE => [FloatDomainError, "Infinity"],
         FLOAT_NEGATIVE_INFINITY_CODE => [FloatDomainError, "-Infinity"],
         INTEGER_RANGE_CODE => [RangeError, "a rounded Float is past the range of int64"],
+        **STORE_RANGE_CODES.to_h { |storage, code|
+          [code, [RangeError, "a Float is out of range for #{storage}"]]
+        },
+      }.freeze
+
+      # The bounds a real number has to fall strictly between for its integer
+      # part to be a value of the type, written as doubles, which hold every
+      # one of them exactly.  CArray's store keeps the integer part, so -0.5
+      # goes into a uint8 cell as 0, and 255.9 as 255.
+      STORE_BOUNDS = {
+        "int8"   => ["-129.0", "128.0"],
+        "int16"  => ["-32769.0", "32768.0"],
+        "int32"  => ["-2147483649.0", "2147483648.0"],
+        "int64"  => ["-9223372036854777856.0", "9223372036854775808.0"],
+        "uint8"  => ["-1.0", "256.0"],
+        "uint16" => ["-1.0", "65536.0"],
+        "uint32" => ["-1.0", "4294967296.0"],
+        "uint64" => ["-1.0", "18446744073709551616.0"],
       }.freeze
 
       RAISE_CODE_FLOOR = 3
@@ -2588,9 +2642,9 @@ class CArray
         # expression written into it carried, and the branches the write
         # stands in.  A write reached because a missing cell said so was
         # reached for no reason, whichever of the three it writes.
+        masked = @masked ? combine_masks(@carried_masks + [emit_mask(write.expression)]) : nil
         mask = if @masked
-                 "#{indent}#{local_array_reference(write, :mask)} = " \
-                 "#{combine_masks(@carried_masks + [emit_mask(write.expression)])};\n"
+                 "#{indent}#{local_array_reference(write, :mask)} = #{masked};\n"
                else
                  ""
                end
@@ -2600,10 +2654,10 @@ class CArray
           "#{indent}#{COMPUTATION_C_TYPES.fetch(type)} #{temporary};\n" +
             emit_conditional_statement(expression, temporary, type, indent) +
             "#{indent}#{target} = " \
-            "#{cast_to_storage(temporary, type, write.storage)};\n" + mask
+            "#{cast_to_storage(temporary, type, write.storage, masked: masked)};\n" + mask
         else
           type = complex_storage_of_power(expression, write.storage) || expression.type
-          value = cast_to_storage(emit(expression, type), type, write.storage)
+          value = cast_to_storage(emit(expression, type), type, write.storage, masked: masked)
           "#{indent}#{target} = #{value};\n" + mask
         end
       end
@@ -3016,13 +3070,24 @@ class CArray
         declared == own ? address : "(#{parameter.decayed})#{address}"
       end
 
-      def cast_to_storage (text, type, storage)
+      # `masked` is the C of the written cell's mask, for a write whose mask
+      # the error slot does not already know about: a missing cell holds
+      # whatever was under its mask, which is no value to refuse.
+      def cast_to_storage (text, type, storage, masked: nil)
         # Storing into a boolean array normalises: CArray's boolean is a byte
         # holding 0 or 1, and a kernel is not the place that invariant stops
         # being true.
         return "(uint8_t)((#{text}) ? 1 : 0)" if boolean_storage?(storage)
         target = storage_c_type(storage)
         return text if COMPUTATION_C_TYPES.fetch(type) == target
+        if [:double, :float].include?(type) and STORE_BOUNDS.key?(storage)
+          @store_types |= [storage]
+          error = error_argument
+          if masked and masked != "0"
+            error = "(#{masked} ? (int32_t *) 0 : #{error})"
+          end
+          return "carray_jit_store_#{storage}(#{text}, #{error})"
+        end
         "(#{target})(#{text})"
       end
 
