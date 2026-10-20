@@ -37,7 +37,7 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.6 (unreleased)
+## 0.1.6
 
 - Change: needs CArray 3.0.5 or later in the 3.0 series; install it
   alongside this release. A Float stored into an integer array in a block
