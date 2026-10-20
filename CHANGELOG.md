@@ -39,6 +39,11 @@ version you have and a newer one.
 
 ## 0.1.6 (unreleased)
 
+- Change: needs CArray 3.0.5 or later in the 3.0 series; install it
+  alongside this release. A Float stored into an integer array in a block
+  is refused as CArray 3.0.5's own store refuses it, and under 3.0.4 the
+  block would raise where CArray's store does not.
+
 - Change: a Float stored into an integer array in a block, captured or
   local, that the type has no integer for raises `RangeError`, or
   `FloatDomainError` for a NaN or an infinity, as CArray 3.0.5's own

@@ -35,7 +35,7 @@ gem "carray-jit"
 Requires:
 
 - Ruby >= 3.2
-- CArray >= 3.0.4, < 3.1
+- CArray >= 3.0.5, < 3.1
 - A C compiler
 - Prism and Fiddle (both ship with Ruby; Fiddle is a bundled gem)
 
