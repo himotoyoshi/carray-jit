@@ -8,6 +8,7 @@ class TestCacheEnvironments < Minitest::Test
   def setup
     @previous = ENV["CARRAY_JIT_CACHE"]
     @previous_age = ENV["CARRAY_JIT_CACHE_MAX_AGE_DAYS"]
+    @previous_limit = ENV["CARRAY_JIT_CACHE_LIMIT"]
     @root = Dir.mktmpdir("carray-jit-environments-")
     ENV["CARRAY_JIT_CACHE"] = @root
     CArray::JIT.clear_registry
@@ -16,6 +17,10 @@ class TestCacheEnvironments < Minitest::Test
   def teardown
     ENV["CARRAY_JIT_CACHE"] = @previous
     ENV["CARRAY_JIT_CACHE_MAX_AGE_DAYS"] = @previous_age
+    # The suite raises the limit for its own cache, which outlives this test;
+    # left unset, every build after this one pruned that cache to the
+    # default and a run rebuilt most of its kernels.
+    ENV["CARRAY_JIT_CACHE_LIMIT"] = @previous_limit
     FileUtils.remove_entry(@root) if File.directory?(@root)
     CArray::JIT.clear_registry
   end
@@ -86,8 +91,6 @@ class TestCacheEnvironments < Minitest::Test
     assert_operator(CArray::JIT.cache_entry_count, :<=, 2)
     assert_equal(3, CArray::JIT.stale_cache_environments.size,
                  "other environments should not be evicted by this one's limit")
-  ensure
-    ENV.delete("CARRAY_JIT_CACHE_LIMIT")
   end
 
 end

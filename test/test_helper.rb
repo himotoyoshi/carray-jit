@@ -16,7 +16,7 @@ require "fileutils"
 #
 # Nothing stale can be reused: the cache key is a digest of the generated C
 # and of the toolchain, so a kernel that changed is a different entry.  The
-# limit is raised because the suite alone builds some 450 of them, and the
+# limit is raised because the suite alone builds some 1300 of them, and the
 # default would evict entries this run is about to want again.
 #
 # CARRAY_JIT_TEST_COLD=1 uses a fresh directory and removes it afterwards,
