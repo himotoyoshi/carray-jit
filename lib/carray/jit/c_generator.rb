@@ -1777,6 +1777,14 @@ class CArray
       # Each axis carries a start, a limit and a step.  The step is a compiled
       # constant when it is one, because `i++` is what lets the loop vectorise
       # and that is the case nearly every kernel is in.
+      #
+      # The limit and a step that is not a constant are read into locals
+      # before the loop, not out of `bounds` at each test.  `bounds` is an
+      # `int64_t *`, and so is an int64 array the body writes: the compiler
+      # cannot tell that a store into the array leaves the limit alone, reads
+      # it again after every cell, and having no trip count does not vectorise
+      # the loop at all.  A kernel writing a float64 or int32 array never met
+      # this, which is why it went unseen; test_vectorization.rb keeps it seen.
       def loop_open
         @rank.times.map { |axis|
           indent = "  " + "  " * axis
@@ -1788,17 +1796,18 @@ class CArray
           # way to report does not pay for the test at all.
           guard = @body_reports ? "#{indent}  if ( *error ) break;\n" : ""
           start = "bounds[#{3 * axis}]"
-          limit = "bounds[#{3 * axis + 1}]"
+          limit = "#{index}__limit"
           step = @steps[axis]
-          if step && step.negative?
-            advance = step == -1 ? "#{index}--" : "#{index} += bounds[#{3 * axis + 2}]"
-            "#{indent}for (int64_t #{index} = #{start}; #{index} > #{limit}; " \
-            "#{advance}) {\n#{guard}"
+          locals = "#{index} = #{start}, #{limit} = bounds[#{3 * axis + 1}]"
+          if step && step.abs == 1
+            advance = step == -1 ? "#{index}--" : "#{index}++"
           else
-            advance = step == 1 ? "#{index}++" : "#{index} += bounds[#{3 * axis + 2}]"
-            "#{indent}for (int64_t #{index} = #{start}; #{index} < #{limit}; " \
-            "#{advance}) {\n#{guard}"
+            locals += ", #{index}__step = bounds[#{3 * axis + 2}]"
+            advance = "#{index} += #{index}__step"
           end
+          comparison = ( step and step.negative? ) ? ">" : "<"
+          "#{indent}for (int64_t #{locals}; #{index} #{comparison} #{limit}; " \
+          "#{advance}) {\n#{guard}"
         }.join
       end
 
