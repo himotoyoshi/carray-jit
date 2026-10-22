@@ -1880,7 +1880,7 @@ class CArray
             "`#{name}` to; declare what it points at",
             argument.location)
         end
-        wanted = CDeclaration::DATA_TYPES.fetch(parameter.element.fiddle).to_s
+        wanted = CDeclaration::DATA_TYPES.fetch(parameter.element.abi).to_s
         unless storage == wanted
           raise Unsupported.new(
             "`#{c_function}` takes `#{parameter.text}` there, which is a " \

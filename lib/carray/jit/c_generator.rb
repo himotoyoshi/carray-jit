@@ -9,8 +9,8 @@ class CArray
     # names the block used, and casts only where a type actually changes.
     # `CARRAY_JIT_DUMP=1` prints it.
     #
-    # Every kernel has the same C signature, so one Fiddle::Function shape
-    # serves all of them; the per-kernel detail is unpacked into named locals
+    # Every kernel has the same C signature, so one function shape serves
+    # all of them; the per-kernel detail is unpacked into named locals
     # at the top of the body, where it also reads better.
     class CGenerator
 

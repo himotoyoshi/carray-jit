@@ -315,9 +315,9 @@ class CArray
   #   CArray.jit_each { out = j0.call(x) }
   #
   # Nothing is compiled here: `extern` is C's word for a body that lives
-  # elsewhere, and finding it is Fiddle's job.  What this gem adds is that the
-  # kernel calls the address directly instead of reaching it per cell through
-  # Fiddle.
+  # elsewhere, and finding it is the dynamic loader's job.  What this gem adds
+  # is that the kernel calls the address directly instead of reaching it per
+  # cell through a foreign-function call from Ruby.
   #
   # @param prototype [String] the function's C declaration, as C writes it.
   # @param from [String, nil] the library to open; `nil` searches the process.

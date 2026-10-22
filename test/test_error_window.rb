@@ -14,7 +14,7 @@ class TestErrorWindow < Minitest::Test
   # Reached the way a library reaches it: the address, and nothing else.
   def foreign (function)
     Fiddle::Function.new(function.pointer, function.argument_types,
-                         function.return_type.fiddle)
+                         CArray::JIT::Native::TYPES.fetch(function.return_type.abi))
   end
 
   def always_raising

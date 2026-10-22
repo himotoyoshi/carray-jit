@@ -1,4 +1,4 @@
-require "fiddle"
+require "carray/jit/native"
 
 class CArray
   module JIT
@@ -28,8 +28,8 @@ class CArray
           File.basename(feature) =~ /\Acarray_ext\.(so|bundle|dylib)\z/
         }
         @handle = path && begin
-          Fiddle::Handle.new(path)
-        rescue Fiddle::DLError
+          Native.open_library(path, global: true)
+        rescue Native::LinkError
           nil
         end
       end
@@ -38,43 +38,31 @@ class CArray
       def self.available?
         return @available if defined?(@available)
         @available = !handle.nil? && begin
-          handle["ca_call_cslab_1_r"]
+          Native.address(handle, "ca_call_cslab_1_r")
           true
-        rescue Fiddle::DLError
+        rescue Native::LinkError
           false
         end
       end
 
       # ca_call_cslab_N_r(func, fsync, rcx0..rcxN-1, userdata)
       #
-      # `need_gvl: true` is not a detail.  Fiddle releases the GVL for a call
-      # unless it is told otherwise, which is right for every other function
-      # this library reaches -- a generated kernel is pure C, touches no Ruby
-      # value and is the better for running while other threads do.  This one
-      # is not that: it is CArray's own C, and acquiring the operands attaches
-      # them, allocates with `xmalloc`, creates a mask where an output needs
-      # one and raises on a shape that will not broadcast.  All of that is the
-      # Ruby runtime's, and none of it may be done without the GVL.  The
-      # kernel it calls back into is still pure C, but the GVL is held for the
-      # whole call rather than the callback, because Fiddle's choice is made
-      # once at the boundary and there is nowhere inside to make it again.
+      # `release_gvl: false` is not a detail.  Every other function this
+      # library reaches lets go of the GVL for its call, which is right for
+      # those -- a generated kernel is pure C, touches no Ruby value and is
+      # the better for running while other threads do.  This one is not
+      # that: it is CArray's own C, and acquiring the operands attaches them,
+      # allocates with `xmalloc`, creates a mask where an output needs one and
+      # raises on a shape that will not broadcast.  All of that is the Ruby
+      # runtime's, and none of it may be done without the GVL.  The kernel it
+      # calls back into is still pure C, but the GVL is held for the whole
+      # call rather than the callback, because the choice is made once at the
+      # boundary and there is nowhere inside to make it again.
       def self.function (arity)
         @functions ||= {}
         @functions[arity] ||=
-          begin
-            types = [Fiddle::TYPE_VOIDP] * (arity + 3)
-            begin
-              Fiddle::Function.new(handle["ca_call_cslab_#{arity}_r"], types,
-                                   Fiddle::TYPE_VOIDP, need_gvl: true)
-            rescue ArgumentError
-              # A Fiddle too old to be told.  It is also too old to have let
-              # go of the GVL in the first place -- the keyword and the
-              # releasing arrived together -- so what is left here is what
-              # that Fiddle would have done anyway.
-              Fiddle::Function.new(handle["ca_call_cslab_#{arity}_r"], types,
-                                   Fiddle::TYPE_VOIDP)
-            end
-          end
+          Native.function(Native.address(handle, "ca_call_cslab_#{arity}_r"),
+                          [:pointer] * (arity + 3), :pointer, release_gvl: false)
       end
 
       # The largest arity the family was generated for.  Whether a pass can
@@ -87,7 +75,7 @@ class CArray
       # character per operand.
       def self.call (slab, fsync, arrays, context)
         function(arrays.size).call(slab, fsync,
-                                   *arrays.map { |array| Fiddle.dlwrap(array) },
+                                   *arrays.map { |array| Native.value(array) },
                                    context)
       end
 

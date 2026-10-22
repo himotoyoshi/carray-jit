@@ -772,7 +772,7 @@ class TestCFunction < Minitest::Test
     widths.each do |spelling, data_type|
       _, _, (type,) = CArray::JIT::CDeclaration.parse("void (*)(const #{spelling} *v)")
       assert_equal(data_type,
-                   CArray::JIT::CDeclaration::DATA_TYPES.fetch(type.element.fiddle),
+                   CArray::JIT::CDeclaration::DATA_TYPES.fetch(type.element.abi),
                    spelling)
     end
     f = CArray.jit_function("uint64_t (*)(unsigned n, const unsigned *v)") { |n, v| v[n - 1] }
@@ -1630,7 +1630,7 @@ class TestCFunction < Minitest::Test
     assert_equal("size_t", return_type.text)
     assert_equal(["size_t", "size_t []", "ptrdiff_t"],
                  parameters.map(&:text))
-    assert_equal(Fiddle::TYPE_SIZE_T, return_type.fiddle)
+    assert_equal(Fiddle::TYPE_SIZE_T, CArray::JIT::Native::TYPES.fetch(return_type.abi))
     # A word that int64 holds exactly is computed in int64; one that it does
     # not gets uint64, which is the whole reason uint64 is a computation type.
     expected = Fiddle::SIZEOF_SIZE_T < 8 ? :int64 : :uint64

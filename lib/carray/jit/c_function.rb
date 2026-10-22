@@ -1,18 +1,17 @@
 require "digest"
-require "fiddle"
-require "fiddle/import"
+require "carray/jit/native"
 
 class CArray
   module JIT
 
     # One parameter or return type, as the prototype spelled it.
     #
-    # Fiddle's parser answers what the ABI needs and no more: every pointer
-    # comes back as `TYPE_VOIDP`, so `const double *`, `double *` and `void *`
-    # are one thing to it.  That is enough to *call* a function and not enough
-    # to *write* one, which is why the declarator's own text is kept beside
-    # the code Fiddle assigned it.
-    CType = Struct.new(:text, :fiddle, :computation, :pointer, :array,
+    # The type a call is made with answers what the ABI needs and no more:
+    # every pointer is `:pointer`, so `const double *`, `double *` and
+    # `void *` are one thing to it.  That is enough to *call* a function and
+    # not enough to *write* one, which is why the declarator's own text is
+    # kept beside the name in Native::TYPES it was given.
+    CType = Struct.new(:text, :abi, :computation, :pointer, :array,
                        :element, :const) do
       # True for a type that may be written into a signature but holds no
       # value a kernel or a body can compute with.
@@ -26,16 +25,16 @@ class CArray
         pointer && !element.nil?
       end
 
-      # A C99 complex passed or returned by value.  Fiddle cannot carry one,
-      # so a call from Ruby goes through a shim; a call from a kernel is C
+      # A C99 complex passed or returned by value.  A call from Ruby cannot
+      # carry one, so it goes through a shim; a call from a kernel is C
       # calling C and needs nothing.
       def complex?
-        !pointer && CDeclaration::COMPLEX_CODES.value?(fiddle)
+        !pointer && CDeclaration::COMPLEX_CODES.value?(abi)
       end
 
       # `CMPLX` for a double complex, `CMPLXF` for a float one.
       def complex_build
-        fiddle == :float_complex ? "CMPLXF" : "CMPLX"
+        abi == :float_complex ? "CMPLXF" : "CMPLX"
       end
 
       # C's own declarator puts an array's length where a reader can see it,
@@ -70,12 +69,12 @@ class CArray
 
     # A C function a kernel body can call, and that C can be handed back.
     #
-    # The binding is borrowed from Fiddle -- `Fiddle::Handle` finds the
-    # library and the symbol, and `Fiddle::CParser` decides the ABI code of a
-    # type, which is the same path `Fiddle::Importer#extern` takes.  The
-    # *call* is not borrowed: reaching a function through `Fiddle::Function`
-    # costs a few hundred nanoseconds per cell, against single digits from
-    # compiled C.  Fiddle is asked where the function is; the kernel calls it.
+    # The binding is borrowed from Native -- it finds the library and the
+    # symbol, and decides what type a C spelling is on this machine.  The
+    # *call* is not borrowed: reaching a function through a function Native
+    # makes costs a few hundred nanoseconds per cell, against single digits
+    # from compiled C.  Native is asked where the function is; the kernel
+    # calls it.
     #
     # The address travels to the kernel in a buffer, the way a captured scalar
     # already does, rather than being linked against.  That means no `-l`
@@ -266,9 +265,10 @@ class CArray
         @parameters.size
       end
 
-      # The Fiddle types, for calling it from Ruby.
+      # The type codes of the layer Native stands for, for calling it from
+      # Ruby through that layer directly.
       def argument_types
-        @parameters.map(&:fiddle)
+        @parameters.map { |type| Native::TYPES.fetch(type.abi, type.abi) }
       end
 
       # The C spelling of the pointer type, for the typedef a kernel emits.
@@ -312,13 +312,13 @@ class CArray
         return call_through_shim(arguments) if @shim
         if carries_a_complex?
           raise Unsupported,
-                "`#{self}` carries a C99 complex by value, which Fiddle has " \
-                "no type for, so it cannot be called from Ruby; a kernel " \
-                "calls it as C calls it"
+                "`#{self}` carries a C99 complex by value, which a call " \
+                "from Ruby has no type for, so it cannot be called from " \
+                "here; a kernel calls it as C calls it"
         end
-        @function ||= Fiddle::Function.new(@pointer, argument_types,
-                                           @return_type.fiddle,
-                                           name: label.to_s)
+        @function ||= Native.function(@pointer, @parameters.map(&:abi),
+                                      @return_type.abi, release_gvl: true,
+                                      name: label.to_s)
         arrays = []
         prepared = arguments.zip(@parameters).map { |argument, type|
           next argument unless type.indexable? && argument.is_a?(CArray)
@@ -341,7 +341,7 @@ class CArray
             slot = -1
             prepared = prepared.map { |value|
               next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
-              Fiddle::Pointer.new(bases[slot += 1][:pointer])
+              bases[slot += 1][:pointer]
             }
             @result = @function.call(*prepared)
           end
@@ -366,10 +366,10 @@ class CArray
         @return_type.complex? || @parameters.any?(&:complex?)
       end
 
-      # Fiddle carries no complex, so the shim takes each complex argument as
-      # a pair of doubles and writes a complex result back the same way.
-      # Everything else keeps the type the declaration gave it and goes
-      # through Fiddle as before -- including a pointer parameter, which is
+      # A call from Ruby carries no complex, so the shim takes each complex
+      # argument as a pair of doubles and writes a complex result back the
+      # same way.  Everything else keeps the type the declaration gave it and
+      # is called as before -- including a pointer parameter, which is
       # still a CArray on this side.
       #
       # It is the same compiled body either way: the shim calls the function,
@@ -377,13 +377,13 @@ class CArray
       def call_through_shim (arguments)
         returns_complex = @return_type.complex?
         types = @parameters.map { |type|
-          type.complex? ? Fiddle::TYPE_VOIDP : type.fiddle
+          type.complex? ? :pointer : type.abi
         }
-        types << Fiddle::TYPE_VOIDP if returns_complex
+        types << :pointer if returns_complex
         @shim_function ||=
-          Fiddle::Function.new(@shim, types,
-                               returns_complex ? Fiddle::TYPE_VOID
-                                               : @return_type.fiddle)
+          Native.function(@shim, types,
+                          returns_complex ? :void : @return_type.abi,
+                          release_gvl: true)
         result = returns_complex ? String.new("\0" * 16) : nil
         arrays = []
         prepared = arguments.zip(@parameters).map { |argument, type|
@@ -403,7 +403,7 @@ class CArray
             slot = -1
             passed = prepared.map { |value|
               next value unless arrays.any? { |_, buffer, _| buffer.equal?(value) }
-              Fiddle::Pointer.new(bases[slot += 1][:pointer])
+              bases[slot += 1][:pointer]
             }
             passed << result if returns_complex
             @result = @shim_function.call(*passed)
@@ -529,8 +529,8 @@ class CArray
       #   f.on_error(nlopt["nlopt_force_stop"], opt)
       #   f.watching { nlopt_optimize.call(opt, x, minf) }
       #
-      # `hook` is the address of a `void (*)(void *)` -- a Fiddle::Pointer,
-      # an Integer, or anything answering #to_i -- and `data` is the one
+      # `hook` is the address of a `void (*)(void *)` -- an Integer, or
+      # anything answering #to_i, as a pointer object does -- and `data` is the one
       # argument it is called with.  It is called once, from the call whose
       # body put the flag up, and not again until the flag has been put down
       # and has gone up again; nothing about it reaches Ruby, so it may be
@@ -552,18 +552,17 @@ class CArray
         state = error_state
         return self unless state
         address = hook.nil? ? 0 : hook.to_i
-        state.data[0, Fiddle::SIZEOF_VOIDP] =
-          [data.nil? ? 0 : data.to_i].pack("J")
-        state.hook[0, Fiddle::SIZEOF_VOIDP] = [address].pack("J")
+        Native.write(state.data, [data.nil? ? 0 : data.to_i].pack("J"))
+        Native.write(state.hook, [address].pack("J"))
         state.held = hook.nil? ? nil : [hook, data]
         self
       end
 
       private
 
-      # One thread's copy of the four the compiled object carries -- the
-      # flag, the hook's address, the pointer it is handed, and what a failed
-      # call answers C with -- with the Ruby objects `#on_error` was given
+      # Where one thread's copy of the four the compiled object carries
+      # stands -- the flag, the hook's address, the pointer it is handed, and
+      # what a failed call answers C with -- with the Ruby objects `#on_error` was given
       # held beside them, so that nothing the C may still call is collected.
       ErrorState = Struct.new(:flag, :hook, :data, :standin, :held)
       private_constant :ErrorState
@@ -593,25 +592,21 @@ class CArray
       end
 
       def resolve_error_state
-        out = String.new("\0" * (4 * Fiddle::SIZEOF_VOIDP))
+        out = String.new("\0" * (4 * Native::POINTER_SIZE))
         @error_state.call(out)
         flag, hook, data, standin = out.unpack("J4")
-        ErrorState.new(Fiddle::Pointer.new(flag, 4),
-                       Fiddle::Pointer.new(hook, Fiddle::SIZEOF_VOIDP),
-                       Fiddle::Pointer.new(data, Fiddle::SIZEOF_VOIDP),
-                       Fiddle::Pointer.new(standin, 8),
-                       nil)
+        ErrorState.new(flag, hook, data, standin, nil)
       end
 
       # 0 where the body cannot fail at all.
       def error_code
         state = error_state
-        state ? state.flag[0, 4].unpack1("l") : 0
+        state ? Native.read(state.flag, 4).unpack1("l") : 0
       end
 
       def write_error (code)
         state = error_state
-        state.flag[0, 4] = [code].pack("l") if state
+        Native.write(state.flag, [code].pack("l")) if state
       end
 
       # The hook's address, cleared for the length of one call from Ruby,
@@ -619,14 +614,14 @@ class CArray
       def disarm_hook
         state = error_state
         return nil unless state
-        held = state.hook[0, Fiddle::SIZEOF_VOIDP]
-        state.hook[0, Fiddle::SIZEOF_VOIDP] = "\0" * Fiddle::SIZEOF_VOIDP
+        held = Native.read(state.hook, Native::POINTER_SIZE)
+        Native.write(state.hook, "\0" * Native::POINTER_SIZE)
         held
       end
 
       def rearm_hook (held)
         state = error_state
-        state.hook[0, Fiddle::SIZEOF_VOIDP] = held if state && held
+        Native.write(state.hook, held) if state && held
       end
 
       # What a window does at its two ends.  `#watching` is these with a
@@ -662,8 +657,8 @@ class CArray
       def hold_hook (address, data)
         state = error_state
         return nil unless state
-        held = [state.hook[0, Fiddle::SIZEOF_VOIDP],
-                state.data[0, Fiddle::SIZEOF_VOIDP], state.held]
+        held = [Native.read(state.hook, Native::POINTER_SIZE),
+                Native.read(state.data, Native::POINTER_SIZE), state.held]
         on_error(address, data)
         held
       end
@@ -671,8 +666,8 @@ class CArray
       def restore_hook (held)
         state = error_state
         return unless state && held
-        state.hook[0, Fiddle::SIZEOF_VOIDP] = held[0]
-        state.data[0, Fiddle::SIZEOF_VOIDP] = held[1]
+        Native.write(state.hook, held[0])
+        Native.write(state.data, held[1])
         state.held = held[2]
       end
 
@@ -682,14 +677,14 @@ class CArray
       def hold_standin (value)
         state = error_state
         return nil unless state
-        held = state.standin[0, 8]
-        state.standin[0, 8] = [value].pack("q")
+        held = Native.read(state.standin, 8)
+        Native.write(state.standin, [value].pack("q"))
         held
       end
 
       def restore_standin (held)
         state = error_state
-        state.standin[0, 8] = held if state && held
+        Native.write(state.standin, held) if state && held
       end
 
       def raise_for (code)
@@ -725,7 +720,7 @@ class CArray
       # rule is that an unsized pointer is the caller's responsibility, and
       # writing `coef[3]` is how the caller asks to be checked.
       def check_array (array, type)
-        wanted = CDeclaration::DATA_TYPES.fetch(type.element.fiddle)
+        wanted = CDeclaration::DATA_TYPES.fetch(type.element.abi)
         unless array.data_type_name == wanted.to_s
           raise Unsupported,
                 "`#{type.text}` takes a #{wanted} array, and this one is " \
@@ -773,19 +768,16 @@ class CArray
 
     # Reads the subset of C declarations a signature may be written in.
     #
-    # Fiddle's parser is used for what it is good at -- deciding the ABI code
-    # of a type -- and this decides what that parser throws away: whether a
+    # Native is asked what it is good at -- what type a spelling is on this
+    # machine -- and this decides what that answer throws away: whether a
     # parameter is a pointer, and what it was a pointer to.  Between them a
     # prototype yields both what is needed to call a function and what is
     # needed to write one.
     # @private
     module CDeclaration
 
-      PARSER = ::Object.new.extend(Fiddle::CParser)
-      private_constant :PARSER
-
       # The words a type may be spelled with.  `<stdint.h>`'s exact-width
-      # names are here because Fiddle knows them; there is no `float64_t`
+      # names are here because C has them; there is no `float64_t`
       # because C has no such type -- its integer types have exact-width
       # aliases and its floating types are `float` and `double`.
       KEYWORDS = %w[
@@ -796,11 +788,10 @@ class CArray
         size_t ssize_t ptrdiff_t intptr_t uintptr_t
       ].freeze
 
-      # Fiddle has no code for a C99 complex -- its parser does not know the
-      # word and the ABI it answers for has nowhere to put one -- so these
-      # stand where a Fiddle code stands elsewhere.  Symbols rather than
-      # numbers, so that one reaching Fiddle by mistake is a TypeError there
-      # and not a silently wrong width.
+      # Native has no type for a C99 complex -- a call from Ruby has nowhere
+      # to put one -- so these stand where a name in Native::TYPES stands
+      # elsewhere, and one reaching Native by mistake is refused there rather
+      # than taken for a wrong width.
       COMPLEX_CODES = { "double" => :double_complex,
                         "float"  => :float_complex }.freeze
 
@@ -809,12 +800,13 @@ class CArray
       # about what it declared.
       COMPLEX_WORDS = %w[_Complex complex].freeze
 
-      # Fiddle answers `long double` with the code for `long`, silently, so it
-      # is refused by name rather than trusted.
+      # A call from Ruby has no `long double` to make, and the parser behind
+      # Native takes it for `long` without saying so, so it is refused by name
+      # rather than asked about.
       REFUSED = {
-        "long double" => "`long double` is not a type this reads: Fiddle " \
-                         "reports it as `long`, which would be the wrong " \
-                         "width without saying so",
+        "long double" => "`long double` is not a type this reads: there is " \
+                         "nothing here to call with one, and taking it for " \
+                         "`long` would be the wrong width without saying so",
         "long double _Complex" =>
           "`long double _Complex` is not a type this reads: there is no " \
           "long double here to make one of",
@@ -822,58 +814,59 @@ class CArray
 
       # The words C builds its integer types from.  They may come in any
       # order and `int` may be left out -- `unsigned`, `long unsigned int`
-      # and `int unsigned` are all C -- while Fiddle reads only some of those
-      # orders, fails on a bare `unsigned`, and reads `int unsigned` as a
-      # signed int without saying so.  So a spelling made only of these is
-      # counted here and handed to Fiddle in the one order it reads.
+      # and `int unsigned` are all C -- while the parser behind Native reads
+      # only some of those orders, fails on a bare `unsigned`, and reads `int
+      # unsigned` as a signed int without saying so.  So a spelling made only
+      # of these is counted here and handed to Native in the one order it
+      # reads.
       INTEGER_WORDS = %w[signed unsigned char short int long].freeze
 
-      # The CArray data type a pointer parameter takes, by the code Fiddle
+      # The CArray data type a pointer parameter takes, by the type Native
       # gave its element.  This is the table CGenerator::STORAGE_C_TYPES
       # already holds, read the other way round -- nothing new is decided
       # here about how a C type and a CArray type correspond.
       DATA_TYPES = {
-        :double_complex        => :cmplx128,
-        :float_complex         => :cmplx64,
-        Fiddle::TYPE_DOUBLE    => :float64,
-        Fiddle::TYPE_FLOAT     => :float32,
-        Fiddle::TYPE_CHAR      => :int8,
-        Fiddle::TYPE_UCHAR     => :uint8,
-        Fiddle::TYPE_SHORT     => :int16,
-        Fiddle::TYPE_USHORT    => :uint16,
-        Fiddle::TYPE_INT       => :int32,
-        Fiddle::TYPE_UINT      => :uint32,
-        Fiddle::TYPE_LONG       => :int64,
-        Fiddle::TYPE_LONG_LONG  => :int64,
-        # `unsigned long` and `size_t` arrive as the same code, and
+        :double_complex => :cmplx128,
+        :float_complex  => :cmplx64,
+        :double         => :float64,
+        :float          => :float32,
+        :char           => :int8,
+        :uchar          => :uint8,
+        :short          => :int16,
+        :ushort         => :uint16,
+        :int            => :int32,
+        :uint           => :uint32,
+        :long           => :int64,
+        :long_long      => :int64,
+        # `unsigned long` and `size_t` arrive as the same type, and
         # `uint64_t` as the other one.
-        Fiddle::TYPE_ULONG      => :uint64,
-        Fiddle::TYPE_ULONG_LONG => :uint64,
+        :ulong          => :uint64,
+        :ulong_long     => :uint64,
       }.freeze
 
-      # Codes Fiddle may return, mapped to what a kernel computes them in.
+      # Types Native may answer, mapped to what a kernel computes them in.
       # Absent means the type may be written down but holds no value a body
       # can compute with -- `void`, and a pointer to it.
       COMPUTATION = {
         # A `float _Complex` computes in double complex, as a `float`
         # computes in double: the declaration says what the signature is,
         # and the body works in what Ruby would have worked in.
-        :double_complex         => :complex,
-        :float_complex          => :complex,
-        Fiddle::TYPE_DOUBLE     => :double,
-        Fiddle::TYPE_FLOAT      => :double,
-        Fiddle::TYPE_CHAR       => :int64,
-        Fiddle::TYPE_UCHAR      => :int64,
-        Fiddle::TYPE_SHORT      => :int64,
-        Fiddle::TYPE_USHORT     => :int64,
-        Fiddle::TYPE_INT        => :int64,
-        Fiddle::TYPE_UINT       => :int64,
-        Fiddle::TYPE_LONG       => :int64,
-        Fiddle::TYPE_LONG_LONG  => :int64,
+        :double_complex => :complex,
+        :float_complex  => :complex,
+        :double         => :double,
+        :float          => :double,
+        :char           => :int64,
+        :uchar          => :int64,
+        :short          => :int64,
+        :ushort         => :int64,
+        :int            => :int64,
+        :uint           => :int64,
+        :long           => :int64,
+        :long_long      => :int64,
         # uint64 is a computation type of its own, precisely because int64
         # cannot carry what it holds; CArray has the array to match.
-        Fiddle::TYPE_ULONG      => :uint64,
-        Fiddle::TYPE_ULONG_LONG => :uint64,
+        :ulong          => :uint64,
+        :ulong_long     => :uint64,
       }.freeze
 
       module_function
@@ -999,14 +992,14 @@ class CArray
         code = if !pointer && (complex = complex_code(spelling))
                  complex
                else
-                 fiddle_code(pointer ? "void *" : spelling, text, prototype)
+                 abi_code(pointer ? "void *" : spelling, text, prototype)
                end
         # What it points at, for a pointer that points at numbers.  `void *`
         # has no element, which is what keeps it a slot.
         element = nil
         if pointer && spelling != "void"
           element_code = complex_code(spelling) ||
-                         fiddle_code(spelling, text, prototype)
+                         abi_code(spelling, text, prototype)
           if COMPUTATION[element_code]
             element = CType.new(spelling, element_code,
                                 COMPUTATION[element_code], false, nil, nil,
@@ -1018,7 +1011,7 @@ class CArray
       end
 
       # `long unsigned int` as `unsigned long`, `unsigned` as `unsigned int`:
-      # the order Fiddle reads, for a spelling made only of INTEGER_WORDS.
+      # the order Native reads, for a spelling made only of INTEGER_WORDS.
       # Anything else is handed back untouched.  A combination C does not
       # have -- `signed unsigned`, `short long`, three `long`s -- is refused
       # here rather than left to a parser that has been seen to guess.
@@ -1039,7 +1032,7 @@ class CArray
         sign = count.key?("unsigned") ? "unsigned " : ""
         width = base.first || { 0 => "int", 1 => "long", 2 => "long long" }.fetch(longs)
         # `signed char` is a type of its own in C, apart from plain `char`,
-        # and Fiddle reads both as the one byte they are.
+        # and Native reads both as the one byte they are.
         sign = "signed " if width == "char" && count.key?("signed")
         "#{sign}#{width}"
       end
@@ -1053,11 +1046,11 @@ class CArray
         COMPLEX_CODES[(words - COMPLEX_WORDS).join(" ")]
       end
 
-      def fiddle_code (spelling, text, prototype)
-        PARSER.parse_ctype(spelling)
-      rescue StandardError
+      def abi_code (spelling, text, prototype)
+        type = Native.c_type(spelling)
+        return type if type
         raise Unsupported,
-              "`#{text.strip}` in `#{prototype}` is not a type Fiddle knows. " \
+              "`#{text.strip}` in `#{prototype}` is not a type this knows. " \
               "C's own spellings are what this takes, and `float64_t` is not " \
               "one of them -- C's integer types have exact-width names, its " \
               "floating types are `float` and `double`"
@@ -1076,7 +1069,7 @@ class CArray
       # or nothing at all, which searches what the process has already loaded.
       #
       # `extern` is C's own word for a body that lives elsewhere, and that is
-      # all this does: it asks Fiddle where the function is.  Nothing is
+      # all this does: it asks Native where the function is.  Nothing is
       # compiled here, which is the difference from `jit_function` and the
       # reason the two are not one method with a branch in it.
       #
@@ -1319,8 +1312,8 @@ class CArray
       def bind_c_function (prototype, name, return_type, parameters, from)
         handle = library_handle(from)
         begin
-          pointer = handle[name.to_s]
-        rescue Fiddle::DLError => error
+          pointer = Native.address(handle, name.to_s)
+        rescue Native::LinkError => error
           raise Unsupported,
                 "`#{name}` was not found in " \
                 "#{from ? from.inspect : "the loaded libraries"} " \
@@ -1444,7 +1437,7 @@ class CArray
         # Every other return type with no computation behind it is a pointer,
         # which a body cannot produce: there is nothing here to take an
         # address of that would outlive the call.
-        returns_nothing = return_type.fiddle == Fiddle::TYPE_VOID &&
+        returns_nothing = return_type.abi == :void &&
                           !return_type.pointer
         unless return_type.computation || returns_nothing
           raise Unsupported,
@@ -1516,8 +1509,8 @@ class CArray
         c_source = generator.generate_function(
           symbol, names, parameters, return_type.text, return_type.computation)
         # A signature carrying a complex by value gets a second entry point
-        # for Ruby to reach it by, since Fiddle has no such type to call
-        # with.  Only such a signature: everything else is called directly,
+        # for Ruby to reach it by, since a call from Ruby has no such type
+        # to call with.  Only such a signature: everything else is called directly,
         # and pays nothing for a road it does not take.
         shim_symbol = nil
         if return_type.complex? || parameters.any?(&:complex?)
@@ -1537,9 +1530,9 @@ class CArray
         # that two objects generated this way can be linked side by side.
         error_state = if generator.uses_error_flag?
                         accessor = CGenerator.error_state_name(symbol)
-                        Fiddle::Function.new(handle[accessor],
-                                             [Fiddle::TYPE_VOIDP],
-                                             Fiddle::TYPE_VOID, name: accessor)
+                        Native.function(Native.address(handle, accessor),
+                                        [:pointer], :void, release_gvl: true,
+                                        name: accessor)
                       end
         # A body that reports failures is generated a second time for pasting,
         # with the flag as a parameter.  A second generator rather than the
@@ -1555,9 +1548,10 @@ class CArray
                                    return_type.computation,
                                    error_parameter: true)
         end
-        CFunction.new(name, prototype, return_type, parameters, handle[symbol],
+        CFunction.new(name, prototype, return_type, parameters,
+                  Native.address(handle, symbol),
                   symbol: symbol,
-                  shim: shim_symbol && handle[shim_symbol],
+                  shim: shim_symbol && Native.address(handle, shim_symbol),
                   block: block, c_source: generator.provenance + c_source,
                   origin: origin, error_state: error_state,
                   definition: pasted.function_definition,
@@ -1598,7 +1592,7 @@ class CArray
         end
         <<~C
 
-          /* Fiddle has no type for a C99 complex, so a call from Ruby comes
+          /* A call from Ruby has no type for a C99 complex, so it comes
              through here: the complex arguments arrive as the two doubles
              one is laid out as, and a complex result goes back the same way.
              A kernel calls the function above directly, C to C. */
@@ -1666,12 +1660,12 @@ class CArray
 
       def library_handle (from)
         case from
-        when nil            then Fiddle::Handle::DEFAULT
-        when Fiddle::Handle then from
-        when String         then Fiddle::Handle.new(from)
+        when nil             then Native.loaded_libraries
+        when Native::Library then from
+        when String          then Native.open_library(from, global: true)
         else
           raise Unsupported,
-                "`from:` takes a library name or a Fiddle::Handle, " \
+                "`from:` takes a library name or a #{Native::Library}, " \
                 "got #{from.class}"
         end
       end

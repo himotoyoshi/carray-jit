@@ -1,4 +1,4 @@
-require "fiddle"
+require "carray/jit/native"
 require "carray/jit/sweep"
 
 class CArray
@@ -7,8 +7,9 @@ class CArray
     # A compiled kernel, bound to one set of array data types and one set of
     # scalar types.
     #
-    # Every kernel has the same C signature, so the Fiddle::Function shape is
-    # fixed and the per-kernel detail travels in the six buffers.
+    # Every kernel has the same C signature, so the shape of the function
+    # Native makes is fixed and the per-kernel detail travels in the six
+    # buffers.
     class CompiledKernel
 
       # @!attribute [r] source
@@ -126,9 +127,8 @@ class CArray
         @handle, @compiled = Compiler.build(generator.generate_slab(SLAB_NAME),
                                             CGenerator::FUNCTION_NAME,
                                             header: generator.provenance)
-        @function = Fiddle::Function.new(@handle[CGenerator::FUNCTION_NAME],
-                                         [Fiddle::TYPE_VOIDP] * 10,
-                                         Fiddle::TYPE_VOID)
+        @function = Native.function(Native.address(@handle, CGenerator::FUNCTION_NAME),
+                                    [:pointer] * 10, :void, release_gvl: true)
       end
 
       # `bounds` is one [start, limit, step] per axis.
@@ -237,7 +237,7 @@ class CArray
                 buffer(data), masks, masks, error]
         error = in_one_block(held) { |context, slots|
           Sweep.call(slab_pointer, fsync, arrays, context)
-          slots.last[0, error.bytesize]
+          Native.read(slots.last, error.bytesize)
         }
 
         packed.each_with_index do |(array, item), index|
@@ -332,7 +332,7 @@ class CArray
          @shape_scalar_names.map { |name| scalars[name] }]
       end
 
-      # A kernel is shared, and Fiddle lets go of the GVL for the call, so two
+      # A kernel is shared, and its call lets go of the GVL, so two
       # threads can be reading one plan while a third prepares another.  That
       # is sound only while nothing in a plan is written after it is published
       # -- and a box is arrays inside an array, so freezing the top of it
@@ -456,7 +456,7 @@ class CArray
       end
 
       def slab_pointer
-        @slab_pointer ||= @handle[SLAB_NAME]
+        @slab_pointer ||= Native.address(@handle, SLAB_NAME)
       end
 
       # Resolved when the frame is first walked rather than at build time: a
@@ -464,8 +464,8 @@ class CArray
       # runs its interior first.
       def border_function
         @border_function ||=
-          Fiddle::Function.new(@handle[CGenerator::BORDER_NAME],
-                               [Fiddle::TYPE_VOIDP] * 10, Fiddle::TYPE_VOID)
+          Native.function(Native.address(@handle, CGenerator::BORDER_NAME),
+                          [:pointer] * 10, :void, release_gvl: true)
       end
 
       # What a C function may be handed as a pointer, and what has to be true
@@ -523,7 +523,7 @@ class CArray
 
       def address_buffer (name, array)
         @address_parameters.fetch(name).each do |parameter|
-          wanted = CDeclaration::DATA_TYPES.fetch(parameter.element.fiddle)
+          wanted = CDeclaration::DATA_TYPES.fetch(parameter.element.abi)
           unless array.data_type_name == wanted.to_s
             raise Unsupported,
                   "`#{name}` is handed to a C function as `#{parameter.text}`, " \
@@ -553,33 +553,33 @@ class CArray
         Access.classify(array)[:entity] ? array : array.copy
       end
 
-      # A pointer into an empty string is not something Fiddle can hand over,
-      # and a kernel with no scalars has an empty buffer.
+      # A pointer into an empty string is not something Native is asked to
+      # hand over, and a kernel with no scalars has an empty buffer.
       def buffer (packed)
         packed.empty? ? "\0" * 8 : packed
       end
 
       # Copies `parts` into one block of C memory, each part 8-byte aligned,
-      # after a table of their addresses, and yields a pointer to the table
-      # and a pointer to each part; the block is freed when this returns.
+      # after a table of their addresses, and yields the address of the
+      # table and of each part; the block is freed when this returns.
       #
       # For a call that is handed addresses inside other memory rather than
       # arguments: a Ruby String's bytes may be moved by GC compaction, and
       # an address taken from one and packed elsewhere is not one Ruby knows
       # to keep in place.  Memory from malloc is never moved.
       def in_one_block (parts)
-        table = parts.size * Fiddle::SIZEOF_VOIDP
+        table = parts.size * Native::POINTER_SIZE
         offsets = parts.each_with_object([]) { |part, list|
           last = list.empty? ? table : list.last + parts[list.size - 1].bytesize
           list << ((last + 7) & ~7)
         }
         size = offsets.last + parts.last.bytesize
-        Fiddle::Pointer.malloc(size, Fiddle::RUBY_FREE) do |block|
+        Native.with_memory(size) do |block|
           slots = parts.zip(offsets).map { |part, offset|
-            block[offset, part.bytesize] = part
+            Native.write(block + offset, part)
             block + offset
           }
-          block[0, table] = slots.map(&:to_i).pack("Q*")
+          Native.write(block, slots.pack("Q*"))
           yield block, slots
         end
       end

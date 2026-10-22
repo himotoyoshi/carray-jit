@@ -84,8 +84,8 @@ class CArray
           dim = out.dim.pack("q*")
           steps = strided.flat_map { |slot| slot_strides(bases, slot) }.pack("q*")
           args = [out.elements]
-          args << Fiddle::Pointer[dim] if walks_axes?(plan, strided)
-          args << Fiddle::Pointer[steps] unless strided.empty?
+          args << dim if walks_axes?(plan, strided)
+          args << steps unless strided.empty?
           kernel.call(*args, *pointers(plan, bases))
         end
         true
@@ -127,10 +127,9 @@ class CArray
         @strided = strided
         source = source_for(plan, aliased) or return nil
         handle, = Compiler.build(source, "carray_jit_expression", flags: FLAGS)
-        Fiddle::Function.new(handle["carray_jit_expression"],
-                             [Fiddle::TYPE_LONG_LONG] +
-                               [Fiddle::TYPE_VOIDP] * (1 + arity(plan, strided)),
-                             Fiddle::TYPE_VOID)
+        Native.function(Native.address(handle, "carray_jit_expression"),
+                        [:long_long] + [:pointer] * (1 + arity(plan, strided)),
+                        :void, release_gvl: true)
       rescue CompilationError
         nil
       end

@@ -2,7 +2,7 @@ require "digest"
 require "fileutils"
 require "rbconfig"
 require "tmpdir"
-require "fiddle"
+require "carray/jit/native"
 require "monitor"
 
 class CArray
@@ -44,7 +44,7 @@ class CArray
 
       # Every generated object exports the same fixed names -- carray_jit_kernel,
       # carray_jit_slab, the border and error helpers -- because each one is a
-      # module of its own.  Fiddle.dlopen passes RTLD_GLOBAL, so on ELF those
+      # module of its own.  Native opens each with RTLD_GLOBAL, so on ELF those
       # names all land in one flat namespace and an intra-module call resolves
       # to the first definition loaded: a later kernel's carray_jit_slab calls
       # an earlier kernel's carray_jit_kernel, which takes a different number
@@ -223,7 +223,7 @@ class CArray
           removed
         end
 
-        # Returns [Fiddle handle, whether it was compiled rather than reused].
+        # Returns [Native library, whether it was compiled rather than reused].
         #
         # `header` says where the kernel was written.  It is written into the
         # .c file but kept out of the digest: two call sites that produce the
@@ -572,8 +572,8 @@ class CArray
         # rebuilt.  A freshly compiled object that will not load is a real
         # failure and is raised by #load_new_object.
         def load_shared_object (path)
-          Fiddle.dlopen(path)
-        rescue Fiddle::DLError
+          Native.open_library(path, global: true)
+        rescue Native::LinkError
           nil
         end
 
