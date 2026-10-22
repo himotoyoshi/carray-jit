@@ -84,10 +84,11 @@ class CArray
       LINK = (RbConfig::CONFIG["host_os"] =~ /darwin/ ?
                 ["-undefined", "dynamic_lookup"] : []).freeze
 
-      # Kernels retained on disk.  Each costs about 17 KB, so the default is
-      # roughly 9 MB -- far more than any real program compiles, but a bound
-      # all the same.
-      DEFAULT_ENTRY_LIMIT = 512
+      # Kernels retained on disk.  Each costs about 30 KB, object and source,
+      # so the default is roughly 60 MB.  Rebuilding is what a bound too low
+      # costs -- on macOS a new object's first load is checked by the system,
+      # around 200 ms each -- and this gem's own suite wants some 1300.
+      DEFAULT_ENTRY_LIMIT = 2000
 
       class << self
 

@@ -37,6 +37,13 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
+## 0.1.7 (unreleased)
+
+- Change: the kernel cache keeps 2000 kernels per environment by
+  default, up from 512, which is about 60 MB on disk. A program that
+  compiled more than 512 rebuilt the ones evicted each time it ran. Set
+  `CARRAY_JIT_CACHE_LIMIT` for a different bound.
+
 ## 0.1.6
 
 - Change: needs CArray 3.0.5 or later in the 3.0 series; install it
