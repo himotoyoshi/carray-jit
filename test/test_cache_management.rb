@@ -229,13 +229,18 @@ class TestCacheManagement < Minitest::Test
     suffix = CArray::JIT::Compiler.send(:shared_object_suffix)
     stale = File.join(leaf, "deadbeef#{suffix}.99999")
     fresh = File.join(leaf, "cafe#{suffix}.99998")
+    # Killed sooner, between staging the source and renaming it.
+    stale_source = File.join(leaf, "deadbeef.c.99999.0badf00d")
     FileUtils.touch(stale)
     FileUtils.touch(fresh)
+    FileUtils.touch(stale_source)
     File.utime(Time.now - 3600, Time.now - 3600, stale)
+    File.utime(Time.now - 3600, Time.now - 3600, stale_source)
 
     compile_indexed(7)
 
     refute(File.exist?(stale), "an abandoned staging file should be swept")
+    refute(File.exist?(stale_source), "an abandoned staged source should be swept")
     assert(File.exist?(fresh), "a staging file young enough to be in use should stay")
   end
 

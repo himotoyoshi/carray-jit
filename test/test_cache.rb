@@ -64,6 +64,33 @@ class TestCache < Minitest::Test
     refute(kernel.compiled, "the object the threads left is the one on disk")
   end
 
+  # The lock spares a second build; it is not what keeps two builds apart.
+  # Every build stages under a name of its own, so builds that meet --
+  # threads past the lock, or Ractors, which cannot reach it -- each publish
+  # a whole object and none renames a path another already took.
+  def test_builds_that_meet_do_not_collide
+    source = "double carray_jit_meet (void) { return #{rand}; }\n"
+    errors = []
+    built = []
+    lock = Mutex.new
+    4.times.map {
+      Thread.new do
+        begin
+          handle, = CArray::JIT::Compiler.build_locked(source, "carray_jit_meet")
+          lock.synchronize { built << handle }
+        rescue Exception => error
+          lock.synchronize { errors << error }
+        end
+      end
+    }.each(&:join)
+    assert_empty(errors.map { |error| "#{error.class}: #{error.message}" })
+    assert_equal(4, built.size)
+    leaf = File.dirname(Dir[File.join(@directory, "**", "*.c")].first)
+    assert_equal([".c", CArray::JIT::Compiler.send(:shared_object_suffix)].sort,
+                 Dir.children(leaf).map { |name| File.extname(name) }.sort,
+                 "one source and one object, and no staging file left over")
+  end
+
   def test_registry_returns_the_same_kernel_within_a_process
     source = unique_source
     first = compile_kernel(source, arrays: { :a => "float64" })

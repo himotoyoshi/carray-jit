@@ -1,6 +1,7 @@
 require "digest"
 require "fileutils"
 require "rbconfig"
+require "securerandom"
 require "tmpdir"
 require "carray/jit/native"
 require "monitor"
@@ -231,14 +232,16 @@ class CArray
         # kernel does not throw its object away.  The file then names the
         # first site that compiled it, which is a place the code was written
         # rather than the only one.
-        # One compile at a time in a process.  The staging path a build
-        # compiles to is named for the process, so two threads building at
-        # once wrote the same file and whichever renamed first left the other
-        # renaming a path that was gone -- a bare Errno::ENOENT out of three
-        # threads in four.  Serialising them also spares the second thread the
-        # build: it takes the lock after the first has renamed, and finds the
-        # object where a later run would.  Reentrant, so that a build reached
-        # from inside another -- which none is today -- would not stop here.
+        # One compile at a time in a process, which spares a second thread the
+        # build: it takes the lock after the first has published, and finds
+        # the object where a later run would.  It is not what keeps two builds
+        # apart -- each stages under a name of its own (#staging_name), so
+        # builds that meet anyway, as Ractors would, each publish a whole
+        # object.  Until the names were that, two threads staged to one path
+        # and whichever renamed first left the other renaming a path that was
+        # gone -- a bare Errno::ENOENT out of three threads in four.
+        # Reentrant, so that a build reached from inside another -- which
+        # none is today -- would not stop here.
         LOCK = Monitor.new
 
         def build (source, function_name, header: nil, flags: FLAGS)
@@ -266,12 +269,17 @@ class CArray
           end
 
           source_path = File.join(directory, "#{key}.c")
-          File.write(source_path, header.to_s + source)
-          # Build to a unique path and rename, so a concurrent process never
-          # loads a half-written object.
-          staging_path = "#{object_path}.#{Process.pid}"
+          # Both written to a path of this build's own and renamed into
+          # place, so that nothing -- another build, another process -- ever
+          # reads half of either.  A rename onto a path another build has
+          # just published replaces the same bytes.
+          staging = staging_name
+          staged_source = "#{source_path}.#{staging}"
+          staging_path = "#{object_path}.#{staging}"
           handle =
             begin
+              File.write(staged_source, header.to_s + source)
+              File.rename(staged_source, source_path)
               compile(source_path, staging_path, flags)
               # Opened before it is published, under the name only this
               # process knows.  Published first, the object stands in the
@@ -291,6 +299,7 @@ class CArray
               # that cannot compile.  The staging file would be swept in five
               # minutes; it goes now, beside the source it came from.
               remove_entry(object_path)
+              unlink(staged_source)
               unlink(staging_path)
               raise
             end
@@ -469,15 +478,23 @@ class CArray
           end
         end
 
-        # A process killed mid-compile leaves `<key>.bundle.<pid>` behind.
-        # Those match neither the entry glob nor the prune glob, so without
-        # this they would sit in the cache for good.  Only swept on a miss,
-        # to keep it off the reuse path.
+        # The suffix one build stages its files under: the process, and a
+        # random part for the build within it.  Not a counter, which would be
+        # state shared between the threads and Ractors that build at once.
+        def staging_name
+          "#{Process.pid}.#{SecureRandom.hex(4)}"
+        end
+
+        # A process killed mid-compile leaves `<key>.bundle.<staging>` behind,
+        # and `<key>.c.<staging>` if it was killed sooner.  Those match neither
+        # the entry glob nor the prune glob, so without this they would sit in
+        # the cache for good.  Only swept on a miss, to keep it off the reuse
+        # path.
         STAGING_MAXIMUM_AGE = 300
 
         def sweep_staging (directory)
           now = Time.now
-          Dir[File.join(directory, "*#{shared_object_suffix}.*")].each do |path|
+          Dir[File.join(directory, "*{#{shared_object_suffix},.c}.*")].each do |path|
             next unless File.file?(path)
             age = now - File.mtime(path) rescue 0
             next if age < STAGING_MAXIMUM_AGE
