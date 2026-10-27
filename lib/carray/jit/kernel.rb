@@ -55,6 +55,12 @@ class CArray
         @rank = analyzer.rank
         @index_names = analyzer.index_names
         @written_arrays = analyzer.written_arrays
+        # Which operands the sweep writes, in CArray's spelling: one character
+        # per operand.  Decided by the body, so spelled once rather than on
+        # every call.
+        @fsync = @arrays.map { |name|
+          @written_arrays.include?(name) ? "1" : "0"
+        }.join.freeze
         @array_ranks = analyzer.array_ranks
         @inner_ranges = analyzer.inner_ranges
         @unbounded_indices = analyzer.unbounded_indices
@@ -209,9 +215,6 @@ class CArray
       # arguments the kernel's own loop takes are the ones a chunk arrives as.
       def sweep (array_values, scalar_values, c_function_values = {})
         arrays = @arrays.map { |name| array_values.fetch(name) }
-        fsync = @arrays.map { |name|
-          @written_arrays.include?(name) ? "1" : "0"
-        }.join
 
         error = [0].pack("l")
         reals = packed_reals(scalar_values)
@@ -236,7 +239,7 @@ class CArray
         held = [buffer(reals), buffer(integers), buffer(functions),
                 buffer(data), masks, masks, error]
         error = in_one_block(held) { |context, slots|
-          Sweep.call(slab_pointer, fsync, arrays, context)
+          Sweep.call(slab_pointer, @fsync, arrays, context)
           Native.read(slots.last, error.bytesize)
         }
 
@@ -567,21 +570,38 @@ class CArray
       # arguments: a Ruby String's bytes may be moved by GC compaction, and
       # an address taken from one and packed elsewhere is not one Ruby knows
       # to keep in place.  Memory from malloc is never moved.
+      #
+      # Every part but the last is whole words, and how long each one is is
+      # decided by the kernel -- how many scalars, functions and arrays it
+      # takes -- so the parts sit end to end at offsets worked out on the
+      # first call, and the block is written once.  Working the layout out
+      # and writing part by part was most of what a sweep's call cost.
       def in_one_block (parts)
-        table = parts.size * Native::POINTER_SIZE
-        offsets = parts.each_with_object([]) { |part, list|
-          last = list.empty? ? table : list.last + parts[list.size - 1].bytesize
-          list << ((last + 7) & ~7)
-        }
-        size = offsets.last + parts.last.bytesize
+        offsets, size = @block_layout ||= block_layout(parts)
+        bytes = parts.join
+        unless offsets.first + bytes.bytesize == size
+          raise "[BUG] a sweep's context is #{bytes.bytesize} bytes against " \
+                "the #{size - offsets.first} it was laid out for"
+        end
         Native.with_memory(size) do |block|
-          slots = parts.zip(offsets).map { |part, offset|
-            Native.write(block + offset, part)
-            block + offset
-          }
-          Native.write(block, slots.pack("Q*"))
+          slots = offsets.map { |start| block + start }
+          Native.write(block, slots.pack("Q*") << bytes)
           yield block, slots
         end
+      end
+
+      # Where each part starts, and how long the block is.
+      def block_layout (parts)
+        offset = parts.size * Native::POINTER_SIZE
+        offsets = parts.map { |part|
+          unless offset % 8 == 0
+            raise "[BUG] a part of a sweep's context ends off a word"
+          end
+          start = offset
+          offset += part.bytesize
+          start
+        }
+        [offsets.freeze, offset].freeze
       end
 
       # The xfer tier transfers a box rather than the whole view.  The box

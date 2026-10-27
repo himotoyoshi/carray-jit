@@ -398,6 +398,32 @@ class TestSubset < Minitest::Test
     assert_equal((1..8).map(&:to_f), values.to_a, "nothing ran")
   end
 
+  # One block, reached twice.  What the second call's operands are is asked
+  # of the second call: the first, over arrays the loop could walk, decides
+  # nothing about it.
+  def add_one_from (values, other)
+    CArray.jit_for(8) { |i| values[i] = other[i] + 1.0 }
+  end
+
+  def test_a_gather_is_refused_after_the_block_ran_over_plain_arrays
+    add_one_from(CArray.double(8), CArray.double(8).seq!(1.0))
+    values = CArray.double(8).seq!(1.0)
+    reversed = values[CArray.int32(8) { |i| 7 - i }]
+    assert_raises(CArray::JIT::Unsupported) { add_one_from(values, reversed) }
+    assert_equal((1..8).map(&:to_f), values.to_a, "nothing ran")
+  end
+
+  # Both calls transfer a gather, so they agree on everything but which
+  # storage the gather is of -- and that is the whole question.
+  def test_a_gather_is_refused_after_the_block_ran_over_a_gather_of_another_array
+    elsewhere = CArray.double(8).seq!(1.0)
+    add_one_from(CArray.double(8), elsewhere[CArray.int32(8) { |i| 7 - i }])
+    values = CArray.double(8).seq!(1.0)
+    reversed = values[CArray.int32(8) { |i| 7 - i }]
+    assert_raises(CArray::JIT::Unsupported) { add_one_from(values, reversed) }
+    assert_equal((1..8).map(&:to_f), values.to_a, "nothing ran")
+  end
+
   def test_a_gather_written_beside_its_own_root_is_refused
     values = CArray.double(6) { |i| i.to_f }
     gathered = values[CArray.int(6) { |i| i }]

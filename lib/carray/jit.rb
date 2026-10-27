@@ -1526,6 +1526,16 @@ class CArray
         written = written_names.filter_map { |name| aligned[name] }
         return aligned if written.empty?
         roots = written.map { |array| root_of(array) }
+        # Asked first without building anything, because the answer is nearly
+        # always that nothing is shared, and this runs on every call.  The
+        # root is compared first since it is what nearly always says no.
+        shared = aligned.any? { |name, array|
+          next false if written_names.include?(name)
+          root = root_of(array)
+          roots.any? { |one| one.equal?(root) } &&
+            written.none? { |one| one.equal?(array) }
+        }
+        return aligned unless shared
         aligned.to_h do |name, array|
           next [name, array] if written_names.include?(name)
           next [name, array] if written.any? { |other| other.equal?(array) }
@@ -1645,21 +1655,23 @@ class CArray
         end
         pairs = bounds(extents, extents.size)
         steps = pairs.map { |triple, _| triple[2] }
+        reassociate = JIT.reassociate if reassociate.nil?
 
-        kernel = compile(source,
-                         node: node,
-                         origin: origin,
-                         array_names: arrays.keys,
-                         storage_types: arrays.transform_values(&:data_type_name),
-                         scalar_values: scalars,
-                         c_functions: c_functions,
-                         randoms: randoms,
-                         masked: arrays.each_value.any? { |array| array.has_mask? },
-                         steps: steps,
-                         cell_names: cell_names(arrays),
-                         map: into ? true : false,
-                         result: into ? INIT_TARGET : nil,
-                         reassociate: reassociate.nil? ? JIT.reassociate : reassociate)
+        # Which kernel runs, and whether any operand would be transferred,
+        # answer the same for two calls whose operands agree on name, type,
+        # mask and tier -- so they are worked out once per such agreement,
+        # as an element-wise pass does (#run_over_whole_arrays).
+        key = indexed_run_key(arrays, scalars, c_functions, randoms, steps,
+                              into, reassociate)
+        plan = key && found_run_plan(source, key)
+        unless plan
+          plan = plan_indexed_run(source, node, origin, arrays, scalars,
+                                  c_functions, randoms, steps, into,
+                                  reassociate)
+          keep_run_plan(source, key, plan) if key
+        end
+
+        kernel = plan.kernel
         # The kernel decides, not the caller: mentioning UNDEF makes it a
         # masked kernel even when no array carries a mask yet.
         if kernel.masked
@@ -1675,9 +1687,75 @@ class CArray
                 "#{pairs.size} #{pairs.size == 1 ? 'extent was' : 'extents were'} " \
                 "given"
         end
-        refuse_a_transferred_alias(kernel, arrays)
+        # Only an operand opened at the xfer tier can be refused, and the tier
+        # is in the key; which arrays share a root is not, and is asked here.
+        refuse_a_transferred_alias(kernel, arrays) if plan.transferred
         kernel.call(arrays, scalars, pairs.map(&:first), c_functions)
         into || kernel
+      end
+
+      # What an indexed pass works out from its operands without their data
+      # or their shapes: the kernel, and whether any operand is opened at the
+      # xfer tier.  The shapes are the kernel's own plan to keep, since they
+      # are what its bounds are checked against (CompiledKernel#call).
+      #
+      # @private
+      IndexedRunPlan = Data.define(:kernel, :transferred)
+
+      # What two calls of one indexed block have to agree on for one to run
+      # the other's kernel: what #compile is keyed on, read off the operands
+      # rather than built.  Each operand's name and type, whether it is a
+      # CScalar (read at its one cell rather than walked) and whether it has
+      # a mask; and its tier, because whether a transferred operand has to be
+      # refused depends on it.  Not its shape: the kernel is the same over
+      # any shape, and a caller that grows its arrays would miss on every
+      # call.  Not a scalar's value, for the reason #run_key gives.
+      #
+      # The leading symbol keeps these apart from an element-wise pass's
+      # keys, which share the store.
+      #
+      # nil where a scalar is not one a kernel takes, so that the call is
+      # refused where and as it always was rather than here.
+      def indexed_run_key (arrays, scalars, c_functions, randoms, steps, into,
+                           reassociate)
+        key = [:indexed, into ? true : false, reassociate, steps, arrays.size]
+        arrays.each do |name, array|
+          key << name << array.data_type << array.is_a?(CScalar) <<
+                 array.has_mask? << Access.tier(array)
+        end
+        key << scalars.size
+        scalars.each do |name, value|
+          key << name << TypeAssignment.scalar_type(value)
+        end
+        key << c_functions.size
+        c_functions.each { |name, function| key << name << function.kernel_key }
+        randoms.each { |name, generator| key << name << generator.generator }
+        key
+      rescue Unsupported
+        nil
+      end
+
+      # @private
+      def plan_indexed_run (source, node, origin, arrays, scalars, c_functions,
+                            randoms, steps, into, reassociate)
+        kernel = compile(source,
+                         node: node,
+                         origin: origin,
+                         array_names: arrays.keys,
+                         storage_types: arrays.transform_values(&:data_type_name),
+                         scalar_values: scalars,
+                         c_functions: c_functions,
+                         randoms: randoms,
+                         masked: arrays.each_value.any? { |array| array.has_mask? },
+                         steps: steps,
+                         cell_names: cell_names(arrays),
+                         map: into ? true : false,
+                         result: into ? INIT_TARGET : nil,
+                         reassociate: reassociate)
+        transferred = arrays.each_value.any? { |array|
+          Access.tier(array) == Access::TIER_XFER
+        }
+        IndexedRunPlan.new(kernel: kernel, transferred: transferred)
       end
 
       # Compiles for one set of array data types and one set of scalar types,
