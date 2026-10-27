@@ -86,7 +86,6 @@ class TestRunPlan < Minitest::Test
   # The loop a pass runs under follows the tier on every call: entity
   # operands go to CArray's sweep, a strided one keeps them here.
   def test_the_loop_follows_the_tier_on_every_call
-    skip "CArray's sweep is not available" unless CArray::JIT::Sweep.available?
     swept = 0
     driven = 0
     kernel_class = CArray::JIT::CompiledKernel

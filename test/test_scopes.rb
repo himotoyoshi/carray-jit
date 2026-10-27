@@ -153,7 +153,6 @@ class TestScopes < Minitest::Test
   end
 
   def test_a_swept_pass_declares_what_the_body_declares
-    skip "this CArray has no ca_call_cslab" unless CArray::JIT::Sweep.available?
     a = CArray.double(3, 4).seq!(1.0)
     out = CArray.double(3, 4)
     kernel = CArray.jit_each {

@@ -236,17 +236,10 @@ class CArray
         # signature has the slots.
         masks = ("\0" * 8)
 
-        held = [buffer(reals), buffer(integers), buffer(functions),
-                buffer(data), masks, masks, error]
-        if Sweep.direct?
-          # The slab writes the error slot in `error` itself.
-          Sweep.run(slab_pointer, @fsync, arrays, *held)
-        else
-          error = in_one_block(held) { |context, slots|
-            Sweep.call(slab_pointer, @fsync, arrays, context)
-            Native.read(slots.last, error.bytesize)
-          }
-        end
+        # The slab writes the error slot in `error` itself.
+        Sweep.run(slab_pointer, @fsync, arrays,
+                  buffer(reals), buffer(integers), buffer(functions),
+                  buffer(data), masks, masks, error)
 
         packed.each_with_index do |(array, item), index|
           next if array.equal?(item)
@@ -565,48 +558,6 @@ class CArray
       # hand over, and a kernel with no scalars has an empty buffer.
       def buffer (packed)
         packed.empty? ? "\0" * 8 : packed
-      end
-
-      # Copies `parts` into one block of C memory, each part 8-byte aligned,
-      # after a table of their addresses, and yields the address of the
-      # table and of each part; the block is freed when this returns.
-      #
-      # For a call that is handed addresses inside other memory rather than
-      # arguments: a Ruby String's bytes may be moved by GC compaction, and
-      # an address taken from one and packed elsewhere is not one Ruby knows
-      # to keep in place.  Memory from malloc is never moved.
-      #
-      # Every part but the last is whole words, and how long each one is is
-      # decided by the kernel -- how many scalars, functions and arrays it
-      # takes -- so the parts sit end to end at offsets worked out on the
-      # first call, and the block is written once.  Working the layout out
-      # and writing part by part was most of what a sweep's call cost.
-      def in_one_block (parts)
-        offsets, size = @block_layout ||= block_layout(parts)
-        bytes = parts.join
-        unless offsets.first + bytes.bytesize == size
-          raise "[BUG] a sweep's context is #{bytes.bytesize} bytes against " \
-                "the #{size - offsets.first} it was laid out for"
-        end
-        Native.with_memory(size) do |block|
-          slots = offsets.map { |start| block + start }
-          Native.write(block, slots.pack("Q*") << bytes)
-          yield block, slots
-        end
-      end
-
-      # Where each part starts, and how long the block is.
-      def block_layout (parts)
-        offset = parts.size * Native::POINTER_SIZE
-        offsets = parts.map { |part|
-          unless offset % 8 == 0
-            raise "[BUG] a part of a sweep's context ends off a word"
-          end
-          start = offset
-          offset += part.bytesize
-          start
-        }
-        [offsets.freeze, offset].freeze
       end
 
       # The xfer tier transfers a box rather than the whole view.  The box

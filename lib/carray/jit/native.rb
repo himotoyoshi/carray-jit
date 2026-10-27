@@ -21,8 +21,7 @@ class CArray
     # - a shared object opened, and the libraries already loaded searched
     # - a symbol's address found in one
     # - a function made from an address and its types, and called
-    # - bytes read and written at an address, and a block of memory lent for
-    #   the length of a call
+    # - bytes read and written at an address
     # - a Ruby object handed to C as the VALUE it is
     #
     # A function is called by calling what #function returns: its #call is
@@ -135,13 +134,6 @@ class CArray
       # `bytes` written at `address`.
       def self.write (address, bytes)
         Fiddle::Pointer.write(address, bytes)
-      end
-
-      # Yields the address of `size` bytes of memory C may be handed, and
-      # frees them when the block returns.  Memory from malloc is never moved
-      # by GC compaction, which a String's bytes may be.
-      def self.with_memory (size)
-        Fiddle::Pointer.malloc(size, Fiddle::RUBY_FREE) { |block| yield block.to_i }
       end
 
       # `object` as the VALUE C sees -- for CArray's own C, which takes the

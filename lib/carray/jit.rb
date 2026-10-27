@@ -905,7 +905,6 @@ class CArray
       # that every operand already has the shape the pass covers, which is
       # stricter than agreeing on the count of cells.
       def sweepable_pass? (arrays, shape, masked)
-        return false unless Sweep.available?
         return false if masked
         return false if arrays.empty? || arrays.size > Sweep::MAX_ARITY
         return false unless arrays.each_value.all? { |array|

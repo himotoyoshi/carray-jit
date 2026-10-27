@@ -102,7 +102,7 @@ class TestWholeArrays < Minitest::Test
     source = CArray.double(2, 3).seq!
     result = CArray.double(2, 3)
     swept = CArray.jit_each { result = source * 2.0 }
-    assert_equal(CArray::JIT::Sweep.available? ? 1 : 2, swept.rank)
+    assert_equal(1, swept.rank)
 
     row = CArray.double(1, 3).seq!(10.0)
     stretched = CArray.double(2, 3)

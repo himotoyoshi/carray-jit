@@ -46,7 +46,7 @@ It is the same shape of block `CArray.jit_function` takes, and not the same thin
 
 #### Who drives the loop
 
-An element-wise pass is the one shape that is a *sweep* -- nothing reaches a neighbour, nothing chooses an order -- so CArray can drive it instead. Where this CArray has `ca_call_cslab` (3.0.1 and later), `jit_each` hands it the compiled body and lets it acquire the operands.
+An element-wise pass is the one shape that is a *sweep* -- nothing reaches a neighbour, nothing chooses an order -- so CArray can drive it instead: `jit_each` hands its chunked sweep (`ca_call_cslab`) the compiled body and lets it acquire the operands.
 
 The body is the same either way. The sweep entry point is a wrapper that calls the same kernel with the chunk as its bounds, so what changes is who opens the arrays, not what they compute.
 
@@ -56,7 +56,7 @@ A **strided view** is the case where there is. A column, a transpose, every othe
 
 The rank does not stand in the way, and the arrays are not reshaped to get it out of the way. CArray's acquire reads an operand's element count and element size and never looks at its shape, so a chunk is already a flat run of cells; what has to be flat is the *kernel*, and it is compiled at rank one over the same cells rather than as a nest over the axes. One such kernel then serves whatever rank it is given, because the rank has left the loop.
 
-Four things keep the driver here. An operand that is a **strided view**, for the reason just measured: it is walked in place here, and re-gathered there for nothing. A **stretched operand**, which is the one thing that cannot be flattened: broadcasting arrives as a stride of zero on an axis, and a flat run has no axes, so cell k of the output would stop lining up with cell k of the operand. A body that **asks about a mask**, because a chunk carries no per-cell mask to ask it of -- CArray ORs and propagates the masks, but `a[i] == UNDEF` is a question about one cell. A CArray **without the family** at all, which is asked for by symbol rather than assumed, so an older one falls back without the caller hearing about it.
+Four things keep the driver here. An operand that is a **strided view**, for the reason just measured: it is walked in place here, and re-gathered there for nothing. A **stretched operand**, which is the one thing that cannot be flattened: broadcasting arrives as a stride of zero on an axis, and a flat run has no axes, so cell k of the output would stop lining up with cell k of the operand. A body that **asks about a mask**, because a chunk carries no per-cell mask to ask it of -- CArray ORs and propagates the masks, but `a[i] == UNDEF` is a question about one cell. And **more than seven operands**, because seven is the widest the sweep family is generated for.
 
 Whichever drives it, an operand that is **read while the pass writes the array it is a view of** is copied once before the loop. `a = b * 2.0` reads the whole right-hand side and then assigns; a kernel walks cell by cell, which is the same thing until a cell it reads is one it has written -- `hi = lo * 2.0` over two blocks that share six cells, a transpose written over itself. The copy is what makes those read the values the expression started with, as CArray's own operators do, and it is what lets the chunked sweep take them: what it re-gathers per chunk is then a copy nothing is writing to. Sharing a root is the test rather than overlapping cells, a view knowing what it is a view of; `a = a + 1.0` is not that case, the cell read being the cell written.
 

@@ -1032,8 +1032,6 @@ class TestLocalArrays < Minitest::Test
   def test_the_swept_path_is_the_one_under_test
     a = CArray.double(64).seq!(1.0)
     out = CArray.double(64)
-    assert(CArray::JIT::Sweep.available?,
-           "this CArray has no ca_call_cslab, so there is no swept path here")
     assert(CArray::JIT.send(:sweepable_pass?, { :a => a, :out => out },
                             [64], false),
            "these operands should take the swept path")

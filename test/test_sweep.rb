@@ -13,10 +13,6 @@ require_relative "test_helper"
 # test is who acquires the operands, not what they compute.
 class TestSweep < Minitest::Test
 
-  def setup
-    skip "this CArray has no ca_call_cslab" unless CArray::JIT::Sweep.available?
-  end
-
   # The property everything else rests on: two drivers, one answer.
   def test_the_two_drivers_agree
     a = CArray.double(6).seq!(1.0)
@@ -220,12 +216,6 @@ class TestSweep < Minitest::Test
     assert(CArray::JIT.send(:sweepable_pass?,
                             { :a => strided, :b => gathered }, [n], false),
            "one operand that has to be moved is what decides it")
-  end
-
-  # An old CArray simply does not have the family, and everything falls back
-  # without the caller hearing about it.
-  def test_it_is_asked_for_rather_than_assumed
-    assert_includes([true, false], CArray::JIT::Sweep.available?)
   end
 
 end

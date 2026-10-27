@@ -39,6 +39,10 @@ version you have and a newer one.
 
 ## 0.1.7 (unreleased)
 
+- Change: needs CArray 3.0.6 or later in the 3.0 series; install it
+  alongside this release. An element-wise pass is handed to
+  `CArray::AddressBasis.sweep`, which 3.0.6 is the first to have.
+
 - Change: the kernel cache keeps 2000 kernels per environment by
   default, up from 512, which is about 60 MB on disk. A program that
   compiled more than 512 rebuilt the ones evicted each time it ran. Set
