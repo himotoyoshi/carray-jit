@@ -83,9 +83,11 @@ class CArray
           # Held here so that the buffers outlive the call.
           dim = out.dim.pack("q*")
           steps = strided.flat_map { |slot| slot_strides(bases, slot) }.pack("q*")
+          constants = packed_constants(plan) or return false
           args = [out.elements]
           args << dim if walks_axes?(plan, strided)
           args << steps unless strided.empty?
+          args << constants unless constants.empty?
           kernel.call(*args, *pointers(plan, bases))
         end
         true
@@ -137,7 +139,63 @@ class CArray
       def arity (plan, strided)
         plan.leaves.size + plan.leaves.count { |array| array.has_mask? } +
           (plan.masked ? 1 : 0) + (walks_axes?(plan, strided) ? 1 : 0) +
-          (strided.empty? ? 0 : 1)
+          (strided.empty? ? 0 : 1) + (constant_nodes(plan).empty? ? 0 : 1)
+      end
+
+      # The values the kernel does not have written into it: each constant,
+      # and the fill of each shifted read that fills.  They arrive at the call
+      # instead.  Written into the C as literals, they were the compiler's to
+      # fold, and it folded what CArray computes as arithmetic: `x * -1.0`
+      # became a negation, which flips the sign of a NaN that the multiply
+      # in CArray's own kernel leaves as it is.  A value the compiler cannot
+      # see is one it computes with as written.
+      def constant_nodes (plan)
+        plan.nodes.each_with_index.filter_map { |node, i|
+          case node
+          when CArray::Fusion::Const then [i, node]
+          when CArray::Fusion::Shifted
+            [i, CArray::Fusion::Const.new(node.fill, node.data_type)] if node.bounds.uniq == [:fill]
+          end
+        }
+      end
+
+      # One slot of CONSTANT_SLOT bytes per value, in the order of
+      # #constant_nodes, each read back with memcpy so that no slot need be
+      # aligned.  Nil for a value that has no bytes in its type -- the plan is
+      # then declined.
+      def packed_constants (plan)
+        constant_nodes(plan).map { |_, node| constant_bytes(node) or return nil }.join
+      end
+
+      CONSTANT_SLOT = 8
+
+      PACKING = {
+        float64: "d", float32: "f",
+        int8:  "c", int16:  "s", int32:  "l", int64:  "q",
+        uint8: "C", uint16: "S", uint32: "L", uint64: "Q",
+        boolean: "C",
+      }.freeze
+
+      def constant_bytes (node)
+        directive = PACKING[node.data_type] or return nil
+        value = node.value
+        value = case node.data_type
+                when :float64, :float32 then Float(value)
+                when :boolean then truth(value) ? 1 : 0
+                else value.is_a?(Float) ? (value.finite? ? value.to_i : (return nil)) : Integer(value)
+                end
+        [value].pack(directive).ljust(CONSTANT_SLOT, "\0")
+      rescue TypeError, ArgumentError, RangeError
+        nil
+      end
+
+      # The constants read into locals before the loop, where they stay for
+      # every cell.
+      def constant_lines (plan)
+        constant_nodes(plan).each_with_index.map { |(i, node), j|
+          type = C_TYPES.fetch(node.data_type)
+          "  #{type} c#{i}; memcpy(&c#{i}, constants + #{j * CONSTANT_SLOT}, sizeof c#{i});"
+        }
       end
 
       # A plan that reads an operand shifted, or by strides, needs to know
@@ -255,9 +313,10 @@ class CArray
 
           #{helpers}
           void
-          carray_jit_expression (int64_t elements#{walking ? ", const int64_t *dim" : ""}#{@strided.empty? ? "" : ", const int64_t *steps"}, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
+          carray_jit_expression (int64_t elements#{walking ? ", const int64_t *dim" : ""}#{@strided.empty? ? "" : ", const int64_t *steps"}#{constant_nodes(plan).empty? ? "" : ", const unsigned char *constants"}, #{out_type} *#{restrict}out#{mask_parameter(plan, restrict)}#{parameters(plan, restrict)})
           {
           #{stride_lines(plan).join("\n")}
+          #{constant_lines(plan).join("\n")}
           #{loop(plan, body + result, walking && (statements(plan, :inside) + result)).join("\n")}
           }
         C
@@ -360,7 +419,7 @@ class CArray
         when CArray::Fusion::Shifted
           shifted_line(plan, node, i, type)
         when CArray::Fusion::Const
-          ["#{type} v#{i} = #{literal(node)};",
+          ["#{type} v#{i} = c#{i};",
            *(plan.masked ? ["uint8_t m#{i} = 0;"] : [])]
         when CArray::Fusion::Op
           statement = substitute(node, i, type) or return nil
@@ -396,8 +455,7 @@ class CArray
         clamped = (0...ndim).map { |k| "c#{i}_#{k}" }
         lines << "#{type} v#{i} = #{cell("a#{node.index}", type, flat, clamped)};"
         if bounds.first == :fill
-          fill = CArray::Fusion::Const.new(node.fill, node.data_type)
-          lines << "if ( ! s#{i}_in ) { v#{i} = #{literal(fill)}; }"
+          lines << "if ( ! s#{i}_in ) { v#{i} = c#{i}; }"
         end
         if plan.masked
           inner = node.masked ? cell("k#{node.index}", "uint8_t", flat, clamped) : "0"
@@ -405,23 +463,6 @@ class CArray
           lines << "uint8_t m#{i} = s#{i}_in ? #{inner} : #{outer};"
         end
         lines
-      end
-
-      def literal (node)
-        case node.data_type
-        when :float64, :float32 then float_literal(node.value.to_f)
-        when :boolean           then truth(node.value) ? 1 : 0
-        else node.value.to_s
-        end
-      end
-
-      # `%.17g` writes -0.0 as "-0", which C reads as the integer 0 negated,
-      # and writes NaN and the infinities as words C does not know.
-      def float_literal (value)
-        return "NAN" if value.nan?
-        return (value > 0 ? "INFINITY" : "(-INFINITY)") if value.infinite?
-        text = "%.17g" % value
-        text.match?(/[.e]/) ? text : "#{text}.0"
       end
 
       # A boolean cell as CArray stores it: 0 is false, as is false.

@@ -103,6 +103,38 @@ class TestExpression < Minitest::Test
     assert_equal true, computed?(CArray.fuse { @a * -Float::INFINITY })
   end
 
+  # The constants arrive at the call rather than written into the C.  As
+  # literals, `x * -1.0` was the compiler's to fold into a negation, which
+  # flips the sign of a NaN that CArray's multiply leaves as it is -- and
+  # `signbit` shows it.  #assert_same_answer reads every NaN as one, so
+  # these compare the bits themselves.
+  def assert_same_bits (&expression)
+    walked = without_it { expression.call.to_ca }
+    compiled = expression.call.to_ca
+    format = walked.data_type_name == "float32" ? "e" : "E"
+    assert_equal walked.to_a.flatten.map { |v| [v].pack(format) },
+                 compiled.to_a.flatten.map { |v| [v].pack(format) }
+  end
+
+  def test_a_constant_the_compiler_could_fold_into_something_else
+    nans = [Float::NAN, -Float::NAN, 1.5, -0.0]
+    [:float64, :float32].each do |type|
+      x = CArray.new(type, [N])
+      x[] = Array.new(N) { |i| nans[i % nans.size] }
+      [-1, -1.0, 1.0, 0.0, -0.0].each do |k|
+        assert_same_bits { CArray.fuse { x * k } }
+        assert_same_bits { CArray.fuse { x + k } }
+      end
+      assert_equal true, computed?(CArray.fuse { x * -1.0 })
+    end
+  end
+
+  def test_a_fill_that_is_a_nan_keeps_its_sign
+    g = grid
+    assert_same_bits { CArray.fuse { g.shift(2, -3, fill_value: -Float::NAN) + 0.0 } }
+    assert_equal true, computed?(CArray.fuse { g.shift(2, -3, fill_value: -Float::NAN) + 0.0 })
+  end
+
   def test_an_array_named_twice
     assert_same_answer { CArray.fuse { @a * @a + @a } }
   end
