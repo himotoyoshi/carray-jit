@@ -238,10 +238,15 @@ class CArray
 
         held = [buffer(reals), buffer(integers), buffer(functions),
                 buffer(data), masks, masks, error]
-        error = in_one_block(held) { |context, slots|
-          Sweep.call(slab_pointer, @fsync, arrays, context)
-          Native.read(slots.last, error.bytesize)
-        }
+        if Sweep.direct?
+          # The slab writes the error slot in `error` itself.
+          Sweep.run(slab_pointer, @fsync, arrays, *held)
+        else
+          error = in_one_block(held) { |context, slots|
+            Sweep.call(slab_pointer, @fsync, arrays, context)
+            Native.read(slots.last, error.bytesize)
+          }
+        end
 
         packed.each_with_index do |(array, item), index|
           next if array.equal?(item)

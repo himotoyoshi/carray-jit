@@ -70,6 +70,22 @@ class CArray
       # there is a kernel -- because the answer changes what is compiled.
       MAX_ARITY = 7
 
+      # True when CArray runs the sweep itself, handed the context as the
+      # Strings it is made of.  It reaches the family member for the arity
+      # without Fiddle, and points the slab at the Strings' own bytes rather
+      # than at a copy in memory from malloc: they arrive as arguments, and
+      # an argument is pinned against compaction for the length of the call.
+      def self.direct?
+        return @direct if defined?(@direct)
+        @direct = CArray::AddressBasis.respond_to?(:sweep)
+      end
+
+      # `parts` become the table the slab is handed as `userdata`, in order.
+      # One that is not frozen is the slab's to write.
+      def self.run (slab, fsync, arrays, *parts)
+        CArray::AddressBasis.sweep(slab, fsync, arrays, *parts)
+      end
+
       # `arrays` are the operands in the order the kernel addresses them, and
       # `fsync` says which of them it writes -- CArray's own spelling, one
       # character per operand.
