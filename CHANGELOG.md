@@ -37,7 +37,7 @@ version you have and a newer one.
      a release needs is said in the gemspec, and an entry says so only
      when the answer changes. -->
 
-## 0.1.7 (unreleased)
+## 0.1.7
 
 - Change: needs CArray 3.0.6 or later in the 3.0 series; install it
   alongside this release. An element-wise pass is handed to
@@ -47,6 +47,17 @@ version you have and a newer one.
   default, up from 512, which is about 60 MB on disk. A program that
   compiled more than 512 rebuilt the ones evicted each time it ran. Set
   `CARRAY_JIT_CACHE_LIMIT` for a different bound.
+
+- Change: `jit_for` and `jit_init` cost less per call when called again
+  with operands that agree in name, type and mask, and a kernel writing
+  an `int64` array is vectorised as a `float64` one is.
+
+- Fix: a lazy expression or `CArray.fuse` computed here keeps the sign of
+  a NaN as CArray does: `(a * -1).signbit` and a NaN fill of `shift`
+  gave other bits with the evaluator registered.
+
+- Fix: kernels built at once by several threads, or in Ractors, no
+  longer raise `Errno::ENOENT`.
 
 ## 0.1.6
 
