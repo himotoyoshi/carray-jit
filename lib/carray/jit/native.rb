@@ -126,14 +126,15 @@ class CArray
         nil
       end
 
-      # `size` bytes at `address`, as a String.
+      # `size` bytes at `address`, as a String.  Fiddle::Pointer.read and
+      # .write are not in the fiddle Ruby 3.2 ships (1.1.1).
       def self.read (address, size)
-        Fiddle::Pointer.read(address, size)
+        Fiddle::Pointer.new(address)[0, size]
       end
 
       # `bytes` written at `address`.
       def self.write (address, bytes)
-        Fiddle::Pointer.write(address, bytes)
+        Fiddle::Pointer.new(address)[0, bytes.bytesize] = bytes
       end
 
       # `object` as the VALUE C sees -- for CArray's own C, which takes the
