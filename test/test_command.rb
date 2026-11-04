@@ -61,7 +61,10 @@ class TestCommand < Minitest::Test
         end
       })
     RUBY
-    output, status = Open3.capture2e({ "CARRAY_JIT_CACHE" => @root },
+    # `RUBYOPT` is dropped because `CARRAY_TREE` puts a checkout on the load
+    # path through it, and a checkout found there is a CArray the command can
+    # name -- which is right, and not what this asks about.
+    output, status = Open3.capture2e({ "CARRAY_JIT_CACHE" => @root, "RUBYOPT" => nil },
                                      RbConfig.ruby, "-r", missing, COMMAND, "status")
     assert(status.success?, output)
     assert_match(/environment\s+\S+-carraynone-/, output)

@@ -153,26 +153,43 @@ class CArray
         # CArray's own version is defined by its extension, and this may be
         # running without it: the command that looks after the cache loads the
         # compiler and nothing else, on purpose, so that a cache can be
-        # inspected or cleared when CArray itself will not load.  RubyGems
-        # knows which version a `require` would activate without activating
-        # it, and that is the same one -- except where CArray is on the load
-        # path from a checkout, which nothing outside the process could have
-        # known either way.
+        # inspected or cleared when CArray itself will not load.  What it has
+        # to name is the version a `require "carray"` here would load, without
+        # doing the require.
+        #
+        # A checkout put on the load path with `-I` is found the way the
+        # require would find it, and its version read from the `version.h`
+        # beside the built extension.  Otherwise RubyGems knows: the version
+        # already activated, as under Bundler, or else the one a `require`
+        # would activate.
         def carray_version
           return CArray::VERSION if defined?(CArray::VERSION)
           return @carray_version if defined?(@carray_version)
-          @carray_version =
-            if defined?(Gem::Specification)
-              begin
-                Gem::Specification.find_by_name("carray").version.to_s
-              rescue StandardError, LoadError
-                # A gem that is not installed raises Gem::MissingSpecError,
-                # which is a LoadError rather than a StandardError.
-                "none"
-              end
-            else
-              "none"
-            end
+          @carray_version = checkout_carray_version || installed_carray_version
+          return @carray_version
+        end
+
+        # An installed gem keeps `version.h` in `ext/` and the extension in
+        # `lib/`, so only a checkout has the two side by side.
+        def checkout_carray_version
+          extension = "carray_ext.#{RbConfig::CONFIG['DLEXT']}"
+          directory = $LOAD_PATH.map { |path| File.expand_path(path.to_s) }
+                                .find { |path| File.file?(File.join(path, extension)) }
+          return nil unless directory
+          header = File.join(directory, "version.h")
+          return nil unless File.file?(header)
+          return File.read(header)[/^#define\s+CA_VERSION\s+"([^"]+)"/, 1]
+        end
+
+        def installed_carray_version
+          return "none" unless defined?(Gem::Specification)
+          loaded = Gem.loaded_specs["carray"]
+          return loaded.version.to_s if loaded
+          return Gem::Specification.find_by_name("carray").version.to_s
+        rescue StandardError, LoadError
+          # A gem that is not installed raises Gem::MissingSpecError, which
+          # is a LoadError rather than a StandardError.
+          return "none"
         end
 
         # Directories for versions and architectures no longer in use, so

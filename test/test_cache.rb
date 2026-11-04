@@ -157,6 +157,38 @@ class TestCache < Minitest::Test
     assert_includes(tag, CArray::JIT::Compiler.environment_tag)
   end
 
+  # A checkout on the load path answers with its own `version.h`, read beside
+  # the extension a `require` would find first -- not the installed gem's
+  # version, which was what the command said when the two differed.
+  def test_a_checkout_on_the_load_path_names_its_own_version
+    Dir.mktmpdir do |tree|
+      extension = File.join(tree, "carray_ext.#{RbConfig::CONFIG['DLEXT']}")
+      File.write(extension, "")
+      File.write(File.join(tree, "version.h"),
+                 "#define CA_VERSION \"9.8.7\"\n#define CA_VERSION_CODE 90807\n")
+      $LOAD_PATH.unshift(tree)
+      begin
+        assert_equal("9.8.7", CArray::JIT::Compiler.checkout_carray_version)
+      ensure
+        $LOAD_PATH.delete(tree)
+      end
+    end
+  end
+
+  # An installed gem keeps `version.h` in `ext/` and the extension in `lib/`,
+  # so finding the extension alone is not taken for a checkout.
+  def test_an_extension_without_a_version_header_is_not_a_checkout
+    Dir.mktmpdir do |lib|
+      File.write(File.join(lib, "carray_ext.#{RbConfig::CONFIG['DLEXT']}"), "")
+      $LOAD_PATH.unshift(lib)
+      begin
+        assert_nil(CArray::JIT::Compiler.checkout_carray_version)
+      ensure
+        $LOAD_PATH.delete(lib)
+      end
+    end
+  end
+
   # `-march=native` names a target the flag's own text does not carry, and
   # `arch` is too coarse to stand in for it -- `x86_64-linux` spans machines
   # that differ only in which instructions exist.  So what the compiler
