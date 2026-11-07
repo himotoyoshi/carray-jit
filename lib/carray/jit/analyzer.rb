@@ -14,11 +14,8 @@ class CArray
 
       # ---- the vocabulary a local array is written in ----
 
-      # The types a body may make an array of: CArray's own constructor names,
-      # each naming the storage type CArray gives it.  Taken from CArray
-      # rather than invented here, which is why the aliases land where they
-      # do -- `CArray.float` is a float32 and `CArray.complex` is a cmplx64,
-      # the opposite of what Ruby's own Float and Complex would suggest.
+      # The types a body may make an array of, under the width names CArray
+      # gives them.
       LOCAL_ARRAY_TYPES = {
         :int8     => "int8",     :int16    => "int16",
         :int32    => "int32",    :int64    => "int64",
@@ -27,7 +24,13 @@ class CArray
         :float32  => "float32",  :float64  => "float64",
         :cmplx64  => "cmplx64",  :cmplx128 => "cmplx128",
         :boolean  => "boolean",
-        # The aliases, as CArray spells them.
+      }.freeze
+
+      # The C type names.  A block is written in the width names, so these
+      # are refused with the width name each stands for -- which is worth
+      # saying, since `float` is a float32 and `complex` a cmplx64, the
+      # opposite of what Ruby's own Float and Complex would suggest.
+      LOCAL_ARRAY_C_TYPE_NAMES = {
         :float    => "float32",  :double   => "float64",
         :complex  => "cmplx64",  :dcomplex => "cmplx128",
         :byte     => "uint8",    :short    => "int16",
@@ -76,7 +79,8 @@ class CArray
       # Every name a constructor may be written under, so that the receiver of
       # one is known for what it is before anything else has been read.
       LOCAL_ARRAY_CONSTRUCTOR_NAMES =
-        (LOCAL_ARRAY_TYPES.keys + LOCAL_ARRAY_REFUSED_TYPES +
+        (LOCAL_ARRAY_TYPES.keys + LOCAL_ARRAY_C_TYPE_NAMES.keys +
+         LOCAL_ARRAY_REFUSED_TYPES +
          LOCAL_ARRAY_COMPATIBILITY_NAMES + [:new, :empty]).freeze
 
       # `CArray`, `::CArray`, or one of the type classes under either.  A
@@ -2040,7 +2044,7 @@ class CArray
         end
         raise Unsupported.new(
           "`#{node.name}` takes a local array -- one this block made with " \
-          "`CArray.double(n)` or its kin -- named on its own, and " \
+          "`CArray.float64(n)` or its kin -- named on its own, and " \
           "`#{argument.slice}` is not one",
           node.location)
       end
@@ -2104,11 +2108,19 @@ class CArray
             "`#{node.name}` holds #{LOCAL_ARRAY_REFUSED_TYPES_HOLD.fetch(node.name)} " \
             "rather than numbers, and a kernel computes with numbers; a " \
             "local array is one of " \
-            "#{LOCAL_ARRAY_TYPES.keys.take(13).map { |name| "`#{name}`" }.join(', ')}",
+            "#{LOCAL_ARRAY_TYPES.keys.map { |name| "`#{name}`" }.join(', ')}",
             node.location)
         end
         if LOCAL_ARRAY_COMPATIBILITY_NAMES.include?(node.name)
           return refuse_a_compatibility_constructor(node, arguments, nil)
+        end
+        if LOCAL_ARRAY_C_TYPE_NAMES.key?(node.name)
+          width = LOCAL_ARRAY_C_TYPE_NAMES.fetch(node.name)
+          raise Unsupported.new(
+            "`CArray.#{node.name}` uses the C type name `#{node.name}`; a " \
+            "kernel body is written in the width names, so write " \
+            "`#{node.slice.sub(/\.#{node.name}\b/, ".#{width}")}`",
+            node.location)
         end
         storage = LOCAL_ARRAY_TYPES.fetch(node.name)
         if arguments.empty?
@@ -2174,10 +2186,17 @@ class CArray
             "rather than numbers, and a kernel computes with numbers",
             node.location)
         end
+        if LOCAL_ARRAY_C_TYPE_NAMES.key?(name)
+          width = LOCAL_ARRAY_C_TYPE_NAMES.fetch(name)
+          raise Unsupported.new(
+            "`:#{name}` is the C type name `#{name}`; a kernel body is " \
+            "written in the width names, so write `:#{width}`",
+            node.location)
+        end
         LOCAL_ARRAY_TYPES.fetch(name) do
           raise Unsupported.new(
             "`#{argument.slice}` is not a type a local array holds; they are " \
-            "#{LOCAL_ARRAY_TYPES.keys.take(13).map { |n| "`:#{n}`" }.join(', ')}",
+            "#{LOCAL_ARRAY_TYPES.keys.map { |n| "`:#{n}`" }.join(', ')}",
             node.location)
         end
       end
@@ -2270,7 +2289,8 @@ class CArray
       # reached through a type class, which is the Numo spelling of it.
       def refuse_a_type_class_constructor (node, arguments)
         tail = node.receiver.slice.split("::").last.to_s
-        type = LOCAL_ARRAY_TYPES[tail.downcase.to_sym]
+        name = tail.downcase.to_sym
+        type = LOCAL_ARRAY_TYPES[name] || LOCAL_ARRAY_C_TYPE_NAMES[name]
         refuse_a_compatibility_constructor(node, arguments, type)
       end
 

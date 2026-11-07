@@ -126,7 +126,7 @@ Three spellings are taken, and they are CArray's own:
 
 The types are the ones CArray has, minus the two a kernel computes with neither of: `int8` `int16` `int32` `int64`, `uint8` `uint16` `uint32` `uint64`, `float32` `float64`, `cmplx64` `cmplx128`, `boolean`. `object` and `fixlen` are refused.
 
-The aliases are CArray's too, and two of them are worth reading twice: **`CArray.float` is a float32** and **`CArray.complex` is a cmplx64** -- single precision, the opposite of what Ruby's own `Float` and `Complex` would suggest. `CArray.double` is float64 and `CArray.dcomplex` is cmplx128. `byte`, `short` and `int` are uint8, int16 and int32.
+The C type names -- `float`, `double`, `complex`, `dcomplex`, `byte`, `short` and `int` -- are refused, in `CArray.double(n)` and in `CArray.new(:double, [n])` alike: a block is written in the width names, and the message names the one to write. Two of them are worth reading twice: `float` is a float32 and `complex` is a cmplx64, the opposite of what Ruby's own `Float` and `Complex` would suggest.
 
 `CArray.empty(data_type, dim)` is carray 3.0.2's spelling. A block is read rather than run, so a kernel takes it whatever version of CArray is loaded -- but calling it outside a kernel needs 3.0.2.
 

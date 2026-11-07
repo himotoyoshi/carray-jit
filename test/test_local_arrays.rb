@@ -203,22 +203,24 @@ class TestLocalArrays < Minitest::Test
     assert_equal([1.0, 2.0, 3.0], out.to_a)
   end
 
-  ALIASES = { :float => "float32", :double => "float64",
-              :complex => "cmplx64", :dcomplex => "cmplx128",
-              :byte => "uint8", :short => "int16", :int => "int32" }
+  C_TYPE_NAMES = { :float => "float32", :double => "float64",
+                   :complex => "cmplx64", :dcomplex => "cmplx128",
+                   :byte => "uint8", :short => "int16", :int => "int32" }
 
-  def test_the_aliases_name_the_type_carray_names
-    ALIASES.each do |spelling, storage|
-      kernel = compile_kernel(<<~RUBY, arrays: { :out => storage })
+  def test_the_c_type_names_are_refused_with_the_width_name
+    C_TYPE_NAMES.each do |spelling, width|
+      refuse(<<~RUBY, /`CArray\.#{width}\(2\)`/, arrays: { :out => width })
         proc { |i|
           w = CArray.#{spelling}(2)
-          w[0] = 1
           out[i] = w[0]
         }
       RUBY
-      assert_match(/#{Regexp.escape(CArray::JIT::CGenerator::STORAGE_C_TYPES.fetch(storage))} w\[2\];/,
-                   kernel.c_source,
-                   "`CArray.#{spelling}` should be #{storage}")
+      refuse(<<~RUBY, /`:#{width}`/, arrays: { :out => width })
+        proc { |i|
+          w = CArray.new(:#{spelling}, [2])
+          out[i] = w[0]
+        }
+      RUBY
     end
   end
 
@@ -629,6 +631,7 @@ class TestLocalArrays < Minitest::Test
       "CArray.empty(4)"        => /CArray\.new/,
       "CArray::Int64.empty(4)" => /CArray\.new\(:int64, \[4\]\)/,
       "CArray::Int64.zeros(4)" => /CArray\.new\(:int64, \[4\]\)/,
+      "CArray::DComplex.zeros(4)" => /CArray\.new\(:cmplx128, \[4\]\)/,
     }.each do |spelling, pattern|
       refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
         proc { |i|

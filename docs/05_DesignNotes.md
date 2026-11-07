@@ -29,8 +29,6 @@ Narrowing them was tried and dropped, because it would change the answer and buy
 
 **A value with no data type follows Ruby.** A literal and a captured Numeric have no width of their own, so `2.0` is a double and `2` an Integer -- until they meet an array of their own kind, which lends them its width: `f32 * 2.0` is float32. What an array can lend is a width, never a kind, so `i32 * 2.0` is a float64 and `f32 * 1i` a cmplx128. A local that wants a particular type is seeded from a `CScalar`, which is a value with a data type. See [Locals](03_SupportedFeatures.md#locals-types-and-postfix-math).
 
-`CArray.float` is float32; `CArray.double` is float64.
-
 ## `-ffp-contract=off` is mandatory
 
 Without it, clang and gcc fuse `a*b + c` into a single FMA instruction -- **at `-O0` as well as `-O2` on arm64** -- which changes the last bit of the result. Measured on a two-term recurrence: 13 of 24 cells disagree with the Ruby loop with contraction on, and all 24 agree with it off.
