@@ -25,7 +25,7 @@ class CArray
   #
   #   def moving_average (values, window)
   #     n = values.elements
-  #     out = CArray.double(n)
+  #     out = CArray.float64(n)
   #     CArray.jit_call("void (*)(double *out, const double *values, " \
   #                     "size_t n, size_t window)") {
   #       n.times { |i| ... }

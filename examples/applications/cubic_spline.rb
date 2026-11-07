@@ -177,21 +177,21 @@ n = 15
 random = Random.new(20260909)
 # Knots that are not equally spaced -- measurements rarely are, and nothing
 # above assumed they would be.
-x = CArray.double(n) { |i| 6.0 * i / (n - 1) }
+x = CArray.float64(n) { |i| 6.0 * i / (n - 1) }
 (1...(n-1)).each { |i| x[i] += random.rand(-0.12..0.12) }
-y = CArray.double(n) { |i| curve(x[i]) }
+y = CArray.float64(n) { |i| curve(x[i]) }
 
-work = Array.new(7) { CArray.double(n) }
+work = Array.new(7) { CArray.float64(n) }
 natural = moments(x, y, n, work, nil).copy
 clamped = moments(x, y, n, work, [slope(x[0]), slope(x[n-1])]).copy
 not_a_knot = moments(x, y, n, work, :not_a_knot).copy
 
 points = 601
-query = CArray.double(points) { |k| x[0] + (x[n-1] - x[0]) * k / (points - 1) }
-truth = CArray.double(points) { |k| curve(query[k]) }
+query = CArray.float64(points) { |k| x[0] + (x[n-1] - x[0]) * k / (points - 1) }
+truth = CArray.float64(points) { |k| curve(query[k]) }
 
-value = CArray.double(points)
-derivative = CArray.double(points)
+value = CArray.float64(points)
+derivative = CArray.float64(points)
 
 puts "cubic spline through #{n} unevenly spaced points, sampled at #{points}"
 
@@ -222,9 +222,9 @@ puts format("  not-knot  S''' jumps by %.1e at x[1] and %.1e at x[n-2] -- neithe
 
 # The interpolation itself: all of them pass through every knot, so all three
 # are asked, not just the one whose name comes first.
-knots = CArray.double(n) { |i| x[i] }
-at_knots = CArray.double(n)
-at_knots_slope = CArray.double(n)
+knots = CArray.float64(n) { |i| x[i] }
+at_knots = CArray.float64(n)
+at_knots_slope = CArray.float64(n)
 { "natural" => natural, "clamped" => clamped, "not-a-knot" => not_a_knot }.each do |name, moment|
   evaluate(x, y, moment, n, knots, at_knots, at_knots_slope)
   puts format("  %-10s max |S(x_i) - y_i| = %.2e", name, (at_knots - y).abs.max)
@@ -233,8 +233,8 @@ end
 # The query grid above is sorted, so the sweep applies to it -- and gives back
 # the same doubles, not merely close ones: the interval a point lands in is the
 # same interval, and the polynomial evaluated in it is the same expression.
-swept = CArray.double(points)
-swept_slope = CArray.double(points)
+swept = CArray.float64(points)
+swept_slope = CArray.float64(points)
 resample(x, y, clamped, n, query, swept, swept_slope, CArray.int32(points))
 puts "  the sorted sweep agrees bit for bit  #{swept.to_a == results["clamped"][0].to_a}"
 
@@ -310,11 +310,11 @@ end
 
 puts
 [[200, 20_000], [2_000, 200_000]].each do |size, sampled|
-  knots = CArray.double(size) { |i| 6.0 * i / (size - 1) }
-  values = CArray.double(size) { |i| curve(knots[i]) }
-  scratch = Array.new(7) { CArray.double(size) }
-  at = CArray.double(sampled) { |k| 6.0 * k / (sampled - 1) }
-  out, slopes = CArray.double(sampled), CArray.double(sampled)
+  knots = CArray.float64(size) { |i| 6.0 * i / (size - 1) }
+  values = CArray.float64(size) { |i| curve(knots[i]) }
+  scratch = Array.new(7) { CArray.float64(size) }
+  at = CArray.float64(sampled) { |k| 6.0 * k / (sampled - 1) }
+  out, slopes = CArray.float64(sampled), CArray.float64(sampled)
 
   fit = time(20) { moments(knots, values, size, scratch, nil) }
   fit_ruby = time(3) { ruby_moments(knots, values, size, scratch) }

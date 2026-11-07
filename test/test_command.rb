@@ -85,7 +85,7 @@ class TestCommand < Minitest::Test
     File.write(script, <<~RUBY)
       $LOAD_PATH.unshift(#{File.expand_path('../lib', __dir__).inspect})
       require "carray/jit"
-      values = CArray.double(8).seq!(1.0)
+      values = CArray.float64(8).seq!(1.0)
       CArray.jit_for(1...8) { |i|
         values[i] = values[i-1] * 2.0
       }

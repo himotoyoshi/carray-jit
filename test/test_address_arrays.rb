@@ -40,34 +40,34 @@ class TestAddressArrays < Minitest::Test
   # ---------- the shape it no longer has to agree with ----------
 
   def test_a_shorter_weight_is_not_lined_up_with_the_operands
-    weights = CArray.double(4).seq!(1.0)
-    a = CArray.double(7).seq!(1.0)
-    out = CArray.double(7)
+    weights = CArray.float64(4).seq!(1.0)
+    a = CArray.float64(7).seq!(1.0)
+    out = CArray.float64(7)
     f = dot4
     CArray.jit_each { out = a + f.call(weights, weights) }
     dot = (0...4).inject(0.0) { |total, k| total + weights[k] * weights[k] }
-    reference = CArray.double(7) { (0...7).map { |k| a[k] + dot } }
+    reference = CArray.float64(7) { (0...7).map { |k| a[k] + dot } }
     assert_arrays_bits_equal(reference, out)
   end
 
   def test_the_same_in_a_map
-    weights = CArray.double(4).seq!(1.0)
-    a = CArray.double(7).seq!(1.0)
+    weights = CArray.float64(4).seq!(1.0)
+    a = CArray.float64(7).seq!(1.0)
     f = dot4
     out = CArray.jit_map { a + f.call(weights, weights) }
     dot = (0...4).inject(0.0) { |total, k| total + weights[k] * weights[k] }
-    reference = CArray.double(7) { (0...7).map { |k| a[k] + dot } }
+    reference = CArray.float64(7) { (0...7).map { |k| a[k] + dot } }
     assert_arrays_bits_equal(reference, out)
   end
 
   def test_a_longer_weight_is_not_lined_up_either
-    weights = CArray.double(64).seq!(1.0)
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(5)
+    weights = CArray.float64(64).seq!(1.0)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(5)
     f = sum4
     CArray.jit_each { out = a + f.call(weights) }
     first_four = (0...4).inject(0.0) { |total, k| total + weights[k] }
-    reference = CArray.double(5) { (0...5).map { |k| a[k] + first_four } }
+    reference = CArray.float64(5) { (0...5).map { |k| a[k] + first_four } }
     assert_arrays_bits_equal(reference, out)
   end
 
@@ -75,8 +75,8 @@ class TestAddressArrays < Minitest::Test
   # arguments and it does not broadcast the captures -- and this says so
   # rather than leaving it to be assumed.
   def test_a_stencil_takes_a_captured_weight_of_its_own_length
-    weights = CArray.double(4).seq!(1.0)
-    image = CArray.double(6, 6).seq!
+    weights = CArray.float64(4).seq!(1.0)
+    image = CArray.float64(6, 6).seq!
     f = dot4
     out = CArray.jit_stencil(image, border: :clamp) { |win|
       win[0, 0] + f.call(weights, weights)
@@ -88,9 +88,9 @@ class TestAddressArrays < Minitest::Test
   # ---------- it is not walked, whatever its length ----------
 
   def test_the_handed_array_is_not_an_operand
-    weights = CArray.double(4).seq!(1.0)
-    a = CArray.double(7).seq!(1.0)
-    out = CArray.double(7)
+    weights = CArray.float64(4).seq!(1.0)
+    a = CArray.float64(7).seq!(1.0)
+    out = CArray.float64(7)
     f = dot4
     made = kernels_made {
       CArray.jit_each { out = a + f.call(weights, weights) }
@@ -106,9 +106,9 @@ class TestAddressArrays < Minitest::Test
   # A weight that happens to be the operands' length was never refused, since
   # a matching shape broadcasts.  It is still not walked.
   def test_a_weight_of_the_operands_length_is_still_not_walked
-    weights = CArray.double(6).seq!(1.0)
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    weights = CArray.float64(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     f = dot4
     made = kernels_made { CArray.jit_each { out = a + f.call(weights, weights) } }
     kernel = made.first
@@ -125,9 +125,9 @@ class TestAddressArrays < Minitest::Test
       slot[0] = v
       slot[0]
     }
-    slot = CArray.double(1)
-    source = CArray.double(5).seq!(1.0)
-    sink = CArray.double(5)
+    slot = CArray.float64(1)
+    source = CArray.float64(5).seq!(1.0)
+    sink = CArray.float64(5)
     CArray.jit_each { sink = fill.call(slot, source) }
     assert_equal([1.0, 2.0, 3.0, 4.0, 5.0], sink.to_a)
     assert_equal([5.0], slot.to_a,
@@ -138,8 +138,8 @@ class TestAddressArrays < Minitest::Test
   # ---------- a name that is also read by cell ----------
 
   def test_an_array_both_walked_and_handed_over_is_still_lined_up
-    v = CArray.double(4).seq!(2.0)
-    out = CArray.double(4)
+    v = CArray.float64(4).seq!(2.0)
+    out = CArray.float64(4)
     f = sum4
     made = kernels_made { CArray.jit_each { out = v + f.call(v) } }
     kernel = made.first
@@ -149,8 +149,8 @@ class TestAddressArrays < Minitest::Test
   end
 
   def test_a_shape_that_does_not_line_up_is_still_refused_where_it_is_walked
-    v = CArray.double(4).seq!(2.0)
-    out = CArray.double(7)
+    v = CArray.float64(4).seq!(2.0)
+    out = CArray.float64(7)
     f = sum4
     error = assert_raises(ArgumentError) do
       CArray.jit_each { out = v + f.call(v) }
@@ -163,8 +163,8 @@ class TestAddressArrays < Minitest::Test
   # walked -- which is why the declaration decides and not the spelling.
   def test_a_by_value_parameter_walks_the_array
     twice = CArray.jit_function("double twice(double x)") { |x| x * 2.0 }
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(5)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(5)
     made = kernels_made { CArray.jit_each { out = twice.call(a) } }
     kernel = made.first
     assert_includes(kernel.arrays, :a, "a bare name here is a cell")
@@ -178,10 +178,10 @@ class TestAddressArrays < Minitest::Test
   # the C having no mask to read.  What this adds is that the kernel is not
   # compiled as a masked one on the way to that refusal.
   def test_a_masked_array_handed_over_is_refused_and_the_kernel_is_unmasked
-    masked = CArray.double(4).seq!(1.0)
+    masked = CArray.float64(4).seq!(1.0)
     masked[1] = UNDEF
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     f = sum4
     made = nil
     error = assert_raises(CArray::JIT::Unsupported) do
@@ -198,10 +198,10 @@ class TestAddressArrays < Minitest::Test
   end
 
   def test_stripping_the_mask_is_the_way_through
-    holed = CArray.double(4).seq!(1.0)
+    holed = CArray.float64(4).seq!(1.0)
     holed[1] = UNDEF
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     filled = holed.strip_mask(0.0)
     f = sum4
     CArray.jit_each { out = a + f.call(filled) }
@@ -212,7 +212,7 @@ class TestAddressArrays < Minitest::Test
   # ---------- a block with nothing to walk ----------
 
   def test_a_block_whose_only_array_is_handed_over_says_so
-    weights = CArray.double(4).seq!(1.0)
+    weights = CArray.float64(4).seq!(1.0)
     f = sum4
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_map { f.call(weights) }
@@ -224,7 +224,7 @@ class TestAddressArrays < Minitest::Test
   end
 
   def test_the_same_in_a_jit_each_block
-    weights = CArray.double(4).seq!(1.0)
+    weights = CArray.float64(4).seq!(1.0)
     f = sum4
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_each { f.call(weights) }
@@ -234,8 +234,8 @@ class TestAddressArrays < Minitest::Test
 
   # `jit_for` says how many cells there are itself, so it never needed one.
   def test_jit_for_takes_a_block_whose_only_array_is_handed_over
-    weights = CArray.double(4).seq!(1.0)
-    out = CArray.double(3)
+    weights = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(3)
     f = sum4
     CArray.jit_for(3) { |i| out[i] = f.call(weights) }
     total = (0...4).inject(0.0) { |t, k| t + weights[k] }
@@ -256,17 +256,17 @@ class TestAddressArrays < Minitest::Test
   # and is not one the kernel walks.  Get either wrong and an operand loses
   # its strides.
   def test_the_scan_never_takes_out_an_array_the_kernel_walks
-    weights = CArray.double(4).seq!(1.0)
-    other = CArray.double(4).seq!(3.0)
-    a = CArray.double(7).seq!(1.0)
-    out = CArray.double(7)
+    weights = CArray.float64(4).seq!(1.0)
+    other = CArray.float64(4).seq!(3.0)
+    a = CArray.float64(7).seq!(1.0)
+    out = CArray.float64(7)
     f = dot4
     g = sum4
     twice = CArray.jit_function("double twice2(double x)") { |x| x * 2.0 }
 
     # The fifth reads `weights` by cell as well as handing it over, so its
     # operands are four cells long and it writes somewhere of that length.
-    short = CArray.double(4)
+    short = CArray.float64(4)
 
     [proc { out = a + f.call(weights, weights) },
      proc { out = a + f.call(weights, other) },
@@ -296,8 +296,8 @@ class TestAddressArrays < Minitest::Test
   # And the case that keeps the two sets apart, spelled out: an array read by
   # cell *and* handed over stays an operand, and the scan leaves it alone.
   def test_an_array_used_both_ways_is_in_the_line_up_and_not_in_the_scan
-    weights = CArray.double(4).seq!(1.0)
-    short = CArray.double(4)
+    weights = CArray.float64(4).seq!(1.0)
+    short = CArray.float64(4)
     g = sum4
     block = proc { short = weights + g.call(weights) }
     made = kernels_made { CArray.jit_each(&block) }
@@ -319,9 +319,9 @@ class TestAddressArrays < Minitest::Test
 
   # Two things now join after the broadcast rather than one.
   def test_a_generators_state_and_a_handed_array_both_join_after
-    weights = CArray.double(4).seq!(1.0)
-    a = CArray.double(7).seq!(1.0)
-    out = CArray.double(7)
+    weights = CArray.float64(4).seq!(1.0)
+    a = CArray.float64(7).seq!(1.0)
+    out = CArray.float64(7)
     f = dot4
     generator = CArray::Rng.new(seed: 4)
     CArray.jit_each { out = a + f.call(weights, weights) + random(rng: generator) }

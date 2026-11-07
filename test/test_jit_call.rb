@@ -13,7 +13,7 @@ class TestJitCall < Minitest::Test
 
   def ema (values, alpha)
     n = values.elements
-    out = CArray.double(n)
+    out = CArray.float64(n)
     CArray.jit_call("void (*)(double *out, const double *values, " \
                     "size_t n, double alpha)") {
       previous = values[0]
@@ -39,7 +39,7 @@ class TestJitCall < Minitest::Test
   # The one an array expression cannot state, checked against the same
   # algorithm written out in Ruby rather than against a closed form.
   def test_a_recurrence_agrees_with_ruby
-    values = CArray.double(16).seq!(1.0)
+    values = CArray.float64(16).seq!(1.0)
     previous = values[0]
     expected = (0...16).map { |i|
       previous = 0.25 * values[i] + 0.75 * previous
@@ -49,12 +49,12 @@ class TestJitCall < Minitest::Test
   end
 
   def test_a_value_comes_back
-    values = CArray.double(8).seq!(1.0)
+    values = CArray.float64(8).seq!(1.0)
     assert_equal (1..8).sum { |x| (x * x).to_f }, dot(values, values)
   end
 
   def test_a_void_function_answers_nil
-    out = CArray.double(4)
+    out = CArray.float64(4)
     n = 4
     assert_nil(CArray.jit_call("void (*)(double *out, size_t n)") {
       n.times { |i| out[i] = i * 2.0 }
@@ -65,8 +65,8 @@ class TestJitCall < Minitest::Test
   # The locals are read where the call stands, so the same site answers for
   # whatever is in scope on this pass.
   def test_the_locals_are_read_at_every_call
-    assert_equal [1.0, 1.5, 2.25], ema(CA_DOUBLE([1, 2, 3]), 0.5).to_a
-    assert_equal [10.0, 10.0, 10.0], ema(CA_DOUBLE([10, 10, 10]), 0.5).to_a
+    assert_equal [1.0, 1.5, 2.25], ema(CA_FLOAT64([1, 2, 3]), 0.5).to_a
+    assert_equal [10.0, 10.0, 10.0], ema(CA_FLOAT64([10, 10, 10]), 0.5).to_a
   end
 
   # ---------- compiled once per site ----------
@@ -76,7 +76,7 @@ class TestJitCall < Minitest::Test
   # the compiled function is kept under.
   def test_the_site_is_compiled_once
     CArray::JIT.clear_registry
-    values = CArray.double(4).seq!(1.0)
+    values = CArray.float64(4).seq!(1.0)
     3.times { ema(values, 0.5) }
     assert_equal 1, CArray::JIT.send(:function_registry).size
   end
@@ -84,7 +84,7 @@ class TestJitCall < Minitest::Test
   # And `clear_registry` reaches it, which is the whole of what that method
   # is for: the next call compiles again.
   def test_clearing_the_registry_reaches_the_site
-    values = CArray.double(4).seq!(1.0)
+    values = CArray.float64(4).seq!(1.0)
     ema(values, 0.5)
     CArray::JIT.clear_registry
     assert_empty CArray::JIT.send(:function_registry)
@@ -107,7 +107,7 @@ class TestJitCall < Minitest::Test
       answer
     }) do
       n = 4
-      out = CArray.double(4)
+      out = CArray.float64(4)
       result = CArray.jit_call("void (*)(double *out, size_t n)") {
         n.times { |i| out[i] = 1.0 }
       }
@@ -125,7 +125,7 @@ class TestJitCall < Minitest::Test
   # have.
   def test_a_provider_answering_nil_leaves_the_site_alone
     with_provider(lambda { |_, _, _| nil }) do
-      out = CArray.double(3)
+      out = CArray.float64(3)
       n = 3
       CArray.jit_call("void (*)(double *out, size_t n)") {
         n.times { |i| out[i] = i * 1.0 }
@@ -165,13 +165,13 @@ class TestJitCall < Minitest::Test
       answered = Object.new
       def answered.call (*a) ; :ok ; end
       CArray::JIT.call_provider = lambda { |*| answered }
-      def one ; n = 1 ; out = CArray.double(1)
+      def one ; n = 1 ; out = CArray.float64(1)
         CArray.jit_call("void (*)(double *out, size_t n)") { n.times { |i| out[i] = 0.0 } }
       end
       one
       print !!defined?(CArray::JIT::CGenerator), " "
       CArray::JIT.call_provider = nil
-      def two ; n = 1 ; out = CArray.double(1)
+      def two ; n = 1 ; out = CArray.float64(1)
         CArray.jit_call("void (*)(double *out, size_t n)") { n.times { |i| out[i] = 0.0 } }
         out
       end
@@ -212,7 +212,7 @@ class TestJitCall < Minitest::Test
 
   # Written in both places they could disagree, and nothing would say so.
   def test_a_block_that_names_the_parameters_again
-    out = CArray.double(4)
+    out = CArray.float64(4)
     n = 4
     error = assert_raises(CArray::JIT::Unsupported) {
       CArray.jit_call("void (*)(double *out, size_t n)") { |out, n|
@@ -264,7 +264,7 @@ class TestJitCall < Minitest::Test
 
   # An array's cells are what come back, and writing them is the point.
   def test_an_array_parameter_is_written_through_its_cells
-    out = CArray.double(1)
+    out = CArray.float64(1)
     n = 3
     CArray.jit_call("void (*)(double *out, size_t n)") {
       n.times { |i| out[0] = out[0] + 1.0 }

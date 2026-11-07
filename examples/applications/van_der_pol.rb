@@ -26,9 +26,9 @@ FINISH = 20.0
 TOLERANCE = 1.0e-8
 CAP = 200_000                           # a `while` in a kernel carries a bound
 
-stiffness = CArray.double(TRAJECTORIES).seq!(0.1, 40.0 / TRAJECTORIES)
-position = CArray.double(TRAJECTORIES)
-velocity = CArray.double(TRAJECTORIES)
+stiffness = CArray.float64(TRAJECTORIES).seq!(0.1, 40.0 / TRAJECTORIES)
+position = CArray.float64(TRAJECTORIES)
+velocity = CArray.float64(TRAJECTORIES)
 accepted = CArray.int32(TRAJECTORIES)
 rejected = CArray.int32(TRAJECTORIES)
 

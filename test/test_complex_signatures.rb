@@ -76,7 +76,7 @@ class TestComplexSignatures < Minitest::Test
       v[0]
     }
     error = assert_raises(CArray::JIT::Unsupported) do
-      fill.call(CArray.double(3))
+      fill.call(CArray.float64(3))
     end
     assert_match(/takes a cmplx128 array, and this one is float64/, error.message)
   end

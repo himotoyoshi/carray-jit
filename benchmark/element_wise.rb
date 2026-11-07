@@ -21,10 +21,10 @@ SAMPLES = 5
 
 def median (list) = list.sort[list.size / 2]
 
-a = CArray.double(N).seq!
-b = CArray.double(N).seq!(10)
-c = CArray.double(N).seq!(100)
-out = CArray.double(N)
+a = CArray.float64(N).seq!
+b = CArray.float64(N).seq!(10)
+c = CArray.float64(N).seq!(100)
+out = CArray.float64(N)
 
 def timed (samples)
   median(samples.times.map { Benchmark.realtime { yield } })

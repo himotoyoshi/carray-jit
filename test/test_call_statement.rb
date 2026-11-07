@@ -22,7 +22,7 @@ class TestCallStatement < Minitest::Test
 
   def test_a_call_may_stand_alone_in_a_kernel
     writer = writer_function
-    target = CArray.double(6).fill(-1.0)
+    target = CArray.float64(6).fill(-1.0)
     CArray.jit_for(6) { |i| writer.call(target, i, i * 10.0) }
     assert_equal([0.0, 10.0, 20.0, 30.0, 40.0, 50.0], target.to_a)
   end
@@ -31,9 +31,9 @@ class TestCallStatement < Minitest::Test
   # still the same program.
   def test_the_block_does_what_the_kernel_does
     writer = writer_function
-    target = CArray.double(4).fill(-1.0)
+    target = CArray.float64(4).fill(-1.0)
     CArray.jit_for(4) { |i| writer.call(target, i, i + 0.5) }
-    in_ruby = CArray.double(4).fill(-1.0)
+    in_ruby = CArray.float64(4).fill(-1.0)
     (0...4).each { |i| writer.block.call(in_ruby, i, i + 0.5) }
     assert_equal(in_ruby.to_a, target.to_a)
   end
@@ -41,7 +41,7 @@ class TestCallStatement < Minitest::Test
   # The generated C says the dropping was meant.
   def test_the_dropped_value_is_cast_away
     writer = writer_function
-    target = CArray.double(3)
+    target = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i| writer.call(target, i, 1.0) }
     assert_match(/\(void\) carray_jit_writer_[0-9a-f]+\(target, i, 1\.0\);/,
                  kernel.c_source)
@@ -52,7 +52,7 @@ class TestCallStatement < Minitest::Test
   # writes to no array" refused it.
   def test_a_kernel_that_only_calls_is_not_refused
     writer = writer_function
-    target = CArray.double(3).fill(9.0)
+    target = CArray.float64(3).fill(9.0)
     CArray.jit_for(3) { |i| writer.call(target, i, 0.0) }
     assert_equal([0.0, 0.0, 0.0], target.to_a)
   end
@@ -62,7 +62,7 @@ class TestCallStatement < Minitest::Test
   # nothing in it.
   def test_a_kernel_reaching_no_cell_has_one_loop
     writer = writer_function
-    target = CArray.double(3)
+    target = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i| writer.call(target, i, 2.0) }
     refute_match(/carray_jit_strided\(pointers/, kernel.c_source.split("carray_jit_kernel").last)
   end
@@ -94,7 +94,7 @@ class TestCallStatement < Minitest::Test
       end
       0
     }
-    values = CArray.double(64) { |i| ((i * 37) % 64) * 1.0 }
+    values = CArray.float64(64) { |i| ((i * 37) % 64) * 1.0 }
     quicksort.call(values, 0, 63)
     assert_equal((0...64).map { |i| i * 1.0 }, values.to_a)
   end
@@ -113,11 +113,11 @@ class TestCallStatement < Minitest::Test
     ) { |out, at, value|
       out[at] = value
     }
-    target = CArray.double(5)
+    target = CArray.float64(5)
     CArray.jit_for(5) { |i| fill.call(target, i, i * 1.5) }
     assert_equal([0.0, 1.5, 3.0, 4.5, 6.0], target.to_a)
 
-    in_ruby = CArray.double(5)
+    in_ruby = CArray.float64(5)
     (0...5).each { |i| fill.block.call(in_ruby, i, i * 1.5) }
     assert_equal(target.to_a, in_ruby.to_a)
   end
@@ -133,7 +133,7 @@ class TestCallStatement < Minitest::Test
         countdown.call(out, n - 1)
       end
     }
-    run = CArray.double(6)
+    run = CArray.float64(6)
     countdown.call(run, 5)
     assert_equal([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], run.to_a)
   end
@@ -156,7 +156,7 @@ class TestCallStatement < Minitest::Test
       raise "negative" if x < 0.0
       out[0] = Math.sqrt(x)
     }
-    error = assert_raises(RuntimeError) { guard.call(CArray.double(1), -1.0) }
+    error = assert_raises(RuntimeError) { guard.call(CArray.float64(1), -1.0) }
     assert_equal("negative", error.message)
     refute_match(/return 0;/, guard.c_source)
   end
@@ -168,18 +168,18 @@ class TestCallStatement < Minitest::Test
   # what it wrote; a call cannot be taken back, so this follows `raise`.
   def test_a_masked_cell_does_not_reach_the_function
     writer = writer_function
-    source = CArray.double(6).seq!(1.0)
+    source = CArray.float64(6).seq!(1.0)
     source[2] = UNDEF
-    target = CArray.double(6).fill(-1.0)
+    target = CArray.float64(6).fill(-1.0)
     CArray.jit_for(6) { |i| writer.call(target, i, source[i] * 10.0) }
     assert_equal([10.0, 20.0, -1.0, 40.0, 50.0, 60.0], target.to_a)
   end
 
   def test_the_mask_is_read_rather_than_the_value
     writer = writer_function
-    source = CArray.double(3).seq!(1.0)
+    source = CArray.float64(3).seq!(1.0)
     source[1] = UNDEF
-    target = CArray.double(3)
+    target = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i| writer.call(target, i, source[i]) }
     assert_match(/if \( ! m_source\[/, kernel.c_source)
   end
@@ -187,7 +187,7 @@ class TestCallStatement < Minitest::Test
   # A computation standing alone is still a line that does nothing, and still
   # says so.
   def test_a_computation_may_not_stand_alone
-    values = CArray.double(3).seq!(1.0)
+    values = CArray.float64(3).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| Math.sqrt(values[i]) }
     end
@@ -195,9 +195,9 @@ class TestCallStatement < Minitest::Test
   end
 
   def test_a_computation_may_not_stand_alone_over_whole_arrays
-    a = CArray.double(3).seq!(1.0)
-    b = CArray.double(3).seq!(2.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    b = CArray.float64(3).seq!(2.0)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_each { a + b; out = a }
     end
@@ -223,7 +223,7 @@ class TestCallStatement < Minitest::Test
   def test_an_addressed_array_is_not_lined_up_by_jit_each
     bump = counter_function
     counter = CArray.int64(1)
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_each { out = bump.call(counter) }
     assert_equal([0.0, 1.0, 2.0, 3.0], out.to_a)
     assert_equal(4, counter[0])
@@ -232,7 +232,7 @@ class TestCallStatement < Minitest::Test
   def test_an_addressed_array_is_not_lined_up_by_jit_map
     bump = counter_function
     counter = CArray.int64(1)
-    base = CArray.double(3)
+    base = CArray.float64(3)
     out = CArray.jit_map { base + bump.call(counter) }
     assert_equal([0.0, 1.0, 2.0], out.to_a)
   end
@@ -242,7 +242,7 @@ class TestCallStatement < Minitest::Test
     bump = counter_function
     counter = CScalar.int64
     counter[0] = 10
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_each { out = bump.call(counter) }
     assert_equal([10.0, 11.0, 12.0], out.to_a)
     assert_equal(13, counter[0])
@@ -255,8 +255,8 @@ class TestCallStatement < Minitest::Test
     first = CArray.int64(1)
     second = CArray.int64(1)
     second[0] = 100
-    one = CArray.double(3)
-    two = CArray.double(3)
+    one = CArray.float64(3)
+    two = CArray.float64(3)
     CArray.jit_each { one = bump.call(first); two = bump.call(second) }
     assert_equal([0.0, 1.0, 2.0], one.to_a)
     assert_equal([100.0, 101.0, 102.0], two.to_a)
@@ -266,10 +266,10 @@ class TestCallStatement < Minitest::Test
   def test_jit_for_agrees_with_jit_each
     bump = counter_function
     counter = CArray.int64(1)
-    walked = CArray.double(4)
+    walked = CArray.float64(4)
     CArray.jit_for(4) { |i| walked[i] = bump.call(counter) }
     counter[0] = 0
-    whole = CArray.double(4)
+    whole = CArray.float64(4)
     CArray.jit_each { whole = bump.call(counter) }
     assert_equal(walked.to_a, whole.to_a)
   end

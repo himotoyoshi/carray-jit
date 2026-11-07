@@ -64,14 +64,14 @@ class TestIntrinsics < Minitest::Test
   def test_sum_is_taken_in_index_order
     # A sum that is not sequential gives a different last bit here: the terms
     # were chosen so that adding the small ones first keeps them.
-    a = CArray.double(1, 4)
+    a = CArray.float64(1, 4)
     a[0, 0] = 1.0e16
     a[0, 1] = 1.0
     a[0, 2] = 1.0
     a[0, 3] = -1.0e16
-    out = CArray.double(1)
+    out = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = a[i, k] }
       out[i] = sum(w)
     }
@@ -92,9 +92,9 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_sum_of_one_cell_is_that_cell
-    out = CArray.double(1)
+    out = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      w = CArray.double(1)
+      w = CArray.float64(1)
       w[0] = 7.5
       out[i] = sum(w)
     }
@@ -117,33 +117,33 @@ class TestIntrinsics < Minitest::Test
       # Three cells in every case, written out: a length interpolated from a
       # Ruby variable would be a name the block closed over.
       assert_equal(3, values.size)
-      source = CArray.double(1, 3) { [values] }
-      low = CArray.double(1)
-      high = CArray.double(1)
+      source = CArray.float64(1, 3) { [values] }
+      low = CArray.float64(1)
+      high = CArray.float64(1)
       CArray.jit_for(1) { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         (0...3).each { |k| w[k] = source[i, k] }
         low[i] = min(w)
         high[i] = max(w)
       }
-      reference = CArray.double(3) { values }
+      reference = CArray.float64(3) { values }
       assert_bits_equal(reference.min, low[0], "min")
       assert_bits_equal(reference.max, high[0], "max")
     end
   end
 
   def test_min_and_max_of_all_nan_answer_nan_as_carray_does
-    low = CArray.double(1)
-    high = CArray.double(1)
+    low = CArray.float64(1)
+    high = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       (0...3).each { |k| w[k] = 0.0 / 0.0 }
       low[i] = min(w)
       high[i] = max(w)
     }
     # With no number left to win, there is no minimum to name.  CArray
     # answers NaN here, and used to answer the accumulator it started from.
-    reference = CArray.double(3) { [NAN, NAN, NAN] }
+    reference = CArray.float64(3) { [NAN, NAN, NAN] }
     assert(reference.min.nan?, "carray's own answer")
     assert(reference.max.nan?, "carray's own answer")
     assert(low[0].nan?)
@@ -154,13 +154,13 @@ class TestIntrinsics < Minitest::Test
   # does the fold: a cell takes the accumulator only by beating it.
   def test_of_two_zeros_min_and_max_keep_the_first_as_carray_does
     [[0.0, -0.0], [-0.0, 0.0]].each do |first, second|
-      pair = CArray.double(2)
+      pair = CArray.float64(2)
       pair[0] = first
       pair[1] = second
-      low = CArray.double(1)
-      high = CArray.double(1)
+      low = CArray.float64(1)
+      high = CArray.float64(1)
       CArray.jit_for(1) { |i|
-        w = CArray.double(2)
+        w = CArray.float64(2)
         w[0] = pair[0]
         w[1] = pair[1]
         low[i] = min(w)
@@ -175,10 +175,10 @@ class TestIntrinsics < Minitest::Test
   # A number beats a NaN however many NaNs it is among, which is what keeps
   # the answer above from swallowing an array that holds one.
   def test_a_single_number_among_nan_is_the_answer
-    low = CArray.double(1)
-    high = CArray.double(1)
+    low = CArray.float64(1)
+    high = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = 0.0 / 0.0
       w[1] = 2.0
       w[2] = 0.0 / 0.0
@@ -190,10 +190,10 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_min_and_max_over_a_signed_zero
-    low = CArray.double(1)
-    high = CArray.double(1)
+    low = CArray.float64(1)
+    high = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = 0.0
       w[1] = -0.0
       low[i] = min(w)
@@ -233,10 +233,10 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_min_and_max_of_one_cell
-    low = CArray.double(1)
-    high = CArray.double(1)
+    low = CArray.float64(1)
+    high = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      w = CArray.double(1)
+      w = CArray.float64(1)
       w[0] = -4.5
       low[i] = min(w)
       high[i] = max(w)
@@ -246,11 +246,11 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_a_spread_is_max_minus_min
-    a = CArray.double(3, 5)
+    a = CArray.float64(3, 5)
     a.seq!(2.0, 3.0)
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(5)
+      w = CArray.float64(5)
       (0...5).each { |k| w[k] = a[i, k] }
       out[i] = max(w) - min(w)
     }
@@ -258,7 +258,7 @@ class TestIntrinsics < Minitest::Test
       row = (0...5).map { |k| a[i, k] }
       row.max - row.min
     }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
   end
 
   # ---------- sort ----------
@@ -268,19 +268,19 @@ class TestIntrinsics < Minitest::Test
   LENGTHS.each do |n|
     define_method("test_sort_of_#{n}_cells_matches_carrays_own_sort") do
       values = (0...n).map { |k| ((k * 37 + 11) % 101) * 1.0 }
-      source = CArray.double(1, n) { [values] }
-      out = CArray.double(1, n)
+      source = CArray.float64(1, n) { [values] }
+      out = CArray.float64(1, n)
       types = { :source => "float64", :out => "float64" }
       kernel = compile_kernel(<<~RUBY, arrays: types)
         proc { |i|
-          w = CArray.double(#{n})
+          w = CArray.float64(#{n})
           (0...#{n}).each { |k| w[k] = source[i, k] }
           sort(w)
           (0...#{n}).each { |k| out[i, k] = w[k] }
         }
       RUBY
       kernel.call({ :source => source, :out => out }, {}, [[0, 1, 1]], {})
-      reference = CArray.double(n) { values }.sort
+      reference = CArray.float64(n) { values }.sort
       assert_equal(reference.to_a, (0...n).map { |k| out[0, k] })
     end
   end
@@ -295,15 +295,15 @@ class TestIntrinsics < Minitest::Test
     "all NaN"          => [NAN] * 9 }.each do |label, values|
     slug = label.tr(" ", "_")
     define_method("test_sort_with_#{slug}_matches_carrays_own_sort") do
-      source = CArray.double(1, 9) { [values] }
-      out = CArray.double(1, 9)
+      source = CArray.float64(1, 9) { [values] }
+      out = CArray.float64(1, 9)
       CArray.jit_for(1) { |i|
-        w = CArray.double(9)
+        w = CArray.float64(9)
         (0...9).each { |k| w[k] = source[i, k] }
         sort(w)
         (0...9).each { |k| out[i, k] = w[k] }
       }
-      expected = CArray.double(9) { values }.sort
+      expected = CArray.float64(9) { values }.sort
       9.times do |k|
         if expected[k].nan?
           assert_predicate(out[0, k], :nan?, "cell #{k} should be a NaN")
@@ -316,10 +316,10 @@ class TestIntrinsics < Minitest::Test
 
   def test_sort_puts_every_nan_after_every_number
     values = [NAN, 3.0, NAN, 1.0, 2.0, NAN]
-    source = CArray.double(1, 6) { [values] }
-    out = CArray.double(1, 6)
+    source = CArray.float64(1, 6) { [values] }
+    out = CArray.float64(1, 6)
     CArray.jit_for(1) { |i|
-      w = CArray.double(6)
+      w = CArray.float64(6)
       (0...6).each { |k| w[k] = source[i, k] }
       sort(w)
       (0...6).each { |k| out[i, k] = w[k] }
@@ -336,10 +336,10 @@ class TestIntrinsics < Minitest::Test
   # compared bitwise, and it is the same licence CArray's own sort takes.
   def test_sort_orders_a_signed_zero_by_value
     values = [1.0, 0.0, -0.0, -1.0]
-    source = CArray.double(1, 4) { [values] }
-    out = CArray.double(1, 4)
+    source = CArray.float64(1, 4) { [values] }
+    out = CArray.float64(1, 4)
     CArray.jit_for(1) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = source[i, k] }
       sort(w)
       (0...4).each { |k| out[i, k] = w[k] }
@@ -379,18 +379,18 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_a_median_is_the_middle_of_a_sorted_local_array
-    a = CArray.double(5, 9)
+    a = CArray.float64(5, 9)
     a.seq!(3.0, 7.0)
     a.map! { |value| (value * 13) % 29 }
-    median = CArray.double(5)
+    median = CArray.float64(5)
     CArray.jit_for(5) { |i|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       (0...9).each { |k| w[k] = a[i, k] }
       sort(w)
       median[i] = w[4]
     }
     reference = (0...5).map { |i| (0...9).map { |k| a[i, k] }.sort[4] }
-    assert_arrays_bits_equal(CArray.double(5) { reference }, median)
+    assert_arrays_bits_equal(CArray.float64(5) { reference }, median)
   end
 
   # ---------- what the C says ----------
@@ -398,7 +398,7 @@ class TestIntrinsics < Minitest::Test
   def test_the_network_for_nine_carries_no_branch
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(9)
+        w = CArray.float64(9)
         (0...9).each { |k| w[k] = out[i] + k }
         sort(w)
         out[i] = w[4]
@@ -415,7 +415,7 @@ class TestIntrinsics < Minitest::Test
   def test_a_length_past_the_networks_is_a_loop
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(17)
+        w = CArray.float64(17)
         (0...17).each { |k| w[k] = out[i] + k }
         sort(w)
         out[i] = w[8]
@@ -430,7 +430,7 @@ class TestIntrinsics < Minitest::Test
   def test_the_sort_helpers_borrow_nothing_from_libc_that_loses_a_nan
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(9)
+        w = CArray.float64(9)
         (0...9).each { |k| w[k] = out[i] + k }
         sort(w)
         out[i] = w[0]
@@ -448,7 +448,7 @@ class TestIntrinsics < Minitest::Test
   def test_the_min_and_max_helpers_fold_by_comparison
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(9)
+        w = CArray.float64(9)
         (0...9).each { |k| w[k] = out[i] + k }
         out[i] = min(w) + max(w)
       }
@@ -480,8 +480,8 @@ class TestIntrinsics < Minitest::Test
   def test_one_helper_serves_two_sorts_of_one_type_and_length
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        v = CArray.double(9)
-        w = CArray.double(9)
+        v = CArray.float64(9)
+        w = CArray.float64(9)
         (0...9).each { |k| v[k] = out[i] + k }
         (0...9).each { |k| w[k] = out[i] - k }
         sort(v)
@@ -496,7 +496,7 @@ class TestIntrinsics < Minitest::Test
   def test_two_types_take_two_helpers
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        v = CArray.double(9)
+        v = CArray.float64(9)
         w = CArray.new(:int32, [9])
         (0...9).each { |k| v[k] = out[i] + k }
         (0...9).each { |k| w[k] = k }
@@ -534,7 +534,7 @@ class TestIntrinsics < Minitest::Test
   def test_an_expression_is_refused
     refuse(<<~RUBY, /takes a local array/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = sum(w[0] + 1.0)
       }
     RUBY
@@ -553,7 +553,7 @@ class TestIntrinsics < Minitest::Test
     pattern = /`sum` is a method CArray answers outside a kernel/
     refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = w.sum
       }
     RUBY
@@ -562,7 +562,7 @@ class TestIntrinsics < Minitest::Test
   def test_sum_standing_as_a_statement_is_refused
     refuse(<<~RUBY, /puts that value nowhere/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         sum(w)
         out[i] = w[0]
       }
@@ -573,7 +573,7 @@ class TestIntrinsics < Minitest::Test
     pattern = /`sort` rearranges the array and has no value/
     refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = sort(w)
       }
     RUBY
@@ -619,7 +619,7 @@ class TestIntrinsics < Minitest::Test
   def test_an_array_out_of_sight_is_refused
     refuse(<<~RUBY, /belongs to the loop block/, arrays: { :out => "float64" })
       proc { |i|
-        (0...2).each { |k| w = CArray.double(4); w[0] = 1.0 }
+        (0...2).each { |k| w = CArray.float64(4); w[0] = 1.0 }
         out[i] = sum(w)
       }
     RUBY
@@ -642,10 +642,10 @@ class TestIntrinsics < Minitest::Test
   # the ensemble median lose their sort loop entirely.
 
   def test_a_spread_is_max_minus_min_over_a_window
-    field = CArray.double(7, 7).seq!
+    field = CArray.float64(7, 7).seq!
     field.map! { |value| (value * 13) % 29 }
     out = CArray.jit_stencil(field, border: :clamp) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -664,10 +664,10 @@ class TestIntrinsics < Minitest::Test
   # kernel: the frame is marked before the loop runs and the loop never
   # reaches it, so what the kernel carries is what the operands carry.
   def test_the_spread_may_be_written_with_a_frame_border
-    field = CArray.double(7, 7).seq!
+    field = CArray.float64(7, 7).seq!
     field.map! { |value| (value * 13) % 29 }
     out = CArray.jit_stencil(field, border: :mask) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -684,41 +684,41 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_sum_in_a_jit_each_block
-    a = CArray.double(6).seq!(1.0)
-    b = CArray.double(6).seq!(2.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    b = CArray.float64(6).seq!(2.0)
+    out = CArray.float64(6)
     CArray.jit_each {
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a
       w[1] = b
       w[2] = a * b
       out = sum(w)
     }
     reference = (0...6).map { |k| a[k] + b[k] + a[k] * b[k] }
-    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(6) { reference }, out)
   end
 
   def test_sort_in_a_jit_map_block
-    m1 = CArray.double(8).seq!(3.0, 7.0).map! { |v| v % 29 }
-    m2 = CArray.double(8).seq!(11.0, 5.0).map! { |v| v % 29 }
-    m3 = CArray.double(8).seq!(2.0, 13.0).map! { |v| v % 29 }
+    m1 = CArray.float64(8).seq!(3.0, 7.0).map! { |v| v % 29 }
+    m2 = CArray.float64(8).seq!(11.0, 5.0).map! { |v| v % 29 }
+    m3 = CArray.float64(8).seq!(2.0, 13.0).map! { |v| v % 29 }
     out = CArray.jit_map {
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = m1; w[1] = m2; w[2] = m3
       sort(w)
       w[1]
     }
     reference = (0...8).map { |k| [m1[k], m2[k], m3[k]].sort[1] }
-    assert_arrays_bits_equal(CArray.double(8) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(8) { reference }, out)
   end
 
   def test_min_and_max_in_a_jit_each_block
-    a = CArray.double(6).seq!(1.0)
-    b = CArray.double(6).seq!(9.0, -2.0)
-    low = CArray.double(6)
-    high = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    b = CArray.float64(6).seq!(9.0, -2.0)
+    low = CArray.float64(6)
+    high = CArray.float64(6)
     CArray.jit_each {
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = a
       w[1] = b
       low = min(w)
@@ -734,21 +734,21 @@ class TestIntrinsics < Minitest::Test
   # what the four should do with a missing cell is not decided, so they are
   # refused over an array that carries one.
   def test_an_intrinsic_over_a_masked_kernel_is_refused
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(6)
+    out = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a; out = sum(w) }
+      CArray.jit_each { w = CArray.float64(2); w[0] = a; w[1] = a; out = sum(w) }
     end
     assert_match(/`sum`/, error.message)
     assert_match(/carries masks/, error.message)
   end
 
   def test_the_median_filter_loses_its_sort_loop
-    image = CArray.double(7, 7).seq!
+    image = CArray.float64(7, 7).seq!
     image.map! { |value| (value * 13) % 29 }
     with_sort = CArray.jit_stencil(image, border: :clamp) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -756,7 +756,7 @@ class TestIntrinsics < Minitest::Test
       w[4]
     }
     written_out = CArray.jit_stencil(image, border: :clamp) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -778,7 +778,7 @@ class TestIntrinsics < Minitest::Test
 
   MED3 = CArray.jit_function(
     "double med3(double a, double b, double c)") { |a, b, c|
-    w = CArray.double(3)
+    w = CArray.float64(3)
     w[0] = a; w[1] = b; w[2] = c
     sort(w)
     w[1]
@@ -791,33 +791,33 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_sort_in_a_function_body_called_from_a_kernel
-    third = CArray.double(6).seq!(1.0, 3.0)
-    out = CArray.double(6)
+    third = CArray.float64(6).seq!(1.0, 3.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i| out[i] = MED3.call(3.0, 1.0, third[i]) }
     reference = (0...6).map { |i| [3.0, 1.0, third[i]].sort[1] }
-    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(6) { reference }, out)
   end
 
   def test_sum_in_a_function_body
     totals = CArray.jit_function("double tot(double s)") { |s|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = s + k }
       sum(w)
     }
     assert_equal(10.0, totals.call(1.0), "1 + 2 + 3 + 4")
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i| out[i] = totals.call(i * 1.0) }
     assert_equal([6.0, 10.0, 14.0], out.to_a)
   end
 
   def test_min_and_max_in_a_function_body
     spread = CArray.jit_function("double spread(double a, double b, double c)") { |a, b, c|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a; w[1] = b; w[2] = c
       max(w) - min(w)
     }
     assert_equal(8.0, spread.call(1.0, 9.0, 4.0))
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i| out[i] = spread.call(1.0, 9.0, i * 1.0) }
     assert_equal([9.0, 8.0], out.to_a)
   end
@@ -829,7 +829,7 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_a_pasted_body_brings_its_helper_into_the_kernels_preamble
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray::JIT.clear_registry
     before = CArray::JIT.registry.keys
     CArray.jit_for(2) { |i| out[i] = MED3.call(3.0, 1.0, i * 1.0) }
@@ -842,11 +842,11 @@ class TestIntrinsics < Minitest::Test
   end
 
   def test_a_body_and_its_kernel_sorting_two_lengths_take_two_helpers
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray::JIT.clear_registry
     before = CArray::JIT.registry.keys
     CArray.jit_for(2) { |i|
-      v = CArray.double(5)
+      v = CArray.float64(5)
       (0...5).each { |m| v[m] = (5 - m) * 1.0 }
       sort(v)
       out[i] = v[0] + MED3.call(3.0, 1.0, i * 1.0)
@@ -865,12 +865,12 @@ class TestIntrinsics < Minitest::Test
   def test_two_pasted_bodies_sorting_alike_take_one_helper
     other = CArray.jit_function(
       "double med3b(double a, double b, double c)") { |a, b, c|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a * 2.0; w[1] = b; w[2] = c
       sort(w)
       w[1]
     }
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray::JIT.clear_registry
     before = CArray::JIT.registry.keys
     CArray.jit_for(2) { |i|
@@ -903,7 +903,7 @@ class TestIntrinsics < Minitest::Test
       .each do |name, line|
       error = refuse(<<~RUBY, /`m` has 2 axes/, arrays: { :out => "float64" })
         proc { |i|
-          m = CArray.double(3, 4)
+          m = CArray.float64(3, 4)
           #{line}
         }
       RUBY
@@ -917,7 +917,7 @@ class TestIntrinsics < Minitest::Test
     # rather than for its rank.
     error = refuse(<<~RUBY, /`m\[0\]` is not one/, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         out[i] = sum(m[0])
       }
     RUBY
@@ -927,9 +927,9 @@ class TestIntrinsics < Minitest::Test
   # ---------- the names are the compiler's, not the block's ----------
 
   def test_a_local_may_be_called_sum_beside_a_call_to_sum
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       (0...3).each { |k| w[k] = k * 1.0 }
       sum = sum(w)
       out[i] = sum
@@ -939,9 +939,9 @@ class TestIntrinsics < Minitest::Test
 
   def test_a_captured_function_called_sum_does_not_collide
     f = CArray.jit_function("double sum(double x)") { |x| x * 2.0 }
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       (0...3).each { |k| w[k] = k * 1.0 }
       out[i] = f.call(sum(w))
     }

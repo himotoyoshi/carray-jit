@@ -135,7 +135,7 @@ class TestCacheManagement < Minitest::Test
   def test_kernel_still_runs_after_the_cache_is_cleared
     kernel = compile_indexed(1)
     CArray::JIT.clear_cache
-    array = CArray.double(4)
+    array = CArray.float64(4)
     array[0] = 2.0
     kernel.call({ :a => array }, {}, [[1, 4, 1]])
     assert_equal(2.0 * 1.5 * 1.5 * 1.5, array[3])
@@ -200,7 +200,7 @@ class TestCacheManagement < Minitest::Test
     assert_operator(File.size(planted), :>, "not a shared object".bytesize,
                     "the corrupt entry should have been replaced")
 
-    array = CArray.double(3)
+    array = CArray.float64(3)
     array[0] = 1.0
     rebuilt.call({ :a => array }, {}, [[1, 3, 1]])
     assert_equal(121.0, array[2])

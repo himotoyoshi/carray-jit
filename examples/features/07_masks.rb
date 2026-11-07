@@ -9,12 +9,12 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 n = 7
-source = CArray.double(n).seq!(1.0)
+source = CArray.float64(n).seq!(1.0)
 source[2] = UNDEF
 
 # Filling the holes.  This is an ordinary Ruby loop as well, so it can be
 # checked against one.
-filled = CArray.double(n)
+filled = CArray.float64(n)
 CArray.jit_for(n) { |i|
   if source[i] == UNDEF
     filled[i] = 0.0
@@ -36,14 +36,14 @@ puts "  cells missing     #{filled.count_masked} (a mask exists, but it is empty
 # any cell that fed a result masks that result, following the offsets, so each
 # output takes its mask from its own inputs rather than from everything the
 # body read.
-neighbours = CArray.double(n)
+neighbours = CArray.float64(n)
 CArray.jit_for(1...(n-1)) { |i| neighbours[i] = source[i-1] + source[i+1] }
 puts "  propagated        #{neighbours.to_a.inspect}"
 puts "  masked where      #{(0...n).select { |i| neighbours[i] == UNDEF }.inspect} (the cells reading source[2])"
 
 # Writing UNDEF marks a cell missing.  Mentioning UNDEF at all makes the kernel
 # a masked one, whatever its arrays happen to carry.
-clipped = CArray.double(n).seq!(1.0)
+clipped = CArray.float64(n).seq!(1.0)
 CArray.jit_for(n) { |i|
   if clipped[i] > 4.0
     clipped[i] = UNDEF

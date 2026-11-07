@@ -10,9 +10,9 @@ require_relative "test_helper"
 class TestBranches < Minitest::Test
 
   def test_replacing_missing_values_matches_the_ruby_loop
-    source = CArray.double(5).seq!
+    source = CArray.float64(5).seq!
     source[2] = UNDEF
-    result = CArray.double(5)
+    result = CArray.float64(5)
     CArray.jit_for(5) { |i|
       if source[i] == UNDEF
         result[i] = 0.0
@@ -21,7 +21,7 @@ class TestBranches < Minitest::Test
       end
     }
 
-    expected = CArray.double(5)
+    expected = CArray.float64(5)
     (0...5).each { |i|
       expected[i] = (source[i] == UNDEF) ? 0.0 : Math.sqrt(source[i]) }
     assert_equal(expected.to_a, result.to_a)
@@ -29,8 +29,8 @@ class TestBranches < Minitest::Test
   end
 
   def test_marking_a_cell_missing
-    values = CArray.double(6).seq!(-2)
-    result = CArray.double(6)
+    values = CArray.float64(6).seq!(-2)
+    result = CArray.float64(6)
     CArray.jit_for(6) { |i|
       if values[i] < 0.0
         result[i] = UNDEF
@@ -39,7 +39,7 @@ class TestBranches < Minitest::Test
       end
     }
 
-    expected = CArray.double(6)
+    expected = CArray.float64(6)
     (0...6).each { |i|
       values[i] < 0.0 ? (expected[i] = UNDEF) : (expected[i] = Math.sqrt(values[i])) }
     assert_equal(expected.to_a, result.to_a)
@@ -48,14 +48,14 @@ class TestBranches < Minitest::Test
   # A branch not taken writes nothing, so the cell keeps what it had -- the
   # same as the modifier `if` would do in Ruby.
   def test_a_branch_without_an_else
-    values = CArray.double(5).seq!
-    result = CArray.double(5).seq!(100)
+    values = CArray.float64(5).seq!
+    result = CArray.float64(5).seq!(100)
     CArray.jit_for(5) { |i| result[i] = UNDEF if values[i] > 2.0 }
     assert_equal([100.0, 101.0, 102.0, UNDEF, UNDEF], result.to_a)
   end
 
   def test_negated_mask_test
-    values = CArray.double(5).seq!
+    values = CArray.float64(5).seq!
     values[1] = UNDEF
     present = CArray.int64(5)
     CArray.jit_for(5) { |i|
@@ -69,8 +69,8 @@ class TestBranches < Minitest::Test
   end
 
   def test_elsif
-    values = CArray.double(5).seq!(-2)
-    result = CArray.double(5)
+    values = CArray.float64(5).seq!(-2)
+    result = CArray.float64(5)
     CArray.jit_for(5) { |i|
       if values[i] < 0.0
         result[i] = -1.0
@@ -86,10 +86,10 @@ class TestBranches < Minitest::Test
   # Asking about the mask is not reading the value, so it does not carry the
   # mask into what the branch writes.  Reading the value does.
   def test_a_mask_test_does_not_propagate_but_a_value_test_does
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     values[1] = UNDEF
 
-    filled = CArray.double(4)
+    filled = CArray.float64(4)
     CArray.jit_for(4) { |i|
       if values[i] == UNDEF
         filled[i] = -1.0
@@ -99,14 +99,14 @@ class TestBranches < Minitest::Test
     }
     refute(filled.is_masked.to_a.any?, "a mask test carries no mask")
 
-    guarded = CArray.double(4)
+    guarded = CArray.float64(4)
     CArray.jit_for(4) { |i| guarded[i] = 1.0 if values[i] > 0.0 }
     assert(guarded.is_masked[1], "a branch decided on garbage is masked")
   end
 
   def test_a_statement_if_works_without_any_mask
-    values = CArray.double(5).seq!(-2)
-    result = CArray.double(5)
+    values = CArray.float64(5).seq!(-2)
+    result = CArray.float64(5)
     CArray.jit_for(5) { |i|
       if values[i] < 0.0
         result[i] = 0.0
@@ -119,9 +119,9 @@ class TestBranches < Minitest::Test
   end
 
   def test_branches_in_the_whole_array_form
-    source = CArray.double(5).seq!
+    source = CArray.float64(5).seq!
     source[3] = UNDEF
-    result = CArray.double(5)
+    result = CArray.float64(5)
     CArray.jit_each {
       if source[] == UNDEF
         result = -1.0
@@ -133,7 +133,7 @@ class TestBranches < Minitest::Test
   end
 
   def test_undef_elsewhere_is_refused
-    values = CArray.double(3)
+    values = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| values[i] = values[i] + UNDEF }
     end
@@ -141,7 +141,7 @@ class TestBranches < Minitest::Test
   end
 
   def test_comparing_something_other_than_a_cell_with_undef
-    values = CArray.double(3)
+    values = CArray.float64(3)
     weight = 1.0
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| values[i] = 1.0 if weight == UNDEF }
@@ -151,8 +151,8 @@ class TestBranches < Minitest::Test
 
   # Mentioning UNDEF makes it a masked kernel whatever the arrays carry.
   def test_undef_forces_a_masked_kernel
-    values = CArray.double(4).seq!
-    result = CArray.double(4)
+    values = CArray.float64(4).seq!
+    result = CArray.float64(4)
     kernel = CArray.jit_for(4) { |i| result[i] = UNDEF if values[i] > 2.0 }
     assert(kernel.masked)
     assert(result.has_mask?)
@@ -167,7 +167,7 @@ class TestBranches < Minitest::Test
   # loop it replaces, so both are checked against that loop.
 
   def test_break_leaves_an_inner_loop
-    source = CArray.double(3, 6) { |i, j| (j - i - 1).to_f }
+    source = CArray.float64(3, 6) { |i, j| (j - i - 1).to_f }
     first = CArray.int32(3)
     CArray.jit_for(3) { |i|
       found = -1
@@ -184,8 +184,8 @@ class TestBranches < Minitest::Test
   end
 
   def test_next_skips_the_rest_of_an_inner_iteration
-    grid = CArray.double(3, 5) { |i, j| (i + j).even? ? (i + j).to_f : -1.0 }
-    total = CArray.double(3)
+    grid = CArray.float64(3, 5) { |i, j| (i + j).even? ? (i + j).to_f : -1.0 }
+    total = CArray.float64(3)
     CArray.jit_for(3) { |i|
       accumulator = 0.0
       (0...5).each { |j|
@@ -202,8 +202,8 @@ class TestBranches < Minitest::Test
   # In the kernel block `next` skips the cell, which is what it does in the
   # interpreted loop too: the block returns and the loop moves on.
   def test_next_skips_the_cell
-    source = CArray.double(6).seq!(1.0)
-    result = CArray.double(6).seq!(100.0)
+    source = CArray.float64(6).seq!(1.0)
+    result = CArray.float64(6).seq!(100.0)
     CArray.jit_for(6) { |i|
       next if source[i] > 4.0
       result[i] = source[i] * 10.0
@@ -212,9 +212,9 @@ class TestBranches < Minitest::Test
   end
 
   def test_a_skipped_cell_keeps_its_value_and_its_mask
-    source = CArray.double(6).seq!(1.0)
+    source = CArray.float64(6).seq!(1.0)
     source[2] = UNDEF
-    result = CArray.double(6).seq!(100.0)
+    result = CArray.float64(6).seq!(100.0)
     CArray.jit_for(6) { |i|
       next if source[i] == UNDEF
       result[i] = source[i] * 2.0
@@ -225,9 +225,9 @@ class TestBranches < Minitest::Test
 
   # What was read before the break still counts, mask and all.
   def test_a_value_read_before_a_break_carries_its_mask
-    grid = CArray.double(2, 4).seq!(1.0)
+    grid = CArray.float64(2, 4).seq!(1.0)
     grid[0, 2] = UNDEF
-    total = CArray.double(2)
+    total = CArray.float64(2)
     CArray.jit_for(2) { |i|
       accumulator = 0.0
       (0...4).each { |j|
@@ -245,7 +245,7 @@ class TestBranches < Minitest::Test
   # Ruby's `break` in a block is not a loop exit but a return from the method
   # it was passed to, with a value -- which this cannot produce.
   def test_break_in_the_kernel_block_is_refused
-    values = CArray.double(6).seq!
+    values = CArray.float64(6).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(6) { |i| break if values[i] > 2.0 }
     end
@@ -254,7 +254,7 @@ class TestBranches < Minitest::Test
   end
 
   def test_a_loop_jump_carrying_a_value_is_refused
-    values = CArray.double(6).seq!
+    values = CArray.float64(6).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(6) { |i| (0...3).each { |j| values[i] = 1.0; break 1 } }
     end
@@ -270,8 +270,8 @@ class TestBranches < Minitest::Test
   # the extent -- so the kernel still cannot fail to stop, and a cell that did
   # not converge can be told apart from one that did.
   def test_an_iteration_that_stops_on_a_condition
-    values = CArray.double(6) { |i| 1.0 + i * 7.0 }
-    root = CArray.double(6)
+    values = CArray.float64(6) { |i| 1.0 + i * 7.0 }
+    root = CArray.float64(6)
     passes = CArray.int32(6)
     cap = 50
     tolerance = 1.0e-14

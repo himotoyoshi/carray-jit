@@ -7,7 +7,7 @@ class TestJitFor < Minitest::Test
   def test_legendre_recurrence
     x = 0.5
     n = 24
-    values = CArray.double(n)
+    values = CArray.float64(n)
     values[0] = 1.0
     values[1] = x
     CArray.jit_for(2...n) { |i|
@@ -35,7 +35,7 @@ class TestJitFor < Minitest::Test
   def test_float32_computes_in_float32
     x = 0.5
     n = 24
-    values = CArray.float(n)
+    values = CArray.float32(n)
     values[0] = 1.0
     values[1] = x
     CArray.jit_for(2...n) { |i|
@@ -45,7 +45,7 @@ class TestJitFor < Minitest::Test
     }
 
     narrow = ->(value) { [value].pack("f").unpack1("f") }
-    expected = CArray.float(n)
+    expected = CArray.float32(n)
     expected[0] = 1.0
     expected[1] = x
     (2...n).each { |i|
@@ -63,7 +63,7 @@ class TestJitFor < Minitest::Test
   # offset typo would otherwise flip the loop silently.
   def test_a_downward_loop
     n = 16
-    values = CArray.double(n)
+    values = CArray.float64(n)
     values[n-1] = 3.0
     CArray.jit_for((n-2).step(0, -1)) { |i| values[i] = 0.5 * values[i+1] + 1.0 }
 
@@ -75,14 +75,14 @@ class TestJitFor < Minitest::Test
 
   def test_two_dimensional_stencil
     rows, columns = 6, 7
-    source = CArray.double(rows, columns).seq!
-    result = CArray.double(rows, columns)
+    source = CArray.float64(rows, columns).seq!
+    result = CArray.float64(rows, columns)
     CArray.jit_for(1...(rows-1), 1...(columns-1)) { |i, j|
       result[i, j] = 0.25 * (source[i-1, j] + source[i+1, j] +
                              source[i, j-1] + source[i, j+1])
     }
 
-    expected = CArray.double(rows, columns)
+    expected = CArray.float64(rows, columns)
     (1...(rows-1)).each do |i|
       (1...(columns-1)).each do |j|
         expected[i, j] = 0.25 * (source[i-1, j] + source[i+1, j] +
@@ -97,14 +97,14 @@ class TestJitFor < Minitest::Test
   # independently: j ascending because of j-1, i in any order.
   def test_dependency_on_one_axis_only
     rows, columns = 4, 6
-    values = CArray.double(rows, columns)
-    increments = CArray.double(rows, columns).seq!
+    values = CArray.float64(rows, columns)
+    increments = CArray.float64(rows, columns).seq!
     rows.times { |i| values[i, 0] = 1.0 }
     CArray.jit_for(0...rows, 1...columns) { |i, j|
       values[i, j] = values[i, j-1] + increments[i, j]
     }
 
-    expected = CArray.double(rows, columns)
+    expected = CArray.float64(rows, columns)
     rows.times do |i|
       expected[i, 0] = 1.0
       (1...columns).each { |j| expected[i, j] = expected[i, j-1] + increments[i, j] }
@@ -114,7 +114,7 @@ class TestJitFor < Minitest::Test
 
   # An extent may be a plain count, so a whole array is jit_for(*array.dim).
   def test_extent_may_be_a_count
-    values = CArray.double(3, 4)
+    values = CArray.float64(3, 4)
     CArray.jit_for(*values.dim) { |i, j| values[i, j] = 1.0 * i * 10 + j }
     assert_equal([[0.0, 1.0, 2.0, 3.0],
                   [10.0, 11.0, 12.0, 13.0],
@@ -122,19 +122,19 @@ class TestJitFor < Minitest::Test
   end
 
   def test_inclusive_range
-    values = CArray.double(5)
+    values = CArray.float64(5)
     CArray.jit_for(1..3) { |i| values[i] = 2.0 }
     assert_equal([0.0, 2.0, 2.0, 2.0, 0.0], values.to_a)
   end
 
   def test_empty_range_does_nothing
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     CArray.jit_for(2...2) { |i| values[i] = -1.0 }
     assert_equal([0.0, 1.0, 2.0, 3.0], values.to_a)
   end
 
   def test_math_function
-    values = CArray.double(10)
+    values = CArray.float64(10)
     values[0] = 4.0
     CArray.jit_for(1...10) { |i| values[i] = Math.sqrt(values[i-1]) + 1.0 }
 
@@ -148,9 +148,9 @@ class TestJitFor < Minitest::Test
   # -- so the two agree to the bit, infinities included.
   def test_the_error_function
     inputs = [0.0, 0.5, -3.0, 1e-8, 30.0, Float::INFINITY, -Float::INFINITY]
-    values = CArray.double(inputs.size) { |i| inputs[i] }
-    integral = CArray.double(inputs.size)
-    complement = CArray.double(inputs.size)
+    values = CArray.float64(inputs.size) { |i| inputs[i] }
+    integral = CArray.float64(inputs.size)
+    complement = CArray.float64(inputs.size)
 
     CArray.jit_for(inputs.size) { |i|
       integral[i] = Math.erf(values[i])
@@ -177,8 +177,8 @@ class TestJitFor < Minitest::Test
   # The names Ruby's Math has that this does not lower say why, and the
   # reason is never that C has no such function -- it has all four.
   def test_the_math_names_that_are_not_lowered
-    values = CArray.double(2)
-    out = CArray.double(2)
+    values = CArray.float64(2)
+    out = CArray.float64(2)
     [[proc { CArray.jit_for(2) { |i| out[i] = Math.lgamma(values[i]) } },
       /answer is a pair -- the value and the sign/],
      [proc { CArray.jit_for(2) { |i| out[i] = Math.frexp(values[i]) } },
@@ -199,15 +199,15 @@ class TestJitFor < Minitest::Test
   def test_the_gamma_function
     inputs = (1..26).map(&:to_f) +
              [0.5, 1.5, -0.5, -2.5, 171.5, 172.0, 0.0, -0.0, Float::INFINITY]
-    values = CArray.double(inputs.size) { |i| inputs[i] }
-    out = CArray.double(inputs.size)
+    values = CArray.float64(inputs.size) { |i| inputs[i] }
+    out = CArray.float64(inputs.size)
     CArray.jit_for(inputs.size) { |i| out[i] = Math.gamma(values[i]) }
     inputs.each_with_index do |x, i|
       assert_bits_equal(Math.gamma(x), out[i], "gamma of #{x}")
     end
 
-    nan = CArray.double(1) { Float::NAN }
-    one = CArray.double(1)
+    nan = CArray.float64(1) { Float::NAN }
+    one = CArray.float64(1)
     CArray.jit_for(1) { |i| one[i] = Math.gamma(nan[i]) }
     assert_predicate(one[0], :nan?)
   end
@@ -216,8 +216,8 @@ class TestJitFor < Minitest::Test
   # Ruby's class and Ruby's words.
   def test_gamma_outside_its_domain
     [-1.0, -3.0, -Float::INFINITY].each do |x|
-      values = CArray.double(1) { x }
-      out = CArray.double(1)
+      values = CArray.float64(1) { x }
+      out = CArray.float64(1)
       error = assert_raises(Math::DomainError) do
         CArray.jit_for(1) { |i| out[i] = Math.gamma(values[i]) }
       end
@@ -229,15 +229,15 @@ class TestJitFor < Minitest::Test
   # A cell with no value in it does not raise, the rule every reported
   # failure keeps.
   def test_gamma_under_a_mask
-    values = CArray.double(1) { -1.0 }
+    values = CArray.float64(1) { -1.0 }
     values[0] = UNDEF
-    out = CArray.double(1)
+    out = CArray.float64(1)
     CArray.jit_for(1) { |i| out[i] = Math.gamma(values[i]) }
     assert_equal(UNDEF, out[0])
   end
 
   def test_conditional_expression
-    values = CArray.double(12)
+    values = CArray.float64(12)
     values[0] = 10.0
     CArray.jit_for(1...12) { |i|
       values[i] = if values[i-1] > 1.0
@@ -255,7 +255,7 @@ class TestJitFor < Minitest::Test
   end
 
   def test_reading_the_cell_being_written
-    values = CArray.double(5).seq!
+    values = CArray.float64(5).seq!
     CArray.jit_for(0...5) { |i| values[i] = values[i] * 2.0 + 1.0 }
     assert_equal([1.0, 3.0, 5.0, 7.0, 9.0], values.to_a)
   end
@@ -265,10 +265,10 @@ class TestJitFor < Minitest::Test
   # kernel serve several ranks, which is sound for element-wise work because
   # the index there is only "which cell".
   def test_one_kernel_serves_any_rank_after_reshape
-    two = CArray.double(3, 4).seq!
-    three = CArray.double(2, 3, 4).seq!
-    out_two = CArray.double(3, 4)
-    out_three = CArray.double(2, 3, 4)
+    two = CArray.float64(3, 4).seq!
+    three = CArray.float64(2, 3, 4).seq!
+    out_two = CArray.float64(3, 4)
+    out_three = CArray.float64(2, 3, 4)
 
     flat_source = two.reshape(two.elements)
     flat_result = out_two.reshape(out_two.elements)
@@ -288,8 +288,8 @@ class TestJitFor < Minitest::Test
   end
 
   def test_element_wise_work_at_rank_two
-    source = CArray.double(4, 5).seq!
-    result = CArray.double(4, 5)
+    source = CArray.float64(4, 5).seq!
+    result = CArray.float64(4, 5)
     CArray.jit_for(*source.dim) { |i, j| result[i, j] = Math.sqrt(source[i, j]) }
     4.times { |i| 5.times { |j|
       assert_bits_equal(Math.sqrt(source[i, j]), result[i, j], "cell #{i},#{j}") } }
@@ -297,7 +297,7 @@ class TestJitFor < Minitest::Test
 
   def test_captured_integer_scalar
     step = 3
-    values = CArray.double(6)
+    values = CArray.float64(6)
     values[0] = 1.0
     CArray.jit_for(1...6) { |i| values[i] = values[i-1] * step }
     assert_equal([1.0, 3.0, 9.0, 27.0, 81.0, 243.0], values.to_a)
@@ -305,7 +305,7 @@ class TestJitFor < Minitest::Test
 
   def test_capture_values_are_reread_each_call
     weight = 2.0
-    values = CArray.double(4)
+    values = CArray.float64(4)
     kernel = proc { |i| values[i] = values[i-1] * weight }
     values[0] = 1.0
     CArray.jit_for(1...4, &kernel)

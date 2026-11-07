@@ -11,19 +11,19 @@ require_relative "test_helper"
 class TestMasks < Minitest::Test
 
   def test_element_wise_matches_the_carray_operator
-    source = CArray.double(6).seq!
+    source = CArray.float64(6).seq!
     source[2] = UNDEF
-    result = CArray.double(6)
+    result = CArray.float64(6)
     CArray.jit_for(6) { |i| result[i] = source[i] * 2.0 }
     assert_equal((source * 2.0).to_a, result.to_a)
   end
 
   def test_any_masked_input_masks_the_output
-    left = CArray.double(5).seq!
-    right = CArray.double(5).seq!(10)
+    left = CArray.float64(5).seq!
+    right = CArray.float64(5).seq!(10)
     left[1] = UNDEF
     right[3] = UNDEF
-    result = CArray.double(5)
+    result = CArray.float64(5)
     CArray.jit_for(5) { |i| result[i] = left[i] + right[i] }
     assert_equal((left + right).to_a, result.to_a)
     assert_equal([false, true, false, true, false], result.is_masked.to_a)
@@ -32,9 +32,9 @@ class TestMasks < Minitest::Test
   # Masking follows the offsets, because the mask of a cell is the mask of the
   # cells that fed it.
   def test_a_masked_cell_masks_its_readers
-    values = CArray.double(7).seq!
+    values = CArray.float64(7).seq!
     values[3] = UNDEF
-    result = CArray.double(7)
+    result = CArray.float64(7)
     CArray.jit_for(1...6) { |i| result[i] = values[i-1] + values[i+1] }
     assert_equal([false, false, true, false, true, false, false],
                  result.is_masked.to_a)
@@ -43,12 +43,12 @@ class TestMasks < Minitest::Test
   # Two outputs in one kernel take their masks from their own inputs, not from
   # the body's.
   def test_each_output_is_masked_by_its_own_inputs
-    left = CArray.double(4).seq!
-    right = CArray.double(4).seq!(10)
+    left = CArray.float64(4).seq!
+    right = CArray.float64(4).seq!(10)
     left[1] = UNDEF
     right[2] = UNDEF
-    first = CArray.double(4)
-    second = CArray.double(4)
+    first = CArray.float64(4)
+    second = CArray.float64(4)
     CArray.jit_for(4) { |i|
       first[i] = left[i] * 2.0
       second[i] = right[i] * 2.0
@@ -58,7 +58,7 @@ class TestMasks < Minitest::Test
   end
 
   def test_a_write_with_no_reads_clears_the_mask
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     values[1] = UNDEF
     CArray.jit_for(4) { |i| values[i] = 7.0 }
     assert_equal([7.0] * 4, values.to_a)
@@ -66,7 +66,7 @@ class TestMasks < Minitest::Test
   end
 
   def test_the_mask_propagates_through_a_recurrence
-    values = CArray.double(6)
+    values = CArray.float64(6)
     values[0] = 1.0
     values[1] = UNDEF
     CArray.jit_for(2...6) { |i| values[i] = values[i-1] * 2.0 }
@@ -76,8 +76,8 @@ class TestMasks < Minitest::Test
   # A plain CArray has no mask at all; one is created only once a cell is
   # marked.  A kernel over unmasked arrays must not bring one into being.
   def test_unmasked_arrays_stay_unmasked
-    source = CArray.double(4).seq!
-    result = CArray.double(4)
+    source = CArray.float64(4).seq!
+    result = CArray.float64(4)
     CArray.jit_for(4) { |i| result[i] = source[i] * 3.0 }
     refute(source.has_mask?)
     refute(result.has_mask?)
@@ -86,19 +86,19 @@ class TestMasks < Minitest::Test
   # An array with a mask propagates the mask's existence even when nothing is
   # actually masked, which is what CArray's own operators do.
   def test_an_all_present_mask_still_propagates
-    source = CArray.double(4).seq!
+    source = CArray.float64(4).seq!
     source.mask = 0
-    result = CArray.double(4)
+    result = CArray.float64(4)
     CArray.jit_for(4) { |i| result[i] = source[i] }
     assert(result.has_mask?)
     refute(result.is_masked.to_a.any?)
   end
 
   def test_masks_work_through_a_strided_view
-    matrix = CArray.double(6, 3).seq!
+    matrix = CArray.float64(6, 3).seq!
     column = matrix[nil, 1]
     column[2] = UNDEF
-    result = CArray.double(6)
+    result = CArray.float64(6)
     CArray.jit_for(6) { |i| result[i] = column[i] * 2.0 }
     assert_equal((column * 2.0).to_a, result.to_a)
     assert_equal([false, false, true, false, false, false], result.is_masked.to_a)
@@ -135,7 +135,7 @@ class TestMasks < Minitest::Test
   # but one of its mask cells covers a fraction of a parent cell, so writing
   # one marks its neighbour.  A per-cell kernel cannot express that.
   def test_a_size_changing_refer_with_a_mask_is_refused
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     values.mask = 0
     reinterpreted = values.refer(CA_INT32, [8])
     error = assert_raises(ArgumentError) do
@@ -145,8 +145,8 @@ class TestMasks < Minitest::Test
   end
 
   def test_the_same_kernel_compiles_separately_with_and_without_masks
-    plain = CArray.double(4).seq!
-    plain_out = CArray.double(4)
+    plain = CArray.float64(4).seq!
+    plain_out = CArray.float64(4)
     first = CArray.jit_for(4) { |i| plain_out[i] = plain[i] * 5.0 }
     refute(first.masked)
 
@@ -160,7 +160,7 @@ class TestMasks < Minitest::Test
   # about and marked by the same name -- not by `a[i]`, which is the other
   # spelling's way of saying the same thing.
   def test_an_element_kernel_asks_about_the_mask
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     values[1] = UNDEF
     assert_equal([0.0, -1.0, 20.0, 30.0],
                  CArray.jit_map { values == UNDEF ? -1.0 : values * 10 }.to_a)
@@ -171,8 +171,8 @@ class TestMasks < Minitest::Test
   end
 
   def test_an_element_kernel_marks_a_cell_missing
-    values = CArray.double(4).seq!
-    result = CArray.double(4)
+    values = CArray.float64(4).seq!
+    result = CArray.float64(4)
     CArray.jit_each { if values < 2 then result = values * 10 else result = UNDEF end }
     assert_equal([0.0, 10.0], result[0..1].to_a)
     assert_equal(2, result.count_masked)
@@ -181,7 +181,7 @@ class TestMasks < Minitest::Test
   # Only a cell can be asked, and in this spelling a name that is not an
   # array is not one.
   def test_asking_a_scalar_about_the_mask_is_refused
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     limit = 2.0
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_map { limit == UNDEF ? 0.0 : values }
@@ -195,10 +195,10 @@ class TestMasks < Minitest::Test
   # two, the grid's mask was read and written one stride off -- three cells
   # masked here instead of one, and past the end of the mask on a larger grid.
   def test_a_lower_rank_operand_leaves_the_masks_after_it_in_place
-    bias = CArray.double(3).seq!
-    grid = CArray.double(3, 10).seq!
+    bias = CArray.float64(3).seq!
+    grid = CArray.float64(3, 10).seq!
     grid[1, 0] = UNDEF
-    result = CArray.double(3, 10)
+    result = CArray.float64(3, 10)
     CArray.jit_for(3, 10) { |i, j| result[i, j] = bias[i] + grid[i, j] }
     assert_equal([10], result.is_masked.where.to_a)
   end
@@ -208,7 +208,7 @@ class TestMasks < Minitest::Test
   # wrote a cell and not where it wrote a local -- the spelling a search
   # over a row takes -- and the answer came back a number like any other.
   def masked_row
-    values = CArray.double(3, 4).seq!(1.0)
+    values = CArray.float64(3, 4).seq!(1.0)
     values[1, 1] = 1.0e9
     values.mask = [[0, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]]
     values
@@ -216,7 +216,7 @@ class TestMasks < Minitest::Test
 
   def test_a_local_written_under_a_masked_branch_is_masked
     values = masked_row
-    result = CArray.double(3)
+    result = CArray.float64(3)
     CArray.jit_for(3) { |i|
       v = 0.0
       if values[i, 1] > 5.0 then v = 1.0 end
@@ -224,7 +224,7 @@ class TestMasks < Minitest::Test
     }
     assert_equal([false, true, false], result.is_masked.to_a)
 
-    direct = CArray.double(3)
+    direct = CArray.float64(3)
     CArray.jit_for(3) { |i|
       if values[i, 1] > 5.0 then direct[i] = 1.0 else direct[i] = 0.0 end
     }
@@ -234,7 +234,7 @@ class TestMasks < Minitest::Test
 
   def test_a_local_written_under_a_masked_while_is_masked
     values = masked_row
-    counted = CArray.double(3)
+    counted = CArray.float64(3)
     CArray.jit_for(3) { |i|
       x = 0.0
       n = 0.0
@@ -269,9 +269,9 @@ class TestMasks < Minitest::Test
 
   def test_a_local_array_cell_written_under_a_masked_branch_is_masked
     values = masked_row
-    result = CArray.double(3)
+    result = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = 0.0
       if values[i, 1] > 5.0 then w[0] = 1.0 end
       result[i] = w[0]
@@ -283,7 +283,7 @@ class TestMasks < Minitest::Test
   # from one leaves the cell present.
   def test_filling_from_a_mask_test_leaves_the_cell_present
     values = masked_row
-    filled = CArray.double(3)
+    filled = CArray.float64(3)
     CArray.jit_for(3) { |i|
       v = 0.0
       if values[i, 1] == UNDEF then v = -1.0 else v = values[i, 1] end

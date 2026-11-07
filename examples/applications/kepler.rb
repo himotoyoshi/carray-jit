@@ -21,10 +21,10 @@ require "carray/jit"
 n = 200_000
 tolerance = 1e-13
 
-mean_anomaly = CArray.double(n) { |i| 2.0 * Math::PI * i / n - Math::PI }
+mean_anomaly = CArray.float64(n) { |i| 2.0 * Math::PI * i / n - Math::PI }
 
 def solve (mean_anomaly, eccentricity, tolerance)
-  eccentric = CArray.double(mean_anomaly.elements)
+  eccentric = CArray.float64(mean_anomaly.elements)
   CArray.jit_for(mean_anomaly.elements) { |i|
     guess = mean_anomaly[i]                     # good enough for any e < 1
     step = 1.0
@@ -53,7 +53,7 @@ end
 # known.  Counting is a second local; the loop is otherwise the same.
 eccentricity = 0.9
 passes = CArray.int32(n)
-roots = CArray.double(n)
+roots = CArray.float64(n)
 CArray.jit_for(n) { |i|
   guess = mean_anomaly[i]
   step = 1.0
@@ -78,7 +78,7 @@ puts "  a cap in an extent     would have been #{passes.max} for every cell"
 # the condition is read at the top of every pass, `step` is a local before the
 # loop, and no accumulation is reassociated -- so the two take the same passes
 # over the same arithmetic.
-in_ruby = CArray.double(n)
+in_ruby = CArray.float64(n)
 (0...n).each do |i|
   guess = mean_anomaly[i]
   step = 1.0
@@ -98,17 +98,17 @@ end
 # differently from `sin` on its own.  Ruby calls `sin`.
 differing = (0...n).count { |i| roots[i] != in_ruby[i] }
 
-iterate = CArray.double(n)                    # one Newton step, in Ruby
+iterate = CArray.float64(n)                    # one Newton step, in Ruby
 (0...n).each do |i|
   guess = mean_anomaly[i]
   iterate[i] = guess - (guess - eccentricity * Math.sin(guess) - mean_anomaly[i]) /
                        (1.0 - eccentricity * Math.cos(guess))
 end
 
-alone = CArray.double(n)
+alone = CArray.float64(n)
 CArray.jit_for(n) { |i| alone[i] = Math.sin(iterate[i]) }
-together = CArray.double(n)
-unused = CArray.double(n)
+together = CArray.float64(n)
+unused = CArray.float64(n)
 CArray.jit_for(n) { |i|
   together[i] = Math.sin(iterate[i])
   unused[i] = Math.cos(iterate[i])
@@ -123,7 +123,7 @@ puts format("  a sine beside a cosine differs for %d of the same arguments",
 
 # With no transcendental in it, the same Newton iteration agrees bit for bit
 # -- a cube root, written the same way, over the same anomalies:
-cube = CArray.double(n)
+cube = CArray.float64(n)
 CArray.jit_for(n) { |i|
   x = 1.0 + mean_anomaly[i].abs
   step = 1.0
@@ -133,7 +133,7 @@ CArray.jit_for(n) { |i|
   end
   cube[i] = x
 }
-cube_in_ruby = CArray.double(n)
+cube_in_ruby = CArray.float64(n)
 (0...n).each do |i|
   a = 1.0 + mean_anomaly[i].abs
   x = a

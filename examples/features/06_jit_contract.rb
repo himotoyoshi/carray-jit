@@ -8,12 +8,12 @@
 $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
-a = CArray.double(3, 4).seq!(1.0)
-b = CArray.double(4, 2).seq!(0.5, 0.5)
-v = CArray.double(4).seq!(1.0)
-p = CArray.double(3).seq!(1.0)
-r = CArray.double(2).seq!(10.0, 10.0)
-q = CArray.double(3, 3).seq!(1.0)
+a = CArray.float64(3, 4).seq!(1.0)
+b = CArray.float64(4, 2).seq!(0.5, 0.5)
+v = CArray.float64(4).seq!(1.0)
+p = CArray.float64(3).seq!(1.0)
+r = CArray.float64(2).seq!(10.0, 10.0)
+q = CArray.float64(3, 3).seq!(1.0)
 
 matmul = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }  # k is summed
 matvec = CArray.jit_contract { |i, k|    a[i,k] * v[k]    }  # k is summed
@@ -36,14 +36,14 @@ puts "  swapped   #{transposed.dim.inspect} vs #{matmul.dim.inspect}"
 
 # Assigning into an array of your own says where to put it instead.  It must
 # name exactly the free indices, and still does not decide what is summed.
-destination = CArray.double(3, 2)
+destination = CArray.float64(3, 2)
 CArray.jit_contract { |i, j, k| destination[i,j] = a[i,k] * b[k,j] }
 puts "  into mine #{destination.to_a == matmul.to_a}"
 
 # A sum along an axis is not a contraction: there is nothing in a[i,k]
 # standing in for a sigma.
 begin
-  total = CArray.double(3)
+  total = CArray.float64(3)
   CArray.jit_contract { |i, k| total[i] = a[i,k] }
 rescue CArray::JIT::Unsupported => error
   puts "  refused:  #{error.message.lines.first.strip}"
@@ -51,7 +51,7 @@ end
 
 # Nor is a shape mismatch let through.
 begin
-  wrong = CArray.double(5, 2)
+  wrong = CArray.float64(5, 2)
   CArray.jit_contract { |i, j, k| a[i,k] * wrong[k,j] }
 rescue CArray::JIT::Unsupported => error
   puts "  refused:  #{error.message.lines.first.strip}"

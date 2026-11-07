@@ -36,25 +36,25 @@ class TestCFunction < Minitest::Test
 
   def test_over_whole_arrays
     j0 = @j0
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_each { out = j0.call(a) }
     assert_arrays_bits_equal(a.convert { |v| j0.call(v) }, out)
   end
 
   def test_at_a_named_index
     j0 = @j0
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i| out[i] = j0.call(a[i]) }
     assert_arrays_bits_equal(a.convert { |v| j0.call(v) }, out)
   end
 
   def test_two_arguments
     atan2 = @atan2
-    a = CArray.double(5).seq!(1.0)
-    b = CArray.double(5).seq!(0.5, 0.5)
-    out = CArray.double(5)
+    a = CArray.float64(5).seq!(1.0)
+    b = CArray.float64(5).seq!(0.5, 0.5)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i| out[i] = atan2.call(a[i], b[i]) }
     5.times { |i| assert_bits_equal(atan2.call(a[i], b[i]), out[i]) }
   end
@@ -62,9 +62,9 @@ class TestCFunction < Minitest::Test
   def test_mixed_into_an_expression
     j0 = @j0
     tgamma = @tgamma
-    a = CArray.double(5).seq!(1.0)
-    b = CArray.double(5).seq!(0.5, 0.5)
-    out = CArray.double(5)
+    a = CArray.float64(5).seq!(1.0)
+    b = CArray.float64(5).seq!(0.5, 0.5)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i| out[i] = 2.0 * j0.call(a[i]) + tgamma.call(b[i]) - a[i] }
     5.times do |i|
       assert_bits_equal(2.0 * j0.call(a[i]) + tgamma.call(b[i]) - a[i], out[i])
@@ -76,8 +76,8 @@ class TestCFunction < Minitest::Test
   # intermediate results to hold them.
   def test_a_stencil
     j0 = @j0
-    a = CArray.double(8).seq!(1.0)
-    out = CArray.double(8)
+    a = CArray.float64(8).seq!(1.0)
+    out = CArray.float64(8)
     CArray.jit_for(1...8) { |i| out[i] = 0.5 * (j0.call(a[i]) + j0.call(a[i-1])) }
     (1...8).each do |i|
       assert_bits_equal(0.5 * (j0.call(a[i]) + j0.call(a[i-1])), out[i])
@@ -86,8 +86,8 @@ class TestCFunction < Minitest::Test
 
   def test_inside_a_reduction
     j0 = @j0
-    source = CArray.double(3, 4).seq!(1.0)
-    total = CArray.double(3)
+    source = CArray.float64(3, 4).seq!(1.0)
+    total = CArray.float64(3)
     CArray.jit_for(3, reassociate: false) { |i|
       accumulator = 0.0
       (0...4).each { |j| accumulator = accumulator + j0.call(source[i, j]) }
@@ -106,11 +106,11 @@ class TestCFunction < Minitest::Test
   # the block were run rather than compiled.
   def test_dot_call_bracket_and_dot_parentheses_agree
     j0 = @j0
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     results = [
-      CArray.double(4).tap { |out| CArray.jit_each { out = j0.call(a) } },
-      CArray.double(4).tap { |out| CArray.jit_each { out = j0[a] } },
-      CArray.double(4).tap { |out| CArray.jit_each { out = j0.(a) } },
+      CArray.float64(4).tap { |out| CArray.jit_each { out = j0.call(a) } },
+      CArray.float64(4).tap { |out| CArray.jit_each { out = j0[a] } },
+      CArray.float64(4).tap { |out| CArray.jit_each { out = j0.(a) } },
     ]
     assert_arrays_bits_equal(results.first, results[1])
     assert_arrays_bits_equal(results.first, results[2])
@@ -121,8 +121,8 @@ class TestCFunction < Minitest::Test
   # because the captured name is known to hold a function rather than an array.
   def test_bracket_does_not_shadow_an_array_subscript
     j0 = @j0
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i| out[i] = j0[a[i]] }
     assert_arrays_bits_equal(a.convert { |v| j0.call(v) }, out)
   end
@@ -133,8 +133,8 @@ class TestCFunction < Minitest::Test
   # address has to arrive with the call, or every function after the first
   # would quietly compute the first one's answer.
   def test_one_kernel_serves_every_function_of_the_signature
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     apply = lambda { |f| CArray.jit_each { out = f.call(a) } }
 
     kernels = [@j0, @tgamma, CArray.jit_extern("double y0(double)")].map { |f|
@@ -147,9 +147,9 @@ class TestCFunction < Minitest::Test
   end
 
   def test_a_different_signature_is_a_different_kernel
-    a = CArray.double(4).seq!(1.0)
-    b = CArray.double(4).seq!(0.5, 0.5)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    b = CArray.float64(4).seq!(0.5, 0.5)
+    out = CArray.float64(4)
     j0 = @j0
     atan2 = @atan2
     first = CArray.jit_for(4) { |i| out[i] = j0.call(a[i]) }
@@ -161,9 +161,9 @@ class TestCFunction < Minitest::Test
 
   def test_a_masked_input_masks_the_output
     j0 = @j0
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(6)
+    out = CArray.float64(6)
     CArray.jit_each { out = j0.call(a) }
     assert_equal([false, false, true, false, false, false], out.is_masked.to_a)
     [0, 1, 3, 4, 5].each { |i| assert_bits_equal(j0.call(a[i]), out[i]) }
@@ -191,8 +191,8 @@ class TestCFunction < Minitest::Test
 
   def test_the_function_arrives_as_an_address_not_by_linkage
     j0 = @j0
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     kernel = CArray.jit_each { out = j0.call(a) }
     assert_match(/typedef double \(\*j0_fn_t\)\(double\);/, kernel.c_source)
     assert_match(/const j0_fn_t j0 = \(j0_fn_t\) functions\[0\];/, kernel.c_source)
@@ -226,9 +226,9 @@ class TestCFunction < Minitest::Test
 
   def test_the_wrong_number_of_arguments
     j0 = @j0
-    a = CArray.double(4).seq!(1.0)
-    b = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    b = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| out[i] = j0.call(a[i], b[i]) }
     end
@@ -282,8 +282,8 @@ class TestCFunction < Minitest::Test
   # them, naming the type rather than reinterpreting it.
   def test_a_return_type_a_cell_cannot_hold
     puts_fn = CArray.jit_extern("void free(void *)")
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i] = puts_fn.call(a[i]) }
     end
@@ -317,8 +317,8 @@ class TestCFunction < Minitest::Test
 
   def test_it_is_called_from_a_kernel_like_any_other
     square = CArray.jit_function("double (*)(double)") { |x| x * x + 1 }
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(5)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(5)
     CArray.jit_each { out = square.call(a) }
     assert_arrays_bits_equal(a.convert { |v| square.block.call(v) }, out)
   end
@@ -360,8 +360,8 @@ class TestCFunction < Minitest::Test
     thrice = CArray.jit_function("double (*)(double)") { |x| x * 3.0 }
     assert_equal(twice.signature, thrice.signature)
 
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     # One block, so the source is the same text and only the function differs
     # -- which is what puts the two on the same cache key but for the body.
     apply = lambda { |f| CArray.jit_each { out = f.call(a) } }
@@ -377,8 +377,8 @@ class TestCFunction < Minitest::Test
   # The same body, though, is the same function and so the same kernel: the
   # digest is of the text, not of the object.
   def test_the_same_body_is_the_same_kernel
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     kernels = 2.times.map {
       f = CArray.jit_function("double (*)(double)") { |x| x * 11.0 }
       CArray.jit_each { out = f.call(a) }
@@ -395,8 +395,8 @@ class TestCFunction < Minitest::Test
   # it is called.
   def test_a_written_function_is_pasted_into_the_kernel
     square = CArray.jit_function("double (*)(double)") { |x| x * x + 1 }
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(5)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(5)
     kernel = CArray.jit_each { out = square.call(a) }
     assert_arrays_bits_equal(a.convert { |v| square.block.call(v) }, out)
 
@@ -414,8 +414,8 @@ class TestCFunction < Minitest::Test
   def test_a_pasted_body_takes_no_slot_from_a_borrowed_one
     square = CArray.jit_function("double (*)(double)") { |x| x * x + 1 }
     j0 = @j0
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(5)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(5)
     kernel = CArray.jit_each { out = square.call(a) + j0.call(a) }
     assert_arrays_bits_equal(
       a.convert { |v| square.block.call(v) + j0.call(v) }, out)
@@ -428,8 +428,8 @@ class TestCFunction < Minitest::Test
   def test_one_body_reached_by_two_names_is_pasted_once
     square = CArray.jit_function("double (*)(double)") { |x| x * x + 1 }
     twin = square
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     kernel = CArray.jit_for(4) { |i| out[i] = square.call(a[i]) + twin.call(a[i]) }
     assert_arrays_bits_equal(a.convert { |v| 2 * square.block.call(v) }, out)
     assert_equal(1, kernel.c_source.scan(/^static double\n#{square.symbol} /).size)
@@ -571,8 +571,8 @@ class TestCFunction < Minitest::Test
     assert_equal 3.0, count.call(0.0, 3)
 
     half = CArray.jit_function("double (*)(double x)") { |x| x = x / 2.0; x + 1.0 }
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_each { out = half.call(a) }
     assert_equal [1.5, 2.0, 2.5, 3.0], out.to_a
   end
@@ -588,7 +588,7 @@ class TestCFunction < Minitest::Test
   end
 
   def test_it_may_not_close_over_an_array
-    a = CArray.double(3).seq!
+    a = CArray.float64(3).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double (*)(double)") { |x| x + a[0] }
     end
@@ -669,8 +669,8 @@ class TestCFunction < Minitest::Test
     quarter = CArray.jit_function("double (*)(double)") { |x|
       half.call(half.call(x))
     }
-    a = CArray.double(3).seq!(4.0, 4.0)
-    assert_equal(CArray.double(3) { |i| (i + 1) }, CArray.jit_map { quarter.call(a) })
+    a = CArray.float64(3).seq!(4.0, 4.0)
+    assert_equal(CArray.float64(3) { |i| (i + 1) }, CArray.jit_map { quarter.call(a) })
   end
 
   # A method body closes over nothing, so a constant is the only name it can
@@ -787,8 +787,8 @@ class TestCFunction < Minitest::Test
       (0...n).each { |k| s += x[k] * x[k]; grad[k] = 2.0 * x[k] if grad }
       s
     }
-    x = CArray.double(3).seq!(1.0)
-    grad = CArray.double(3)
+    x = CArray.float64(3).seq!(1.0)
+    grad = CArray.float64(3)
     assert_bits_equal(14.0, f.call(3, x, nil, nil))
     assert_bits_equal(14.0, f.call(3, x, grad, nil))
     assert_equal([2.0, 4.0, 6.0], grad.to_a)
@@ -959,8 +959,8 @@ class TestCFunction < Minitest::Test
   # has and a body has not.
   def test_a_kernel_still_reaches_it_by_address
     j0 = CArray.jit_extern("double j0(double)")
-    values = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    values = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     kernel = CArray.jit_each { out = j0.call(values) }
     assert_includes kernel.c_source, "functions["
     assert_in_delta 0.7651976865579666, out[0], 1e-12
@@ -1133,8 +1133,8 @@ class TestCFunction < Minitest::Test
     fib = CArray.jit_function("double fib(double)") { |n|
       n < 2.0 ? n : fib.call(n - 1.0) + fib.call(n - 2.0)
     }
-    values = CArray.double(8).seq!(0.0)
-    out = CArray.double(8)
+    values = CArray.float64(8).seq!(0.0)
+    out = CArray.float64(8)
     CArray.jit_each { out = fib.call(values) }
     assert_equal([0.0, 1.0, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0], out.to_a)
   end
@@ -1145,7 +1145,7 @@ class TestCFunction < Minitest::Test
     total = CArray.jit_function("double total(int n, const double v[8])") { |n, v|
       n == 0 ? 0.0 : v[n - 1] + total.call(n - 1, v)
     }
-    values = CArray.double(8).seq!(1.0)
+    values = CArray.float64(8).seq!(1.0)
     assert_equal(36.0, total.call(8, values))
     assert_equal(36.0, total.block.call(8, values))
   end
@@ -1202,7 +1202,7 @@ class TestCFunction < Minitest::Test
       out[0] = value
       out[1] = value * 2.0
     }
-    buffer = CArray.double(2)
+    buffer = CArray.float64(2)
     assert_nil(fill.call(buffer, 7.5))
     assert_equal([7.5, 15.0], buffer.to_a)
     assert_match(/^void\ncarray_jit_fill_[0-9a-f]+ \(double out\[\], double value\)$/,
@@ -1223,8 +1223,8 @@ class TestCFunction < Minitest::Test
     fill = CArray.jit_function("void fill(double out[], double value)") { |out, value|
       out[0] = value
     }
-    buffer = CArray.double(1)
-    out = CArray.double(3)
+    buffer = CArray.float64(1)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i] = fill.call(buffer, i * 1.0) }
     end
@@ -1252,7 +1252,7 @@ class TestCFunction < Minitest::Test
     poly = CArray.jit_function("double (*)(double x, const double coef[3])") { |x, c|
       c[0] + c[1] * x + c[2] * x * x
     }
-    coef = CArray.double(3) { |i| [1.0, 2.0, 3.0][i] }
+    coef = CArray.float64(3) { |i| [1.0, 2.0, 3.0][i] }
     assert_bits_equal(17.0, poly.call(2.0, coef))
     assert_match(/const double c\[3\]/, poly.c_source)
   end
@@ -1264,7 +1264,7 @@ class TestCFunction < Minitest::Test
     poly = CArray.jit_function("double (*)(double x, const double coef[3])") { |x, c|
       c[0] + c[1] * x + c[2] * x * x
     }
-    coef = CArray.double(3) { |i| [0.5, -1.25, 2.0][i] }
+    coef = CArray.float64(3) { |i| [0.5, -1.25, 2.0][i] }
     [-2.0, 0.0, 0.5, 3.0].each do |x|
       assert_bits_equal(poly.block.call(x, coef), poly.call(x, coef),
                         "at #{x}: the compiled C and the block disagree")
@@ -1281,12 +1281,12 @@ class TestCFunction < Minitest::Test
       dydt[1] = -y[0]
       0
     }
-    y = CArray.double(2) { |i| [1.0, 0.0][i] }
-    dydt = CArray.double(2)
+    y = CArray.float64(2) { |i| [1.0, 0.0][i] }
+    dydt = CArray.float64(2)
     assert_equal(0, ode.call(0.0, y, dydt, nil))
     assert_equal([0.0, -1.0], dydt.to_a)
 
-    in_ruby = CArray.double(2)
+    in_ruby = CArray.float64(2)
     assert_equal(0, ode.block.call(0.0, y, in_ruby, nil))
     assert_equal(dydt.to_a, in_ruby.to_a)
   end
@@ -1301,8 +1301,8 @@ class TestCFunction < Minitest::Test
       out[1] = -y[0]
       0
     }
-    grid = CArray.double(2, 2).seq
-    y = CArray.double(2) { |i| [1.0, 0.0][i] }
+    grid = CArray.float64(2, 2).seq
+    y = CArray.float64(2) { |i| [1.0, 0.0][i] }
     ode.call(y, grid[nil, 1])
     assert_equal([[0.0, 0.0], [2.0, -1.0]], grid.to_a,
                  "the write landed outside the view")
@@ -1310,7 +1310,7 @@ class TestCFunction < Minitest::Test
 
   def test_a_view_as_a_const_pointer_is_read_in_place
     sum = CArray.jit_function("double (*)(const double c[2])") { |c| c[0] + c[1] }
-    grid = CArray.double(2, 2).seq
+    grid = CArray.float64(2, 2).seq
     assert_bits_equal(4.0, sum.call(grid[nil, 1]))
     assert_equal([[0.0, 1.0], [2.0, 3.0]], grid.to_a, "reading changed the array")
   end
@@ -1353,14 +1353,14 @@ class TestCFunction < Minitest::Test
   def test_an_array_shorter_than_the_declaration_says
     f = CArray.jit_function("double (*)(const double c[4])") { |c| c[0] }
     error = assert_raises(CArray::JIT::Unsupported) do
-      f.call(CArray.double(2).seq!)
+      f.call(CArray.float64(2).seq!)
     end
     assert_match(/reads 4 elements, and this array has 2/, error.message)
   end
 
   def test_an_unsized_pointer_is_not_length_checked
     f = CArray.jit_function("double (*)(const double c[])") { |c| c[0] }
-    assert_bits_equal(7.0, f.call(CArray.double(1) { 7.0 }))
+    assert_bits_equal(7.0, f.call(CArray.float64(1) { 7.0 }))
   end
 
   # NLopt hands a derivative-free method's objective a NULL gradient, and a
@@ -1389,10 +1389,10 @@ class TestCFunction < Minitest::Test
         x[0] * x[0]
       },
     ]
-    x = CArray.double(1) { 3.0 }
+    x = CArray.float64(1) { 3.0 }
     bodies.each do |f|
       assert_bits_equal(9.0, f.call(1, x, nil, nil))
-      grad = CArray.double(1)
+      grad = CArray.float64(1)
       assert_bits_equal(9.0, f.call(1, x, grad, nil))
       assert_bits_equal(6.0, grad[0])
       assert_bits_equal(9.0, f.block.call(1, x, nil, nil))
@@ -1404,9 +1404,9 @@ class TestCFunction < Minitest::Test
     f = CArray.jit_function(NLOPT_OBJECTIVE) { |n, x, grad, data|
       (grad ? 1.0 : 0.0) + (data.nil? ? 10.0 : 20.0)
     }
-    x = CArray.double(1)
+    x = CArray.float64(1)
     assert_bits_equal(10.0, f.call(1, x, nil, nil))
-    assert_bits_equal(11.0, f.call(1, x, CArray.double(1), nil))
+    assert_bits_equal(11.0, f.call(1, x, CArray.float64(1), nil))
     assert_bits_equal(10.0, f.block.call(1, x, nil, nil))
   end
 
@@ -1438,12 +1438,12 @@ class TestCFunction < Minitest::Test
                       "`#{spelled}` is outside the 2 cells `v` is declared with")
     end
     f = CArray.jit_function("double (*)(const double v[2])") { |v| v[0] + v[1] }
-    assert_bits_equal(3.0, f.call(CArray.double(2) { 1.5 }))
+    assert_bits_equal(3.0, f.call(CArray.float64(2) { 1.5 }))
   end
 
   def test_an_unsized_pointer_takes_any_literal_subscript
     f = CArray.jit_function("double (*)(const double *v)") { |v| v[3] }
-    assert_bits_equal(3.0, f.call(CArray.double(4).seq!))
+    assert_bits_equal(3.0, f.call(CArray.float64(4).seq!))
   end
 
   # ---------- handing a kernel's array to a C function ----------
@@ -1457,9 +1457,9 @@ class TestCFunction < Minitest::Test
     poly = CArray.jit_function("double (*)(double x, const double coef[3])") { |x, c|
       c[0] + c[1] * x + c[2] * x * x
     }
-    coef = CArray.double(3) { |i| [1.0, 2.0, 3.0][i] }
-    x = CArray.double(5).seq!(0.0, 1.0)
-    out = CArray.double(5)
+    coef = CArray.float64(3) { |i| [1.0, 2.0, 3.0][i] }
+    x = CArray.float64(5).seq!(0.0, 1.0)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i| out[i] = poly.call(x[i], coef) }
     x.elements.times { |i| assert_bits_equal(poly.block.call(x[i], coef), out[i]) }
   end
@@ -1468,8 +1468,8 @@ class TestCFunction < Minitest::Test
   # scalars rather than through the addressing machinery an array cell needs.
   def test_the_address_travels_in_its_own_buffer
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] + c[1] + c[2] }
-    coef = CArray.double(3).seq!(1.0)
-    out = CArray.double(2)
+    coef = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i| out[i] = sum.call(coef) }
     assert_match(/double \*const coef = \(double \*\) data\[0\];/, kernel.c_source)
   end
@@ -1479,9 +1479,9 @@ class TestCFunction < Minitest::Test
       t[0] = t[0] + x
       x * 2.0
     }
-    tally = CArray.double(1)
-    x = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    tally = CArray.float64(1)
+    x = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i| out[i] = bump.call(x[i], tally) }
     assert_equal([2.0, 4.0, 6.0, 8.0], out.to_a)
     assert_equal([10.0], tally.to_a, "every cell should have added to it")
@@ -1489,8 +1489,8 @@ class TestCFunction < Minitest::Test
 
   def test_one_array_both_subscripted_and_handed_over
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] + c[1] + c[2] }
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i| out[i] = a[i] + sum.call(a) }
     assert_equal([7.0, 8.0, 9.0], out.to_a)
   end
@@ -1500,9 +1500,9 @@ class TestCFunction < Minitest::Test
       t[0] = t[0] + x
       x
     }
-    grid = CArray.double(2, 2).seq
+    grid = CArray.float64(2, 2).seq
     column = grid[nil, 1]
-    out = CArray.double(1)
+    out = CArray.float64(1)
     CArray.jit_for(1) { |i| out[i] = bump.call(2.0, column) }
     assert_equal([[0.0, 3.0], [2.0, 3.0]], grid.to_a,
                  "the write landed outside the view")
@@ -1512,7 +1512,7 @@ class TestCFunction < Minitest::Test
 
   def test_only_an_array_may_stand_where_a_pointer_is_declared
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] }
-    out = CArray.double(1)
+    out = CArray.float64(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i| out[i] = sum.call(1.0) }
     end
@@ -1522,7 +1522,7 @@ class TestCFunction < Minitest::Test
   def test_an_array_of_the_wrong_type_from_a_kernel
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] }
     c = CArray.int32(3).seq!
-    out = CArray.double(1)
+    out = CArray.float64(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i| out[i] = sum.call(c) }
     end
@@ -1531,8 +1531,8 @@ class TestCFunction < Minitest::Test
 
   def test_an_array_shorter_than_the_declaration_from_a_kernel
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] }
-    c = CArray.double(2).seq!
-    out = CArray.double(1)
+    c = CArray.float64(2).seq!
+    out = CArray.float64(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i| out[i] = sum.call(c) }
     end
@@ -1544,9 +1544,9 @@ class TestCFunction < Minitest::Test
   # has no mask to consult, so it would read whatever is underneath.
   def test_a_masked_array_is_not_handed_over
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] }
-    c = CArray.double(3).seq!
+    c = CArray.float64(3).seq!
     c[1] = UNDEF
-    out = CArray.double(1)
+    out = CArray.float64(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i| out[i] = sum.call(c) }
     end
@@ -1691,7 +1691,7 @@ class TestCFunction < Minitest::Test
     fill = CArray.jit_function("void fill(double out[], size_t n)") { |out, n|
       (0...n).each { |i| out[i] = i * 2.0 }
     }
-    a = CArray.double(4).fill(-1.0)
+    a = CArray.float64(4).fill(-1.0)
     fill.call(a, 4)
     assert_equal([0.0, 2.0, 4.0, 6.0], a.to_a)
 
@@ -1711,7 +1711,7 @@ class TestCFunction < Minitest::Test
   def test_a_bound_function_that_takes_a_size_t
     memcmp = CArray.jit_extern(
       "int memcmp(const double *a, const double *b, size_t n)")
-    a = CArray.double(3).seq!(1.0)
+    a = CArray.float64(3).seq!(1.0)
     same = a.copy
     other = a.copy
     other[2] = 99.0
@@ -1758,7 +1758,7 @@ class TestCFunction < Minitest::Test
   # underneath the mask and answered as though it were the value.
   def test_a_masked_array_is_not_handed_over_by_call
     sum = CArray.jit_function("double (*)(const double c[3])") { |c| c[0] }
-    c = CArray.double(3).seq!
+    c = CArray.float64(3).seq!
     c[1] = UNDEF
     error = assert_raises(CArray::JIT::Unsupported) { sum.call(c) }
     assert_match(/has no mask to read/, error.message)

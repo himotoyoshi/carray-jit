@@ -21,7 +21,7 @@ require "carray/jit"
 N = 500_000
 
 def accumulators
-  Array.new(9) { CScalar.double() { 0.0 } }
+  Array.new(9) { CScalar.float64() { 0.0 } }
 end
 
 def sum_series (n)
@@ -103,7 +103,7 @@ puts format("  every one of the nine matches the Ruby loop bit for bit: %s",
 # order, and the default asks for the faster one, which by splitting the
 # accumulation is also what limits the cancellation.
 def harmonic (n, reassociate)
-  out = CScalar.double() { 0.0 }
+  out = CScalar.float64() { 0.0 }
   CArray.jit_for(1, reassociate: reassociate) { |c|
     total = 0.0
     (1..n).each { |k| total = total + 1.0 / (k * 1.0) }
@@ -114,7 +114,7 @@ end
 
 split = harmonic(N, true)
 serial = harmonic(N, false)
-by_carray = (1.0 / CArray.double(N).seq!(1.0)).sum
+by_carray = (1.0 / CArray.float64(N).seq!(1.0)).sum
 
 puts
 puts "the harmonic sum as an inner loop"

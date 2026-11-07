@@ -47,7 +47,7 @@ Requires:
 # loop has just written.
 
 x = 0.5
-legendre = CArray.double(24)
+legendre = CArray.float64(24)
 legendre[0] = 1.0                     # P_0(x) = 1
 legendre[1] = x                       # P_1(x) = x
 

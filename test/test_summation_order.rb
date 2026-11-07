@@ -7,13 +7,13 @@ require_relative "test_helper"
 class TestSummationOrder < Minitest::Test
 
   def cancelling_row (length)
-    values = CArray.double(1, length)
+    values = CArray.float64(1, length)
     length.times { |j| values[0, j] = (j.even? ? 1.0e8 : 1.0e-8) + j * 1.0e-9 }
     values
   end
 
   def summed (length, values, **licence)
-    box = CArray.double(1)
+    box = CArray.float64(1)
     CArray.jit_for(1, **licence) { |i|
       accumulator = 0.0
       (0...length).each { |j| accumulator = accumulator + values[0, j] }
@@ -86,10 +86,10 @@ class TestSummationOrder < Minitest::Test
   # and `*` were not, on the reasoning that they associate.  They associate in
   # arithmetic; doubles are not arithmetic.
   def test_addition_keeps_the_grouping_it_was_written_with
-    a = CArray.double(1) { 1.0 }
-    b = CArray.double(1) { 1e-16 }
-    c = CArray.double(1) { 1e-16 }
-    out = CArray.double(1)
+    a = CArray.float64(1) { 1.0 }
+    b = CArray.float64(1) { 1e-16 }
+    c = CArray.float64(1) { 1e-16 }
+    out = CArray.float64(1)
     CArray.jit_each { out = a + (b + c) }
     assert_bits_equal(1.0 + (1e-16 + 1e-16), out[0])
     refute_equal((1.0 + 1e-16) + 1e-16, out[0],
@@ -97,20 +97,20 @@ class TestSummationOrder < Minitest::Test
   end
 
   def test_multiplication_keeps_the_grouping_it_was_written_with
-    a = CArray.double(1) { 1e300 }
-    b = CArray.double(1) { 1e300 }
-    c = CArray.double(1) { 1e-300 }
-    out = CArray.double(1)
+    a = CArray.float64(1) { 1e300 }
+    b = CArray.float64(1) { 1e300 }
+    c = CArray.float64(1) { 1e-300 }
+    out = CArray.float64(1)
     CArray.jit_each { out = a * (b * c) }
     assert_bits_equal(1e300 * (1e300 * 1e-300), out[0])
     assert_predicate(out[0], :finite?, "regrouped, the product overflows")
   end
 
   def test_subtraction_and_division_too
-    a = CArray.double(1) { 12.0 }
-    b = CArray.double(1) { 4.0 }
-    c = CArray.double(1) { 2.0 }
-    out = CArray.double(1)
+    a = CArray.float64(1) { 12.0 }
+    b = CArray.float64(1) { 4.0 }
+    c = CArray.float64(1) { 2.0 }
+    out = CArray.float64(1)
     CArray.jit_each { out = a - (b - c) }
     assert_bits_equal(12.0 - (4.0 - 2.0), out[0])
     CArray.jit_each { out = a / (b / c) }
@@ -119,10 +119,10 @@ class TestSummationOrder < Minitest::Test
 
   # The generated C says it, which is the level the bug lived at.
   def test_the_parentheses_reach_the_generated_c
-    a = CArray.double(1) { 1.0 }
-    b = CArray.double(1) { 1.0 }
-    c = CArray.double(1) { 1.0 }
-    out = CArray.double(1)
+    a = CArray.float64(1) { 1.0 }
+    b = CArray.float64(1) { 1.0 }
+    c = CArray.float64(1) { 1.0 }
+    out = CArray.float64(1)
     kernel = CArray.jit_each { out = a + (b + c) }
     assert_match(/\+ \(.*\+.*\)/, kernel.c_source,
                  "the right operand of a `+` was flattened into the left")
@@ -131,9 +131,9 @@ class TestSummationOrder < Minitest::Test
   # A long chain of mixed groupings, against the same expression in Ruby.
   def test_a_deep_expression_agrees_cell_for_cell
     n = 500
-    x = CArray.double(n).seq!(1.0, 1e-13)
-    y = CArray.double(n).seq!(0.5, 1e-13)
-    out = CArray.double(n)
+    x = CArray.float64(n).seq!(1.0, 1e-13)
+    y = CArray.float64(n).seq!(0.5, 1e-13)
+    out = CArray.float64(n)
     CArray.jit_each { out = x + (y + (x + (y + (x + (y + (x + y)))))) }
     n.times do |i|
       expected = x[i] + (y[i] + (x[i] + (y[i] + (x[i] + (y[i] + (x[i] + y[i]))))))

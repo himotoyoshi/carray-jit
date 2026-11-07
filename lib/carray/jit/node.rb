@@ -691,7 +691,7 @@ class CArray
       end
     end
 
-    # `w = CArray.double(9)`, `CArray.new(:int64, [256])`, or
+    # `w = CArray.float64(9)`, `CArray.new(:int64, [256])`, or
     # `CArray.empty(:float64, [9])`: an array the body owns.
     #
     # It is declared at the head of the C block its Ruby scope stands for, as

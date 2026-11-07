@@ -36,20 +36,20 @@ LEVELS = 91                             # 1000 hPa to 100 hPa, every 10
 COLUMNS = 4_000                         # soundings to climb
 SUBSTEPS = 4                            # moist steps between two levels
 
-pressure = CArray.double(LEVELS).seq!(1000.0, -10.0)
+pressure = CArray.float64(LEVELS).seq!(1000.0, -10.0)
 
 # Synthetic soundings: a lapse rate of 6.5 K/km over a surface that varies
 # from column to column, isothermal above the tropopause.
 random = CArray::Rng.new(seed: 20260913)
-surface = CArray.double(COLUMNS)
+surface = CArray.float64(COLUMNS)
 surface.random!(rng: random)
 surface = surface * 12.0 + 22.0 + 273.15               # 22 to 34 degC
-spread = CArray.double(COLUMNS)
+spread = CArray.float64(COLUMNS)
 spread.random!(rng: random)
 spread = spread * 14.0 + 2.0                           # dew point depression
 
-environment = CArray.double(COLUMNS, LEVELS)
-height = CArray.double(LEVELS)
+environment = CArray.float64(COLUMNS, LEVELS)
+height = CArray.float64(LEVELS)
 LEVELS.times { |k| height[k] = 44330.0 * (1.0 - (pressure[k] / 1013.25) ** 0.1903) }
 CArray.jit_for(COLUMNS, LEVELS) { |c, k|
   lapsed = surface[c] - 0.0065 * height[k]
@@ -57,11 +57,11 @@ CArray.jit_for(COLUMNS, LEVELS) { |c, k|
 }
 dewpoint = environment[nil, 0] - spread
 
-cape = CArray.double(COLUMNS)
-cin = CArray.double(COLUMNS)
-lcl = CArray.double(COLUMNS)
-lfc = CArray.double(COLUMNS)
-el = CArray.double(COLUMNS)
+cape = CArray.float64(COLUMNS)
+cin = CArray.float64(COLUMNS)
+lcl = CArray.float64(COLUMNS)
+lfc = CArray.float64(COLUMNS)
+el = CArray.float64(COLUMNS)
 
 def climb (pressure, environment, dewpoint, cape, cin, lcl, lfc, el)
   columns, levels = environment.dim

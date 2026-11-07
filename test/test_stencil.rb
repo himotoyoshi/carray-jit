@@ -23,17 +23,17 @@ class TestStencil < Minitest::Test
   end
 
   def test_it_computes_what_the_written_out_loop_computes
-    source = CArray.double(6, 8) { |i, j| Math.sin(i * 0.3) * Math.cos(j * 0.2) }
-    written = five_point(source, CArray.double(6, 8))
+    source = CArray.float64(6, 8) { |i, j| Math.sin(i * 0.3) * Math.cos(j * 0.2) }
+    written = five_point(source, CArray.float64(6, 8))
     result = CArray.jit_stencil(source, border: :skip,
-                                into: CArray.double(6, 8)) { |a|
+                                into: CArray.float64(6, 8)) { |a|
       0.25 * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1])
     }
     assert_arrays_bits_equal(written, result)
   end
 
   def test_the_result_has_the_shape_of_the_arrays
-    source = CArray.double(4, 7).seq!(1.0)
+    source = CArray.float64(4, 7).seq!(1.0)
     assert_equal([4, 7], CArray.jit_stencil(source) { |a| a[0, 0] }.dim)
   end
 
@@ -43,7 +43,7 @@ class TestStencil < Minitest::Test
   # be told from a computed one: the cells the window could not sit on come
   # back missing.
   def test_the_border_is_missing_by_default
-    source = CArray.double(5, 6).seq!(1.0)
+    source = CArray.float64(5, 6).seq!(1.0)
     result = CArray.jit_stencil(source) { |a|
       0.25 * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1])
     }
@@ -60,8 +60,8 @@ class TestStencil < Minitest::Test
   # interior and said nothing about the rest -- and is what to ask for when
   # the border is yours to fill.
   def test_skip_leaves_the_border_as_it_was_found
-    source = CArray.double(5, 6).seq!(1.0)
-    into = CArray.double(5, 6).seq!(-1.0, 0.0)
+    source = CArray.float64(5, 6).seq!(1.0)
+    into = CArray.float64(5, 6).seq!(-1.0, 0.0)
     CArray.jit_stencil(source, border: :skip, into: into) { |a|
       0.25 * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1])
     }
@@ -73,7 +73,7 @@ class TestStencil < Minitest::Test
   # The frame is where the window would not fit, so an offset reaching two
   # cells one way and none the other takes two cells off that side alone.
   def test_the_frame_is_what_the_window_reaches
-    source = CArray.double(5, 6).seq!(1.0)
+    source = CArray.float64(5, 6).seq!(1.0)
     result = CArray.jit_stencil(source) { |a| a[0, 0] + a[0, 2] }
     assert_equal([false, false, false, false, true, true],
                  result.is_masked[2, nil].to_a)
@@ -88,7 +88,7 @@ class TestStencil < Minitest::Test
   # could differ, and it is the whole point.
   def bordered (rule)
     rows, columns = 5, 6
-    source = CArray.double(rows, columns) { |i, j| (i * 10 + j).to_f }
+    source = CArray.float64(rows, columns) { |i, j| (i * 10 + j).to_f }
     read = lambda { |i, j|
       case rule
       when :clamp then source[i.clamp(0, rows - 1), j.clamp(0, columns - 1)]
@@ -97,7 +97,7 @@ class TestStencil < Minitest::Test
         i.between?(0, rows - 1) && j.between?(0, columns - 1) ? source[i, j] : 0.0
       end
     }
-    reference = CArray.double(rows, columns) { |i, j|
+    reference = CArray.float64(rows, columns) { |i, j|
       0.25 * (read.call(i-1, j) + read.call(i+1, j) +
               read.call(i, j-1) + read.call(i, j+1))
     }
@@ -121,7 +121,7 @@ class TestStencil < Minitest::Test
 
   # A computed border computes every cell, so nothing is left missing.
   def test_a_computed_border_leaves_no_cell_missing
-    source = CArray.double(5, 6).seq!(1.0)
+    source = CArray.float64(5, 6).seq!(1.0)
     result = CArray.jit_stencil(source, border: :clamp) { |a| a[-1, 0] + a[0, 1] }
     assert_equal(0, result.count_masked)
   end
@@ -130,16 +130,16 @@ class TestStencil < Minitest::Test
   # leaves is two rows at one end, and the rule reaches over both.
   def test_a_wider_window_reaches_as_far_as_it_says
     rows, columns = 5, 4
-    source = CArray.double(rows, columns) { |i, j| (i * 10 + j).to_f }
+    source = CArray.float64(rows, columns) { |i, j| (i * 10 + j).to_f }
     result = CArray.jit_stencil(source, border: :wrap) { |a| a[-2, 0] + a[0, 3] }
-    reference = CArray.double(rows, columns) { |i, j|
+    reference = CArray.float64(rows, columns) { |i, j|
       source[(i - 2) % rows, j] + source[i, (j + 3) % columns]
     }
     assert_arrays_bits_equal(reference, result)
   end
 
   def test_one_dimension_with_a_rule
-    series = CArray.double(6).seq!(1.0)
+    series = CArray.float64(6).seq!(1.0)
     result = CArray.jit_stencil(series, border: :clamp) { |a|
       (a[-1] + a[0] + a[1]) / 3.0
     }
@@ -170,7 +170,7 @@ class TestStencil < Minitest::Test
   # ---------- what the block may reach ----------
 
   def test_one_dimension
-    series = CArray.double(6).seq!(1.0)
+    series = CArray.float64(6).seq!(1.0)
     result = CArray.jit_stencil(series) { |a| (a[-1] + a[0] + a[1]) / 3.0 }
     assert_equal([UNDEF, 2.0, 3.0, 4.0, 5.0, UNDEF], result.to_a)
   end
@@ -178,8 +178,8 @@ class TestStencil < Minitest::Test
   # The windows are the block's parameters in the order the arrays were given,
   # and they shadow whatever those names hold outside.
   def test_two_arrays_are_two_windows
-    u = CArray.double(4, 4).seq!(1.0)
-    k = CArray.double(4, 4).seq!(0.5, 0.5)
+    u = CArray.float64(4, 4).seq!(1.0)
+    k = CArray.float64(4, 4).seq!(0.5, 0.5)
     result = CArray.jit_stencil(u, k) { |u, k| u[0, 0] + k[-1, 0] }
     assert_in_delta(u[2, 2] + k[1, 2], result[2, 2], 0.0)
   end
@@ -188,14 +188,14 @@ class TestStencil < Minitest::Test
   # is read at the cell the loop is on -- what a bare name means wherever the
   # loop is this compiler's.
   def test_a_captured_array_is_read_at_the_cell
-    source = CArray.double(4, 5).seq!(1.0)
-    weight = CArray.double(4, 5).seq!(100.0)
+    source = CArray.float64(4, 5).seq!(1.0)
+    weight = CArray.float64(4, 5).seq!(100.0)
     result = CArray.jit_stencil(source) { |a| a[0, 0] + weight }
     assert_in_delta(source[2, 2] + weight[2, 2], result[2, 2], 0.0)
   end
 
   def test_a_captured_scalar
-    source = CArray.double(4, 5).seq!(1.0)
+    source = CArray.float64(4, 5).seq!(1.0)
     scale = 3.0
     result = CArray.jit_stencil(source) { |a| a[0, 0] * scale }
     assert_in_delta(source[2, 2] * 3.0, result[2, 2], 0.0)
@@ -212,7 +212,7 @@ class TestStencil < Minitest::Test
   end
 
   def test_into_writes_an_array_of_your_own
-    source = CArray.double(4, 4).seq!(1.0)
+    source = CArray.float64(4, 4).seq!(1.0)
     into = CArray.int32(4, 4)
     returned = CArray.jit_stencil(source, into: into, border: :skip) { |a| a[0, 0] }
     assert_same(into, returned)
@@ -223,7 +223,7 @@ class TestStencil < Minitest::Test
   # written is a neighbour a later cell reaches, so what comes back depends on
   # the order the cells were taken in.  The answer was wrong and said nothing.
   def test_into_may_not_be_the_array_the_window_reads
-    source = CArray.double(6) { |i| (i + 1.0) ** 2 }
+    source = CArray.float64(6) { |i| (i + 1.0) ** 2 }
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source, into: source) { |a| (a[-1] + a[0] + a[1]) / 3 }
     end
@@ -242,7 +242,7 @@ class TestStencil < Minitest::Test
   # keeps -- share no cell and are refused all the same, the test being the
   # storage.  The message says so rather than calling them one array.
   def test_two_slabs_of_one_array_are_refused_by_storage
-    pair = CArray.double(2, 6).seq!(1.0)
+    pair = CArray.float64(2, 6).seq!(1.0)
     read = pair[0, nil]
     write = pair[1, nil]
     error = assert_raises(CArray::JIT::Unsupported) do
@@ -261,9 +261,9 @@ class TestStencil < Minitest::Test
   # the widest window in the kernel: one array may be read at its centre while
   # another is reached into, and then writing the first in place is safe.
   def test_into_may_be_a_window_that_reaches_nowhere_beside_one_that_does
-    reached = CArray.double(6, 8) { |i, j| i + j }
-    centred = CArray.double(6, 8) { |i, j| i * j }
-    expected = CArray.double(6, 8) { |i, j|
+    reached = CArray.float64(6, 8) { |i, j| i + j }
+    centred = CArray.float64(6, 8) { |i, j| i * j }
+    expected = CArray.float64(6, 8) { |i, j|
       i.zero? || i == 5 ? centred[i,j] : 0.25 * (reached[i-1,j] + reached[i+1,j]) + centred[i,j]
     }
     returned = CArray.jit_stencil(reached, centred, border: :skip, into: centred) { |r, c|
@@ -276,7 +276,7 @@ class TestStencil < Minitest::Test
   # A window that reaches nowhere reads only the cell it is on, so there is no
   # later cell to disturb and writing in place says what it means.
   def test_into_may_be_the_array_when_the_window_reaches_nowhere
-    source = CArray.double(4).seq!(1.0)
+    source = CArray.float64(4).seq!(1.0)
     returned = CArray.jit_stencil(source, into: source) { |a| a[0] * 2 }
     assert_same(source, returned)
     assert_equal([2.0, 4.0, 6.0, 8.0], source.to_a)
@@ -285,7 +285,7 @@ class TestStencil < Minitest::Test
   # A missing cell reaches as far as the window does, and no further: the
   # cell itself is computed from cells that are all there.
   def test_a_missing_cell_propagates_through_the_window
-    source = CArray.double(5, 5).seq!(1.0)
+    source = CArray.float64(5, 5).seq!(1.0)
     source[2, 2] = UNDEF
     result = CArray.jit_stencil(source) { |a|
       0.25 * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1])
@@ -299,7 +299,7 @@ class TestStencil < Minitest::Test
   # ---------- what is refused ----------
 
   def test_an_offset_is_written_out
-    source = CArray.double(4, 4).seq!(1.0)
+    source = CArray.float64(4, 4).seq!(1.0)
     step = 1
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source) { |a| a[step, 0] }
@@ -312,7 +312,7 @@ class TestStencil < Minitest::Test
   # writing it as the formula it came from says more than the number does.
   # What it is not is a value -- nothing that has to be read to be known.
   def test_an_offset_may_be_arithmetic_over_literals
-    source = CArray.double(9).seq!(1.0)
+    source = CArray.float64(9).seq!(1.0)
     assert_in_delta(3.0,
                     CArray.jit_stencil(source, border: :clamp) { |w| w[-1-1] }[4],
                     0.0)
@@ -326,7 +326,7 @@ class TestStencil < Minitest::Test
   end
 
   def test_an_offset_is_not_a_value_however_constant_it_looks
-    source = CArray.double(9).seq!(1.0)
+    source = CArray.float64(9).seq!(1.0)
     radius = 2
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source) { |w| w[-radius] }
@@ -335,7 +335,7 @@ class TestStencil < Minitest::Test
   end
 
   def test_a_window_takes_one_offset_per_axis
-    source = CArray.double(4, 4).seq!(1.0)
+    source = CArray.float64(4, 4).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source) { |a| a[0] }
     end
@@ -344,7 +344,7 @@ class TestStencil < Minitest::Test
 
   def test_the_arrays_have_the_same_shape
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_stencil(CArray.double(5, 6), CArray.double(4, 4)) { |u, v|
+      CArray.jit_stencil(CArray.float64(5, 6), CArray.float64(4, 4)) { |u, v|
         u[0, 0] + v[0, 0]
       }
     end
@@ -354,13 +354,13 @@ class TestStencil < Minitest::Test
 
   def test_a_window_wider_than_the_array
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_stencil(CArray.double(2, 2)) { |a| a[-2, 0] + a[2, 0] }
+      CArray.jit_stencil(CArray.float64(2, 2)) { |a| a[-2, 0] + a[2, 0] }
     end
     assert_match(/no cell where the window is inside the array/, error.message)
   end
 
   def test_a_border_that_is_not_one
-    source = CArray.double(4, 4).seq!(1.0)
+    source = CArray.float64(4, 4).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source, border: :nonsense) { |a| a[0, 0] }
     end
@@ -369,9 +369,9 @@ class TestStencil < Minitest::Test
   end
 
   def test_a_type_and_an_array_to_write_into_are_one_too_many
-    source = CArray.double(4, 4).seq!(1.0)
+    source = CArray.float64(4, 4).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_stencil(source, type: :float32, into: CArray.double(4, 4)) { |a|
+      CArray.jit_stencil(source, type: :float32, into: CArray.float64(4, 4)) { |a|
         a[0, 0]
       }
     end
@@ -379,7 +379,7 @@ class TestStencil < Minitest::Test
   end
 
   def test_the_block_names_a_window_for_each_array
-    source = CArray.double(4, 4).seq!(1.0)
+    source = CArray.float64(4, 4).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(source) { |a, b| a[0, 0] + b[0, 0] }
     end

@@ -27,9 +27,9 @@ DWELL = 5                               # after this many in a row
 
 # A series that wanders across both lines, with noise sitting on them.
 random = CArray::Rng.new(seed: 20260913)
-noise = CArray.double(SAMPLES)
+noise = CArray.float64(SAMPLES)
 noise.random!(rng: random)
-reading = CArray.double(SAMPLES)
+reading = CArray.float64(SAMPLES)
 CArray.jit_for(SAMPLES) { |i|
   slow = 64.0 + 12.0 * Math.sin(i / 90000.0) + 4.0 * Math.sin(i / 700.0)
   reading[i] = slow + 6.0 * (noise[i] - 0.5)

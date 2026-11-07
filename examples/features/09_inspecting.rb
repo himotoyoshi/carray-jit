@@ -8,7 +8,7 @@
 $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
-values = CArray.double(16).seq!(1.0)
+values = CArray.float64(16).seq!(1.0)
 
 def sweep (values)
   CArray.jit_for(1...values.dim[0]) { |i| values[i] = Math.sqrt(values[i-1]) + 1.0 }

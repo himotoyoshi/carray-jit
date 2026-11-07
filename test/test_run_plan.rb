@@ -38,17 +38,17 @@ class TestRunPlan < Minitest::Test
   # Eight cells at each of the three tiers.  The values are the same, so the
   # answer is too; only the layout differs.
   def entity
-    CArray.double(8).seq!(1.0)
+    CArray.float64(8).seq!(1.0)
   end
 
   def strided
-    matrix = CArray.double(8, 3)
+    matrix = CArray.float64(8, 3)
     matrix[nil, 1] = entity
     matrix[nil, 1]
   end
 
   def transferred
-    whole = CArray.double(8).seq!(1.0)
+    whole = CArray.float64(8).seq!(1.0)
     whole[whole >= 0.0]
   end
 
@@ -126,7 +126,7 @@ class TestRunPlan < Minitest::Test
       CArray::JIT.clear_registry
       a = send(maker)
       b = entity
-      out = CArray.double(8)
+      out = CArray.float64(8)
       add(a, b, out)
       refute(out.has_mask?, maker)
 
@@ -145,9 +145,9 @@ class TestRunPlan < Minitest::Test
   # of cells in which the two shapes would be indistinguishable.
   def test_the_same_count_of_cells_in_two_shapes
     [[2, 3], [3, 2], [2, 3], [3, 2]].each do |shape|
-      a = CArray.double(*shape.reverse).seq!.T
-      b = CArray.double(*shape).seq!(10.0)
-      out = CArray.double(*shape)
+      a = CArray.float64(*shape.reverse).seq!.T
+      b = CArray.float64(*shape).seq!(10.0)
+      out = CArray.float64(*shape)
       CArray.jit_each { out = a * b + 1.0 }
       assert_equal((a * b + 1.0).to_a, out.to_a, shape.inspect)
     end
@@ -168,8 +168,8 @@ class TestRunPlan < Minitest::Test
   # A caller alternating between two model states pays for the plan once
   # per state, not once per call.
   def test_two_shapes_in_turn_are_each_planned_once
-    small = Array.new(3) { CArray.double(10).seq! }
-    large = Array.new(3) { CArray.double(20).seq! }
+    small = Array.new(3) { CArray.float64(10).seq! }
+    large = Array.new(3) { CArray.float64(20).seq! }
     step = ->(a, b, out) { CArray.jit_each { out = a + b } }
     calls = counting(CArray::JIT, :compile) do
       5.times do

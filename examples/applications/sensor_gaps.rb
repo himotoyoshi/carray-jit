@@ -18,7 +18,7 @@ days, hours = 30, 24
 random = Random.new(20260902)
 
 # Hourly temperature: a daily cycle, a seasonal drift, and noise.
-reading = CArray.double(days, hours) { |d, h|
+reading = CArray.float64(days, hours) { |d, h|
   15.0 + 8.0 * Math.sin((h - 9) * Math::PI / 12) + d * 0.1 +
     random.rand(-1.0..1.0)
 }
@@ -57,7 +57,7 @@ puts "  #{reading.count_masked - dropped} readings rejected as out of range"
 # 2. Fill a hole from its neighbours, but only where both neighbours are there.
 #    Where they are not, the average reads a masked cell and the result comes
 #    out masked by itself -- the rule does not have to be written twice.
-filled = CArray.double(days, hours)
+filled = CArray.float64(days, hours)
 CArray.jit_for(days, 1...(hours-1)) { |d, h|
   if reading[d, h] == UNDEF
     filled[d, h] = 0.5 * (reading[d, h-1] + reading[d, h+1])
@@ -73,7 +73,7 @@ puts "  #{recovered} holes interpolated, #{filled.count_masked} still missing"
 
 # 3. The daily mean, from the readings that survived -- and a day with fewer
 #    than twenty valid hours does not get a mean at all.
-mean = CArray.double(days)
+mean = CArray.float64(days)
 valid = CArray.int32(days)
 CArray.jit_for(days) { |d|
   total = 0.0

@@ -15,9 +15,9 @@ class TestSweep < Minitest::Test
 
   # The property everything else rests on: two drivers, one answer.
   def test_the_two_drivers_agree
-    a = CArray.double(6).seq!(1.0)
-    b = CArray.double(6).seq!(0.5, 0.5)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    b = CArray.float64(6).seq!(0.5, 0.5)
+    out = CArray.float64(6)
     kernel = CArray.jit_each { out = a + b * 2.0 }
     by_sweep = out.to_a
 
@@ -29,8 +29,8 @@ class TestSweep < Minitest::Test
   # Which driver ran is visible in the kernel: a swept pass is compiled flat,
   # so its loop has one axis however many the arrays have.
   def test_a_swept_pass_is_compiled_flat
-    m = CArray.double(3, 4).seq!
-    out = CArray.double(3, 4)
+    m = CArray.float64(3, 4).seq!
+    out = CArray.float64(3, 4)
     kernel = CArray.jit_each { out = m * 2.0 }
     assert_equal(1, kernel.rank, "a swept pass is one flat run of cells")
     assert_equal((m * 2.0).to_a, out.to_a)
@@ -40,8 +40,8 @@ class TestSweep < Minitest::Test
   # reads an operand's element count and element size and never looks at its
   # shape, so a chunk is already flat without anything being reshaped.
   def test_the_arrays_are_not_reshaped
-    m = CArray.double(2, 3, 4).seq!
-    out = CArray.double(2, 3, 4)
+    m = CArray.float64(2, 3, 4).seq!
+    out = CArray.float64(2, 3, 4)
     CArray.jit_each { out = m + 1.0 }
     assert_equal([2, 3, 4], out.dim)
     assert_equal((m + 1.0).to_a, out.to_a)
@@ -54,10 +54,10 @@ class TestSweep < Minitest::Test
   end
 
   def test_one_flat_kernel_serves_any_rank
-    flat_in = CArray.double(6).seq!
-    flat_out = CArray.double(6)
-    cubic_in = CArray.double(2, 3, 4).seq!
-    cubic_out = CArray.double(2, 3, 4)
+    flat_in = CArray.float64(6).seq!
+    flat_out = CArray.float64(6)
+    cubic_in = CArray.float64(2, 3, 4).seq!
+    cubic_out = CArray.float64(2, 3, 4)
 
     flat = doubled(flat_in, flat_out)
     cubic = doubled(cubic_in, cubic_out)
@@ -72,10 +72,10 @@ class TestSweep < Minitest::Test
   # here would move the whole thing.
   def test_a_gather_view_agrees_too
     n = 1000
-    src = CArray.double(n).seq!
+    src = CArray.float64(n).seq!
     gather = src[CArray.int32(n).seq.reverse]
-    b = CArray.double(n).seq!(0.5, 0.5)
-    out = CArray.double(n)
+    b = CArray.float64(n).seq!(0.5, 0.5)
+    out = CArray.float64(n)
     kernel = CArray.jit_each { out = gather + b * 2.0 }
     assert_equal(1, kernel.rank, "a gather view is what the sweep is for")
     assert_equal((gather.to_ca + b * 2.0).to_a, out.to_a)
@@ -89,12 +89,12 @@ class TestSweep < Minitest::Test
   # so the pass may still be chunked and still answers as Ruby does.
   def test_a_gather_from_an_array_the_pass_writes_is_still_right
     rows, columns = 200, 100                     # 20_000 cells: several chunks
-    src = CArray.double(rows, columns).seq!(0.0)
+    src = CArray.float64(rows, columns).seq!(0.0)
     reversed = CArray.int32(rows, columns) { |i, j|
       rows * columns - 1 - (i * columns + j)
     }
     gather = src[reversed]
-    reference = CArray.double(rows, columns) { |i, j|
+    reference = CArray.float64(rows, columns) { |i, j|
       src[rows - 1 - i, columns - 1 - j] + 1.0
     }
     kernel = CArray.jit_each { src = gather + 1.0 }
@@ -105,27 +105,27 @@ class TestSweep < Minitest::Test
   # Only where they meet: a gather from somewhere else still sweeps.
   def test_a_gather_from_elsewhere_still_sweeps
     rows, columns = 200, 100
-    src = CArray.double(rows, columns).seq!(0.0)
+    src = CArray.float64(rows, columns).seq!(0.0)
     reversed = CArray.int32(rows, columns) { |i, j|
       rows * columns - 1 - (i * columns + j)
     }
     gather = src[reversed]
-    out = CArray.double(rows, columns)
+    out = CArray.float64(rows, columns)
     kernel = CArray.jit_each { out = gather + 1.0 }
     assert_equal(1, kernel.rank, "nothing the pass writes is gathered from")
     assert_equal((gather.to_ca + 1.0).to_a, out.to_a)
   end
 
   def test_the_value_spelling_sweeps_as_well
-    a = CArray.double(5).seq!(1.0)
-    b = CArray.double(5).seq!(0.5, 0.5)
+    a = CArray.float64(5).seq!(1.0)
+    b = CArray.float64(5).seq!(0.5, 0.5)
     result = CArray.jit_map { a + b * 2.0 }
     assert_equal((a + b * 2.0).to_a, result.to_a)
   end
 
   def test_captured_values_and_c_functions_travel_with_it
     j0 = CArray.jit_extern("double j0(double)")
-    a = CArray.double(5).seq!(1.0)
+    a = CArray.float64(5).seq!(1.0)
     scale = 3.0
     result = CArray.jit_map { j0.call(a) * scale }
     a.elements.times { |i| assert_bits_equal(j0.call(a[i]) * scale, result[i]) }
@@ -150,9 +150,9 @@ class TestSweep < Minitest::Test
   # would stop lining up with cell k of the stretched operand.  So a stretched
   # operand keeps the nested loop and the driver here.
   def test_a_stretched_operand_stays_with_the_driver
-    matrix = CArray.double(3, 4).seq!
-    row = CArray.double(1, 4).seq!(10.0)
-    out = CArray.double(3, 4)
+    matrix = CArray.float64(3, 4).seq!
+    row = CArray.float64(1, 4).seq!(10.0)
+    out = CArray.float64(3, 4)
     kernel = CArray.jit_each { out = matrix * row }
     assert_equal(2, kernel.rank, "a stretched operand needs the axes back")
     assert_equal((matrix * row).to_a, out.to_a)
@@ -162,9 +162,9 @@ class TestSweep < Minitest::Test
   # no per-cell mask the generated code could test -- and `a[i] == UNDEF` is
   # exactly that test.  So a body that asks about a mask keeps the driver.
   def test_a_masked_operand_stays_with_the_driver
-    a = CArray.double(5).seq!(1.0)
+    a = CArray.float64(5).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(5)
+    out = CArray.float64(5)
     kernel = CArray.jit_each { out = a * 2.0 }
     refute_predicate(kernel, :sweepable?)
     assert_equal([false, false, true, false, false], out.is_masked.to_a)
@@ -175,10 +175,10 @@ class TestSweep < Minitest::Test
   # stricter and has to be: six cells in one axis and six in two agree on
   # their count and are not the same pass.
   def test_the_decision_is_on_the_shape
-    six = CArray.double(6)
+    six = CArray.float64(6)
     assert(CArray::JIT.send(:sweepable_pass?, { :a => six }, [6], false))
     refute(CArray::JIT.send(:sweepable_pass?,
-                            { :a => CArray.double(2, 3) }, [6], false))
+                            { :a => CArray.float64(2, 3) }, [6], false))
     refute(CArray::JIT.send(:sweepable_pass?, { :a => six }, [6], true),
            "a masked pass cannot sweep")
   end
@@ -188,9 +188,9 @@ class TestSweep < Minitest::Test
   # nothing: there was no whole-array copy to avoid.  So the operands settle
   # what the shape leaves open, and this one keeps the driver here.
   def test_a_strided_view_keeps_the_driver
-    m = CArray.double(8, 8).seq!
-    other = CArray.double(8, 8).fill(2.0)
-    out = CArray.double(8, 8)
+    m = CArray.float64(8, 8).seq!
+    other = CArray.float64(8, 8).fill(2.0)
+    out = CArray.float64(8, 8)
     every_other = m[nil, (0...8).step(2)]
     doubled = other[nil, (0...8).step(2)]
     into = out[nil, (0...8).step(2)]
@@ -203,8 +203,8 @@ class TestSweep < Minitest::Test
   # The same decision, asked of the predicate rather than read off a kernel.
   def test_the_decision_is_on_the_tier_as_well
     n = 8
-    entity = CArray.double(n).seq!
-    strided = CArray.double(2 * n).seq![(0...(2 * n)).step(2)]
+    entity = CArray.float64(n).seq!
+    strided = CArray.float64(2 * n).seq![(0...(2 * n)).step(2)]
     gathered = entity[CArray.int32(n).seq.reverse]
 
     assert(CArray::JIT.send(:sweepable_pass?, { :a => entity }, [n], false),

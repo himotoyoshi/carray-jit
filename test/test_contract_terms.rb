@@ -12,11 +12,11 @@ class TestContractTerms < Minitest::Test
   # than instance variables -- an instance variable is not something a kernel
   # can reach.
   def operands
-    [CArray.double(3, 4).seq!(1), CArray.double(4, 2).seq!(1)]
+    [CArray.float64(3, 4).seq!(1), CArray.float64(4, 2).seq!(1)]
   end
 
   def square
-    CArray.double(3, 3).seq!(1)
+    CArray.float64(3, 3).seq!(1)
   end
 
   # ---------- contract_terms ----------
@@ -54,7 +54,7 @@ class TestContractTerms < Minitest::Test
 
   def test_writing_into_an_array_of_your_own
     a, b = operands
-    into = CArray.double(3, 2)
+    into = CArray.float64(3, 2)
     returned = CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
                                           free: [:i, :j], into: into)
     assert_same(into, returned)
@@ -66,7 +66,7 @@ class TestContractTerms < Minitest::Test
   # cell -- as `box[0] = ...` does in a block.
   def test_writing_a_single_number_into_an_array_of_your_own
     q = square
-    box = CArray.double(1)
+    box = CArray.float64(1)
     CArray::JIT.contract_terms([[q, [:d, :d]]], free: [], into: box)
     assert_equal((0...3).sum { |d| q[d,d] }, box[0])
   end
@@ -146,7 +146,7 @@ class TestContractTerms < Minitest::Test
 
   def test_the_extents_come_from_the_axes
     a, b = operands
-    wrong = CArray.double(5, 2).seq!(1)
+    wrong = CArray.float64(5, 2).seq!(1)
     assert_match(/`k` addresses axes of different extents/,
                  refusal {
                    CArray::JIT.contract_terms([[a, [:i, :k]], [wrong, [:k, :j]]],
@@ -159,7 +159,7 @@ class TestContractTerms < Minitest::Test
     assert_match(/`into:` has rank 1/,
                  refusal {
                    CArray::JIT.contract_terms([[a, [:i, :k]], [b, [:k, :j]]],
-                                              free: [:i, :j], into: CArray.double(3))
+                                              free: [:i, :j], into: CArray.float64(3))
                  })
   end
 
@@ -168,7 +168,7 @@ class TestContractTerms < Minitest::Test
   # have hidden it, since they are two names for one array.
   def test_writing_into_an_array_that_is_also_a_term
     a, b = operands
-    square = CArray.double(3, 3).seq!(1)
+    square = CArray.float64(3, 3).seq!(1)
     assert_match(/are the same array, which this both writes and reads/,
                  refusal {
                    CArray::JIT.contract_terms([[square, [:i, :k]], [square, [:k, :j]]],
@@ -281,7 +281,7 @@ class TestContractTerms < Minitest::Test
   # block below is one `jit_contract` compiles.
   def test_what_is_not_a_product_of_cells
     a, b = operands
-    into = CArray.double(3, 2)
+    into = CArray.float64(3, 2)
     assert_nil(CArray::JIT.contraction_of(proc { |i, j, k| Math.exp(a[i,k]) * b[k,j] }))
     assert_nil(CArray::JIT.contraction_of(proc { |i, k| a[i,k] / b[k,0] }))
     assert_nil(CArray::JIT.contraction_of(proc { |i, j, k| into[i,j] = a[i,k] * b[k,j] }))
@@ -309,9 +309,9 @@ class TestContractTerms < Minitest::Test
   # rearrangement earns.
   def test_a_chain_contracted_two_at_a_time
     size = 8
-    a = CArray.double(size, size).seq!(1) / (size * size)
-    b = CArray.double(size, size).seq!(0.5) / (size * size)
-    c = CArray.double(size, size).seq!(0.25) / (size * size)
+    a = CArray.float64(size, size).seq!(1) / (size * size)
+    b = CArray.float64(size, size).seq!(0.5) / (size * size)
+    c = CArray.float64(size, size).seq!(0.25) / (size * size)
 
     whole = CArray.jit_contract { |i, l, j, k| a[i,k] * b[k,j] * c[j,l] }
     structure = CArray::JIT.contraction_of(proc { |i, l, j, k| a[i,k] * b[k,j] * c[j,l] })

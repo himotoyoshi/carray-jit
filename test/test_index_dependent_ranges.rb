@@ -20,10 +20,10 @@ class TestIndexDependentRanges < Minitest::Test
   # had to write both triangular loops as `if`, and this is the pair.
   def solve (coefficients, triangular)
     ny, nx = coefficients.dim[0, 2]
-    x = CArray.double(ny, nx, 3)
+    x = CArray.float64(ny, nx, 3)
     if triangular
       CArray.jit_for(ny, nx) { |i, j|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         3.times { |r| 4.times { |c| m[r, c] = coefficients[i, j, r, c] } }
         3.times { |p|
           (p + 1...3).each { |r|
@@ -31,7 +31,7 @@ class TestIndexDependentRanges < Minitest::Test
             4.times { |c| m[r, c] -= f * m[p, c] }
           }
         }
-        sol = CArray.double(3)
+        sol = CArray.float64(3)
         2.step(0, -1) { |r|
           s = m[r, 3]
           (r + 1...3).each { |c| s -= m[r, c] * sol[c] }
@@ -41,7 +41,7 @@ class TestIndexDependentRanges < Minitest::Test
       }
     else
       CArray.jit_for(ny, nx) { |i, j|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         3.times { |r| 4.times { |c| m[r, c] = coefficients[i, j, r, c] } }
         3.times { |p|
           3.times { |r|
@@ -51,7 +51,7 @@ class TestIndexDependentRanges < Minitest::Test
             end
           }
         }
-        sol = CArray.double(3)
+        sol = CArray.float64(3)
         2.step(0, -1) { |r|
           s = m[r, 3]
           3.times { |c| s -= m[r, c] * sol[c] if c > r }
@@ -64,7 +64,7 @@ class TestIndexDependentRanges < Minitest::Test
   end
 
   def dominant_coefficients (ny, nx)
-    coefficients = CArray.double(ny, nx, 3, 4)
+    coefficients = CArray.float64(ny, nx, 3, 4)
     coefficients.seq!(1.0, 0.25)
     ny.times { |i| nx.times { |j| 3.times { |r|
       coefficients[i, j, r, r] = coefficients[i, j, r, r] + 20.0
@@ -82,7 +82,7 @@ class TestIndexDependentRanges < Minitest::Test
   def test_neville_with_a_dependent_range_matches_the_if_version
     triangular = CArray.jit_function(
       "double nv_tri(double x, const double xs[4], const double ys[4])") { |x, xs, ys|
-      t = CArray.double(4)
+      t = CArray.float64(4)
       4.times { |k| t[k] = ys[k] }
       (1...4).each { |m|
         (0...4 - m).each { |k|
@@ -94,7 +94,7 @@ class TestIndexDependentRanges < Minitest::Test
     }
     guarded = CArray.jit_function(
       "double nv_if(double x, const double xs[4], const double ys[4])") { |x, xs, ys|
-      t = CArray.double(4)
+      t = CArray.float64(4)
       4.times { |k| t[k] = ys[k] }
       (1...4).each { |m|
         (0...3).each { |k|
@@ -106,8 +106,8 @@ class TestIndexDependentRanges < Minitest::Test
       }
       t[0]
     }
-    xs = CArray.double(4)
-    ys = CArray.double(4)
+    xs = CArray.float64(4)
+    ys = CArray.float64(4)
     [0.0, 1.0, 2.0, 3.0].each_with_index { |v, k| xs[k] = v }
     [1.0, 2.5, 0.5, 4.0].each_with_index { |v, k| ys[k] = v }
     [0.5, 1.5, 2.25, 2.75].each do |query|
@@ -119,8 +119,8 @@ class TestIndexDependentRanges < Minitest::Test
   # ---------- a captured array under a triangular loop ----------
 
   def test_a_captured_array_read_through_a_dependent_range
-    a = CArray.double(3, 3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3, 3).seq!(1.0)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
       s = 0.0
       3.times { |p| (p + 1...3).each { |k| s = s + a[i, k] } }
@@ -131,12 +131,12 @@ class TestIndexDependentRanges < Minitest::Test
       3.times { |p| (p + 1...3).each { |k| s = s + a[i, k] } }
       s
     }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
   end
 
   def test_a_dependent_range_that_really_does_leave_the_array_is_refused
-    a = CArray.double(3, 3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3, 3).seq!(1.0)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i|
         s = 0.0
@@ -152,7 +152,7 @@ class TestIndexDependentRanges < Minitest::Test
   # earliest start alone the reach stopped at 6, and the kernel wrote
   # `dst[1, 7]` into the row after it.
   def test_a_stepped_range_whose_start_moves_is_held_to_every_pass
-    dst = CArray.double(3, 7)
+    dst = CArray.float64(3, 7)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i|
         2.times { |p| (p...8).step(3) { |k| dst[p, k] = 99.0 } }
@@ -165,7 +165,7 @@ class TestIndexDependentRanges < Minitest::Test
   # The same counting down: 7, 4, 1 from one start and 6, 3, 0 from the
   # next, so `k - 1` reaches -1 though the earliest start never does.
   def test_a_stepped_range_counting_down_whose_start_moves
-    dst = CArray.double(8)
+    dst = CArray.float64(8)
     assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i|
         2.times { |p| (7 - p).step(0, -3) { |k| dst[k - 1] = 5.0 } }
@@ -176,11 +176,11 @@ class TestIndexDependentRanges < Minitest::Test
 
   # And where every pass does fit, the loop runs as Ruby would run it.
   def test_a_stepped_range_whose_start_moves_inside_the_array
-    dst = CArray.double(3, 8)
+    dst = CArray.float64(3, 8)
     CArray.jit_for(1) { |i|
       3.times { |p| (p...8).step(3) { |k| dst[p, k] = k + 10.0 * p } }
     }
-    reference = CArray.double(3, 8)
+    reference = CArray.float64(3, 8)
     3.times { |p| (p...8).step(3) { |k| reference[p, k] = k + 10.0 * p } }
     assert_equal(reference.to_a, dst.to_a)
   end
@@ -188,7 +188,7 @@ class TestIndexDependentRanges < Minitest::Test
   # ---------- the shapes a range may take ----------
 
   def test_a_range_built_with_a_product
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       s = 0.0
       3.times { |p| (p * 2...8).each { |k| s = s + k } }
@@ -201,7 +201,7 @@ class TestIndexDependentRanges < Minitest::Test
   end
 
   def test_a_triangular_loop_that_counts_down
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       s = 0.0
       3.times { |p| p.step(0, -1) { |k| s = s + k } }
@@ -214,19 +214,19 @@ class TestIndexDependentRanges < Minitest::Test
   end
 
   def test_a_range_over_the_kernels_own_index
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       s = 0.0
       (i...4).each { |k| s = s + a[k] }
       out[i] = s
     }
     reference = (0...4).map { |i| (i...4).inject(0.0) { |t, k| t + a[k] } }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   def test_a_range_nested_two_deep
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       s = 0.0
       4.times { |p| (p...4).each { |q| (q...4).each { |r| s = s + r } } }
@@ -243,8 +243,8 @@ class TestIndexDependentRanges < Minitest::Test
   # so its square is read as reaching -1.  The loop never starts there; the
   # widest reading does, and the message has to say why.
   def test_a_reach_the_loop_never_makes_is_refused_and_says_why
-    a = CArray.double(3, 3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3, 3).seq!(1.0)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i|
         s = 0.0
@@ -260,8 +260,8 @@ class TestIndexDependentRanges < Minitest::Test
 
   # A range that mentions no index says nothing about widest readings.
   def test_an_ordinary_range_keeps_its_own_message
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i|
         s = 0.0
@@ -279,10 +279,10 @@ class TestIndexDependentRanges < Minitest::Test
   # throughout, so an axis indexed by a dependent range is checked at the
   # access instead.
   def test_a_local_array_out_of_range_under_a_dependent_range_raises
-    out = CArray.double(2)
+    out = CArray.float64(2)
     assert_raises(IndexError) do
       CArray.jit_for(2) { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         3.times { |p| (p...6).each { |k| w[k] = 1.0 } }
         out[i] = w[0]
       }
@@ -290,9 +290,9 @@ class TestIndexDependentRanges < Minitest::Test
   end
 
   def test_a_local_array_inside_its_shape_is_taken
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = 0.0 }
       3.times { |p| (p...3).each { |k| w[k] = w[k] + 1.0 } }
       out[i] = w[0] + w[1] + w[2]
@@ -304,9 +304,9 @@ class TestIndexDependentRanges < Minitest::Test
   # ---------- every entry point ----------
 
   def test_a_dependent_range_in_every_entry_point
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
 
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       s = 0.0
       3.times { |p| (p + 1...3).each { |k| s = s + k } }
@@ -314,7 +314,7 @@ class TestIndexDependentRanges < Minitest::Test
     }
     assert_equal([5.0] * 4, out.to_a, "jit_for")
 
-    each = CArray.double(4)
+    each = CArray.float64(4)
     CArray.jit_each {
       s = 0.0
       3.times { |p| (p + 1...3).each { |k| s = s + a * k } }
@@ -329,7 +329,7 @@ class TestIndexDependentRanges < Minitest::Test
     }
     assert_equal((0...4).map { |k| a[k] * 5.0 }, mapped.to_a, "jit_map")
 
-    image = CArray.double(6, 6).seq!
+    image = CArray.float64(6, 6).seq!
     stencilled = CArray.jit_stencil(image, border: :clamp) { |win|
       s = 0.0
       3.times { |p| (p + 1...3).each { |k| s = s + win[0, 0] * k } }
@@ -348,7 +348,7 @@ class TestIndexDependentRanges < Minitest::Test
   # A stencil works its frame out from the same ranges, so the border has to
   # come out right too.
   def test_a_stencil_border_under_a_dependent_range
-    image = CArray.double(6, 6).seq!
+    image = CArray.float64(6, 6).seq!
     dependent = CArray.jit_stencil(image, border: :clamp) { |win|
       s = 0.0
       3.times { |p| (p + 1...3).each { |k| s = s + win[-1, 0] * k } }
@@ -371,7 +371,7 @@ class TestIndexDependentRanges < Minitest::Test
   # reached.  The loop runs it; a subscript it walks is checked at each
   # access, as a computed position is.
   def test_a_range_over_a_local_variable_runs
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       s = 0.0
       n = 2
@@ -451,8 +451,8 @@ class TestIndexDependentRanges < Minitest::Test
   # ---------- an ordinary range is untouched ----------
 
   def test_a_range_of_literals_gives_the_same_span_it_always_did
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
       s = 0.0
       (1...4).each { |k| s = s + a[k] }
@@ -463,8 +463,8 @@ class TestIndexDependentRanges < Minitest::Test
   end
 
   def test_a_range_over_a_captured_integer_still_works
-    a = CArray.double(5).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(3)
     limit = 4
     CArray.jit_for(3) { |i|
       s = 0.0

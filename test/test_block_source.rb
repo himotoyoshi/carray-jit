@@ -4,7 +4,7 @@ require_relative "test_helper"
 class TestBlockSource < Minitest::Test
 
   def test_do_end_block
-    values = CArray.double(10)
+    values = CArray.float64(10)
     values[0] = 2.0
     CArray.jit_for(1...10) do |i|
       values[i] = values[i-1] * 1.5
@@ -15,8 +15,8 @@ class TestBlockSource < Minitest::Test
   # Two blocks on one line are what defeats Proc#source_location on its own;
   # the instruction sequence reports columns, which tells them apart.
   def test_two_blocks_on_one_line
-    first = CArray.double(6); first[0] = 1.0
-    second = CArray.double(6); second[0] = 1.0
+    first = CArray.float64(6); first[0] = 1.0
+    second = CArray.float64(6); second[0] = 1.0
     CArray.jit_for(1...6) { |i| first[i] = first[i-1] * 2.0 }; CArray.jit_for(1...6) { |i| second[i] = second[i-1] * 3.0 }
     assert_equal(32.0, first[5])
     assert_equal(243.0, second[5])
@@ -27,7 +27,7 @@ class TestBlockSource < Minitest::Test
   end
 
   def run_in_a_method (weight)
-    values = CArray.double(4)
+    values = CArray.float64(4)
     values[0] = 1.0
     CArray.jit_for(1...4) { |i| values[i] = values[i-1] * weight }
     values
@@ -36,7 +36,7 @@ class TestBlockSource < Minitest::Test
   def test_eval_defined_block_needs_kept_script_lines
     previous = RubyVM.keep_script_lines
     RubyVM.keep_script_lines = true
-    values = CArray.double(6)
+    values = CArray.float64(6)
     values[0] = 1.0
     block = eval("proc { |i| values[i] = values[i-1] * 4.0 }")
     CArray.jit_for(1...6, &block)
@@ -52,7 +52,7 @@ class TestBlockSource < Minitest::Test
     previous = RubyVM.keep_script_lines
     RubyVM.keep_script_lines = false
     error = assert_raises(CArray::JIT::Unsupported) do
-      values = CArray.double(3)
+      values = CArray.float64(3)
       CArray.jit_for(3, &eval("proc { |i| values[i] = 1.0 }"))
     end
     assert_match(/RubyVM\.keep_script_lines = true/, error.message)
@@ -70,8 +70,8 @@ class TestBlockSource < Minitest::Test
                                  storage_types: { :a => "float64",
                                                   :out => "float64" },
                                  scalar_values: {}, masked: false)
-    source = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    source = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     kernel.call({ :a => source, :out => out }, {}, [[0, 3, 1]])
     assert_equal([2.0, 4.0, 6.0], out.to_a)
   end
@@ -81,7 +81,7 @@ class TestBlockSource < Minitest::Test
   # do with a source's encoding: with no locale set it is US-ASCII, and the
   # file comes back as bytes under a tag that every later `rstrip` raises on.
   def test_a_non_ascii_comment_inside_a_block
-    values = CArray.double(4)
+    values = CArray.float64(4)
     CArray.jit_for(4) do |i|
       values[i] = 2.0        # 日本語のコメント
     end
@@ -91,7 +91,7 @@ class TestBlockSource < Minitest::Test
   # Columns locate the block, so what stands before it on the line has to be
   # counted the way the parser counted it.
   def test_non_ascii_before_a_block_on_the_same_line
-    values = CArray.double(4)
+    values = CArray.float64(4)
     倍率 = 3.0; CArray.jit_for(4) { |i| values[i] = 倍率 }
     assert_equal([3.0] * 4, values.to_a)
   end
@@ -102,7 +102,7 @@ class TestBlockSource < Minitest::Test
     script = <<~RUBY
       require "carray"
       require "carray/jit"
-      values = CArray.double(3)
+      values = CArray.float64(3)
       CArray.jit_for(3) do |i|
         values[i] = 7.0      # 日本語のコメント
       end
@@ -118,7 +118,7 @@ class TestBlockSource < Minitest::Test
       # encoding: euc-jp
       require "carray"
       require "carray/jit"
-      values = CArray.double(3)
+      values = CArray.float64(3)
       CArray.jit_for(3) do |i|
         values[i] = 9.0      # 日本語のコメント
       end

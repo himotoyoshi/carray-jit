@@ -20,7 +20,7 @@ require "carray/jit"
 
 # A grey ramp, top to bottom, with a brighter disc sitting in it.
 def picture (rows, columns)
-  image = CArray.double(rows, columns)
+  image = CArray.float64(rows, columns)
   CArray.jit_for(rows, columns) { |y, x|
     dy = (y - rows / 2.0) / (rows / 2.0)
     dx = (x - columns / 2.0) / (columns / 2.0) * 0.42
@@ -38,7 +38,7 @@ end
 def dither (image)
   rows, columns = image.dim
   out = CArray.int8(rows, columns)
-  work = CArray.double(rows + 1, columns + 2)
+  work = CArray.float64(rows + 1, columns + 2)
   work[0..-2, 1..-2] = image
   CArray.jit_for(1) { |z|
     (0...rows).each { |y|
@@ -119,7 +119,7 @@ puts format("  %.1f ms compiled, %.0f ms in Ruby (%.0fx)",
 def dither_backwards (image)
   rows, columns = image.dim
   out = CArray.int8(rows, columns)
-  work = CArray.double(rows + 1, columns + 2)
+  work = CArray.float64(rows + 1, columns + 2)
   work[0..-2, 1..-2] = image
   CArray.jit_for(1) { |z|
     (0...rows).each { |y|

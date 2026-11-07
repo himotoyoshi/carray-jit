@@ -29,10 +29,10 @@ def doubled (source, out)
   CArray.jit_each { out = source * 2.0 }
 end
 
-flat_in = CArray.double(6).seq!
-flat_out = CArray.double(6)
-cube_in = CArray.double(2, 3, 4).seq!
-cube_out = CArray.double(2, 3, 4)
+flat_in = CArray.float64(6).seq!
+flat_out = CArray.float64(6)
+cube_in = CArray.float64(2, 3, 4).seq!
+cube_out = CArray.float64(2, 3, 4)
 
 flat = doubled(flat_in, flat_out)
 cube = doubled(cube_in, cube_out)
@@ -62,9 +62,9 @@ puts
 # whole array.
 
 n = 2_000_000
-src = CArray.double(n).seq!
-b = CArray.double(n).seq!(0.5, 0.5)
-out = CArray.double(n)
+src = CArray.float64(n).seq!
+b = CArray.float64(n).seq!(0.5, 0.5)
+out = CArray.float64(n)
 gather = src[CArray.int32(n).seq.reverse]
 
 def timed
@@ -98,25 +98,25 @@ puts
 # --------------------------
 # Four things, and only the last is about this CArray being old.
 
-columns = CArray.double(64, 64).seq!
-into = CArray.double(64, 64)
+columns = CArray.float64(64, 64).seq!
+into = CArray.float64(64, 64)
 every_other = columns[nil, (0...64).step(2)]
 every_other_out = into[nil, (0...64).step(2)]
 kernel = CArray.jit_each { every_other_out = every_other * 2.0 }
 puts "a strided view operand   loop axes #{kernel.rank}"
 puts "  -- walked in place here, re-gathered there for nothing."
 
-matrix = CArray.double(3, 4).seq!
-row = CArray.double(1, 4).seq!(10.0)
-stretched = CArray.double(3, 4)
+matrix = CArray.float64(3, 4).seq!
+row = CArray.float64(1, 4).seq!(10.0)
+stretched = CArray.float64(3, 4)
 kernel = CArray.jit_each { stretched = matrix * row }
 puts "a stretched operand      loop axes #{kernel.rank}"
 puts "  -- broadcasting arrives as a stride of zero on an axis, and a flat"
 puts "     run has no axes, so cell k would stop lining up."
 
-masked = CArray.double(5).seq!(1.0)
+masked = CArray.float64(5).seq!(1.0)
 masked[2] = UNDEF
-masked_out = CArray.double(5)
+masked_out = CArray.float64(5)
 kernel = CArray.jit_each { masked_out = masked * 2.0 }
 puts "a mask anywhere in the pass     sweepable? #{kernel.sweepable?}"
 puts "  -- an operand that carries one, or a body that asks about one."
@@ -133,7 +133,7 @@ puts
 # names an index reaches neighbours, chooses an order and runs inner loops,
 # none of which a chunked walk can offer.  Splitting the two methods by what
 # the block names drew the same line as what a sweep can drive.
-recurrence = CArray.double(8).seq!(1.0)
+recurrence = CArray.float64(8).seq!(1.0)
 CArray.jit_for(1...8) { |i| recurrence[i] = recurrence[i-1] * 1.5 }
 puts "jit_for stays here by its nature"
 puts "  #{recurrence.to_a.map { |v| v.round(4) }.inspect}"

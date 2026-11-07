@@ -18,16 +18,16 @@ random = Random.new(20260902)
 
 # A diagonally dominant tridiagonal system: a is the subdiagonal, b the
 # diagonal, c the superdiagonal, d the right-hand side.
-a = CArray.double(n) { random.rand(-1.0..1.0) }
-c = CArray.double(n) { random.rand(-1.0..1.0) }
-b = CArray.double(n) { |i| 4.0 + random.rand }
-d = CArray.double(n) { random.rand(-1.0..1.0) }
+a = CArray.float64(n) { random.rand(-1.0..1.0) }
+c = CArray.float64(n) { random.rand(-1.0..1.0) }
+b = CArray.float64(n) { |i| 4.0 + random.rand }
+d = CArray.float64(n) { random.rand(-1.0..1.0) }
 a[0] = 0.0
 c[n-1] = 0.0
 
-cc = CArray.double(n)
-dd = CArray.double(n)
-x  = CArray.double(n)
+cc = CArray.float64(n)
+dd = CArray.float64(n)
+x  = CArray.float64(n)
 
 cc[0] = c[0] / b[0]
 dd[0] = d[0] / b[0]
@@ -62,7 +62,7 @@ puts "  max |A x - d|          #{format('%.3e', residual)}"
 # not back substitution either: each cell reads an x[i+1] the sweep has not
 # reached yet.  It is the answer the same Ruby loop gives, which is the only
 # thing this promises.
-wrong_way = CArray.double(n)
+wrong_way = CArray.float64(n)
 wrong_way[n-1] = dd[n-1]
 CArray.jit_for(0...(n-1)) { |i| wrong_way[i] = dd[i] - cc[i] * wrong_way[i+1] }
 

@@ -10,7 +10,7 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 rows, columns = 5, 6
-src = CArray.double(rows, columns).seq!(1.0)
+src = CArray.float64(rows, columns).seq!(1.0)
 
 # The block's parameters are windows onto the arrays given, in that order:
 # a[0, 0] is the cell the loop is on, a[-1, 0] its neighbour.  The block's
@@ -21,7 +21,7 @@ smoothed = CArray.jit_stencil(src) { |a|
 }
 
 # The same stencil with the indices named, over the interior alone.
-written = CArray.double(rows, columns)
+written = CArray.float64(rows, columns)
 CArray.jit_for(1...(rows-1), 1...(columns-1)) { |i, j|
   written[i, j] = 0.25 * (src[i-1, j] + src[i+1, j] + src[i, j-1] + src[i, j+1])
 }
@@ -35,7 +35,7 @@ puts "  border missing by default  #{smoothed.count_masked} cells"
 # ---------------------------------------------------------------- the border
 
 # Five answers, on one row of a small array so they can be read side by side.
-line = CArray.double(1, 5).seq!(1.0)              # 1 2 3 4 5
+line = CArray.float64(1, 5).seq!(1.0)              # 1 2 3 4 5
 
 def row (result)
   result.to_a[0].map { |e| e == UNDEF ? "  --" : format("%4.1f", e) }.join(" ")
@@ -46,7 +46,7 @@ puts "border:, on [1 2 3 4 5] averaging each cell with its two neighbours"
 [:mask, :skip, :zero, :clamp, :wrap].each do |border|
   # :skip leaves the border as it was found, so what it was found as is worth
   # seeing: this one is filled with -1 first.
-  into = CArray.double(1, 5).seq!(-1.0, 0.0)
+  into = CArray.float64(1, 5).seq!(-1.0, 0.0)
   result = CArray.jit_stencil(line, border: border, into: into) { |a|
     (a[0, -1] + a[0, 0] + a[0, 1]) / 3.0
   }
@@ -64,8 +64,8 @@ end
 # Each array given gets a window, in the order the block names them; the names
 # shadow whatever they hold outside, as CArray.fuse's do.  A diffusion step
 # with a conductivity that varies from cell to cell:
-u = CArray.double(6, 6) { |i, j| (i - 2.5).abs + (j - 2.5).abs }
-k = CArray.double(6, 6).fill(0.2)
+u = CArray.float64(6, 6) { |i, j| (i - 2.5).abs + (j - 2.5).abs }
+k = CArray.float64(6, 6).fill(0.2)
 
 stepped = CArray.jit_stencil(u, k, border: :clamp) { |u, k|
   u[0,0] + k[0,0] * (u[-1,0] + u[1,0] + u[0,-1] + u[0,1] - 4.0 * u[0,0])

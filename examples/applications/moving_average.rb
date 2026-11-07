@@ -15,7 +15,7 @@ n = 500_000
 random = Random.new(20260902)
 
 # A price series: a multiplicative random walk with a slow drift.
-price = CArray.double(n)
+price = CArray.float64(n)
 value = 100.0
 n.times do |i|
   value *= 1.0 + random.rand(-0.004..0.004) + 0.000002 * Math.sin(i / 5000.0)
@@ -23,9 +23,9 @@ n.times do |i|
 end
 
 alpha = 0.02
-smoothed = CArray.double(n)
-peak = CArray.double(n)
-drawdown = CArray.double(n)
+smoothed = CArray.float64(n)
+peak = CArray.float64(n)
+drawdown = CArray.float64(n)
 
 smoothed[0] = price[0]
 peak[0] = price[0]
@@ -58,8 +58,8 @@ puts format("  worst drawdown  %.2f%%  at sample %d", worst * 100, (drawdown.eq(
 # block closed over, and it reaches the kernel as an argument, so changing the
 # window does not compile anything again.
 window = 200
-cumulative = CArray.double(n)
-rolling = CArray.double(n)
+cumulative = CArray.float64(n)
+rolling = CArray.float64(n)
 cumulative[0] = price[0]
 CArray.jit_for(1...n) { |i| cumulative[i] = cumulative[i-1] + price[i] }
 CArray.jit_for(window...n) { |i|

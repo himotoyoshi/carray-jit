@@ -64,7 +64,7 @@ class TestFunctionNames < Minitest::Test
   def test_a_kernel_calling_both_pastes_both
     one = CArray.jit_function("double f(double x)") { |x| x + 1.0 }
     two = CArray.jit_function("double f(double x)") { |x| x + 2.0 }
-    out = CArray.double(3)
+    out = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i| out[i] = one.call(i * 1.0) + two.call(i * 1.0) }
     assert_equal [3.0, 5.0, 7.0], out.to_a
     assert_includes kernel.c_source, one.symbol.to_s

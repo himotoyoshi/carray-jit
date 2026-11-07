@@ -23,10 +23,10 @@ refuses something, the refusal is the answer and is printed under the code.
 `hint: the method for work that reaches no neighbour`
 
 ```ruby
-a = CA_DOUBLE([1, 2, 3])
-b = CA_DOUBLE([2, 3, 4])
-c = CA_DOUBLE([3, 4, 5])
-out = CArray.double(3)
+a = CA_FLOAT64([1, 2, 3])
+b = CA_FLOAT64([2, 3, 4])
+c = CA_FLOAT64([3, 4, 5])
+out = CArray.float64(3)
 
 CArray.jit_each { out = a + b * c }
 out.to_a                            #=> [7.0, 14.0, 23.0]
@@ -53,9 +53,9 @@ half.data_type_name                 #=> "float64"
 `hint: CArray will broadcast an axis, but not invent a rank`
 
 ```ruby
-table = CArray.double(2, 3).seq!(1.0)
-row = CA_DOUBLE([10, 20, 30]).reshape(1, 3)   # 1x3, not 3: else `ndim mismatch`
-out = CArray.double(2, 3)
+table = CArray.float64(2, 3).seq!(1.0)
+row = CA_FLOAT64([10, 20, 30]).reshape(1, 3)   # 1x3, not 3: else `ndim mismatch`
+out = CArray.float64(2, 3)
 
 CArray.jit_each { out = table + row }
 out.to_a                            #=> [[11.0, 22.0, 33.0], [14.0, 25.0, 36.0]]
@@ -66,8 +66,8 @@ out.to_a                            #=> [[11.0, 22.0, 33.0], [14.0, 25.0, 36.0]]
 `hint: nothing special is needed`
 
 ```ruby
-a = CA_DOUBLE([1, 2])
-out = CArray.double(2)
+a = CA_FLOAT64([1, 2])
+out = CArray.float64(2)
 
 [2.0, 5.0].map { |gain|
   CArray.jit_each { out = a * gain }   # a captured scalar is an argument,
@@ -80,9 +80,9 @@ out = CArray.double(2)
 `hint: CScalar`
 
 ```ruby
-a = CA_DOUBLE([1, 2])
-gain = CScalar.double() { 2.5 }
-out = CArray.double(2)
+a = CA_FLOAT64([1, 2])
+gain = CScalar.float64() { 2.5 }
+out = CArray.float64(2)
 
 CArray.jit_each { out = a * gain }
 out.to_a                            #=> [2.5, 5.0]
@@ -93,8 +93,8 @@ out.to_a                            #=> [2.5, 5.0]
 `hint: the branch is an expression`
 
 ```ruby
-a = CA_DOUBLE([-2, 0, 1.5, 3])
-out = CArray.double(4)
+a = CA_FLOAT64([-2, 0, 1.5, 3])
+out = CArray.float64(4)
 
 CArray.jit_each { out = a < 0.0 ? 0.0 : a }
 out.to_a                            #=> [0.0, 0.0, 1.5, 3.0]
@@ -105,8 +105,8 @@ out.to_a                            #=> [0.0, 0.0, 1.5, 3.0]
 `hint: the cell has to say which cell it reads`
 
 ```ruby
-a = CArray.double(5).seq!(1.0)
-out = CArray.double(5)
+a = CArray.float64(5).seq!(1.0)
+out = CArray.float64(5)
 
 CArray.jit_for(5) { |i| out[i] = a[4 - i] }
 out.to_a                            #=> [5.0, 4.0, 3.0, 2.0, 1.0]
@@ -117,8 +117,8 @@ out.to_a                            #=> [5.0, 4.0, 3.0, 2.0, 1.0]
 `hint: where can the range start?`
 
 ```ruby
-a = CA_DOUBLE([1, 3, 6, 10])
-out = CArray.double(4)
+a = CA_FLOAT64([1, 3, 6, 10])
+out = CArray.float64(4)
 
 CArray.jit_for(1...4) { |i| out[i] = a[i] - a[i - 1] }
 out.to_a                            #=> [0.0, 2.0, 3.0, 4.0]
@@ -131,8 +131,8 @@ out.to_a                            #=> [0.0, 2.0, 3.0, 4.0]
 `hint: read what this loop just wrote`
 
 ```ruby
-a = CA_DOUBLE([4, 8, 8, 8])
-out = CArray.double(4)
+a = CA_FLOAT64([4, 8, 8, 8])
+out = CArray.float64(4)
 out[0] = a[0]
 
 CArray.jit_for(1...4) { |i| out[i] = 0.5 * a[i] + 0.5 * out[i - 1] }
@@ -144,8 +144,8 @@ out.to_a                            #=> [4.0, 6.0, 7.0, 7.5]
 `hint: two parameters, two extents`
 
 ```ruby
-a = CArray.double(2, 3).seq!(1.0)
-out = CArray.double(3, 2)
+a = CArray.float64(2, 3).seq!(1.0)
+out = CArray.float64(3, 2)
 
 CArray.jit_for(2, 3) { |i, j| out[j, i] = a[i, j] }
 out.to_a                            #=> [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
@@ -156,8 +156,8 @@ out.to_a                            #=> [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
 `hint: a loop inside the cell`
 
 ```ruby
-a = CA_DOUBLE([[1, 3, 2], [9, 4, 5]])
-out = CArray.double(2)
+a = CA_FLOAT64([[1, 3, 2], [9, 4, 5]])
+out = CArray.float64(2)
 
 CArray.jit_for(2) { |i|
   best = a[i, 0]
@@ -196,9 +196,9 @@ counts.to_a                         #=> [2, 3, 1]
 `hint: Math`
 
 ```ruby
-x = CA_DOUBLE([3, 5])
-y = CA_DOUBLE([4, 12])
-out = CArray.double(2)
+x = CA_FLOAT64([3, 5])
+y = CA_FLOAT64([4, 12])
+out = CArray.float64(2)
 
 CArray.jit_each { out = Math.sqrt(x * x + y * y) }
 out.to_a                            #=> [5.0, 13.0]
@@ -209,8 +209,8 @@ out.to_a                            #=> [5.0, 13.0]
 `hint: neither guesses`
 
 ```ruby
-a = CA_DOUBLE([1, 2, 3])
-out = CArray.double(3)
+a = CA_FLOAT64([1, 2, 3])
+out = CArray.float64(3)
 
 CArray.jit_each { |i| out[i] = a[i] + 1.0 }
 #=> CArray::JIT::Unsupported: this block names the arrays it reaches, so it
@@ -247,7 +247,7 @@ digits.to_a                         #=> [1, 2, 4, 5]
 `hint: stop looking`
 
 ```ruby
-rows = CA_DOUBLE([[1, 2, 9, 3], [5, 1, 1, 8]])
+rows = CA_FLOAT64([[1, 2, 9, 3], [5, 1, 1, 8]])
 first = CArray.int32(2)
 
 CArray.jit_for(2) { |i|
@@ -268,8 +268,8 @@ first.to_a                          #=> [2, 0]
 `hint: the index that repeats`
 
 ```ruby
-a = CArray.double(2, 3).seq!(1.0)
-b = CArray.double(3, 2).seq!(1.0)
+a = CArray.float64(2, 3).seq!(1.0)
+b = CArray.float64(3, 2).seq!(1.0)
 
 CArray.jit_contract { |i, j, k| a[i, k] * b[k, j] }.to_a
 #=> [[22.0, 28.0], [49.0, 64.0]]
@@ -280,8 +280,8 @@ CArray.jit_contract { |i, j, k| a[i, k] * b[k, j] }.to_a
 `hint: the row index repeats too, and must not be summed`
 
 ```ruby
-x = CA_DOUBLE([[1, 2, 3], [4, 5, 6]])
-y = CA_DOUBLE([[1, 1, 1], [2, 2, 2]])
+x = CA_FLOAT64([[1, 2, 3], [4, 5, 6]])
+y = CA_FLOAT64([[1, 1, 1], [2, 2, 2]])
 
 CArray.jit_contract(:b) { |k| x[b, k] * y[b, k] }.to_a
 #=> [6.0, 30.0]
@@ -293,7 +293,7 @@ CArray.jit_contract(:b) { |k| x[b, k] * y[b, k] }.to_a
 `hint: no index, no extent, no edge`
 
 ```ruby
-a = CA_DOUBLE([1, 2, 3, 4])
+a = CA_FLOAT64([1, 2, 3, 4])
 
 CArray.jit_stencil(a, border: :zero) { |w| w[-1] + w[0] + w[1] }.to_a
 #=> [3.0, 6.0, 9.0, 7.0]
@@ -306,9 +306,9 @@ CArray.jit_stencil(a, border: :zero) { |w| w[-1] + w[0] + w[1] }.to_a
 `hint: ask about one cell`
 
 ```ruby
-a = CA_DOUBLE([1, 2, 3])
+a = CA_FLOAT64([1, 2, 3])
 a[1] = UNDEF
-out = CArray.double(3)
+out = CArray.float64(3)
 
 CArray.jit_for(3) { |i| out[i] = a[i] == UNDEF ? 0.0 : a[i] }
 out.to_a                            #=> [1.0, 0.0, 3.0]
@@ -321,7 +321,7 @@ out.to_a                            #=> [1.0, 0.0, 3.0]
 `hint: hand the kernel the column`
 
 ```ruby
-table = CArray.double(3, 3)
+table = CArray.float64(3, 3)
 column = table[nil, 1]
 
 CArray.jit_for(3) { |i| column[i] = i + 1.0 }
@@ -362,8 +362,8 @@ out.to_a                            #=> [3]
 `hint: which way does the loop have to run, and where do you say so?`
 
 ```ruby
-a = CA_DOUBLE([1, 2, 3, 4, 5])
-out = CArray.double(5)
+a = CA_FLOAT64([1, 2, 3, 4, 5])
+out = CArray.float64(5)
 out[4] = a[4]
 
 CArray.jit_for(3.step(0, -1)) { |i| out[i] = a[i] + out[i + 1] }
@@ -371,7 +371,7 @@ out.to_a                            #=> [15.0, 14.0, 12.0, 9.0, 5.0]
 ```
 
 ```ruby
-out = CArray.double(5)
+out = CArray.float64(5)
 out[4] = a[4]
 
 CArray.jit_for(0...4) { |i| out[i] = a[i] + out[i + 1] }
@@ -423,8 +423,8 @@ best[0]                             #=> 3
 `hint: the grid is sorted`
 
 ```ruby
-grid = CA_DOUBLE([0, 1, 4, 9, 16])
-query = CA_DOUBLE([0.5, 5.0, 9.0, 12.0])
+grid = CA_FLOAT64([0, 1, 4, 9, 16])
+query = CA_FLOAT64([0.5, 5.0, 9.0, 12.0])
 found = CArray.int32(4)
 
 CArray.jit_for(4) { |i|
@@ -480,7 +480,7 @@ CArray.jit_for(2) { |i|
 ```ruby
 z = CA_CMPLX128([Complex(0, 1), Complex(1, 1)])
 squared = CArray.cmplx128(2)
-size = CArray.double(2)
+size = CArray.float64(2)
 
 CArray.jit_each { squared = z * z }
 CArray.jit_each { size = z.abs }
@@ -495,7 +495,7 @@ size.to_a                           #=> [1.0, 1.4142135623730951]
 
 ```ruby
 random = CArray::Rng.new(seed: 3)
-draws = CArray.double(100_000)
+draws = CArray.float64(100_000)
 
 CArray.jit_for(100_000) { |i| draws[i] = random.random }
 draws.mean.round(4)                 #=> 0.5006

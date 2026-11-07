@@ -25,24 +25,24 @@ HALF = WINDOW / 2
 
 # A smooth signal, some noise, and a spike every few hundred samples.
 random = CArray::Rng.new(seed: 20260913)
-noise = CArray.double(SAMPLES)
+noise = CArray.float64(SAMPLES)
 noise.random!(rng: random)
-chance = CArray.double(SAMPLES)
+chance = CArray.float64(SAMPLES)
 chance.random!(rng: random)
-signal = CArray.double(SAMPLES)
-clean = CArray.double(SAMPLES)
+signal = CArray.float64(SAMPLES)
+clean = CArray.float64(SAMPLES)
 CArray.jit_for(SAMPLES) { |i|
   smooth = 10.0 * Math.sin(i / 5000.0) + 0.5 * (noise[i] - 0.5)
   clean[i] = smooth
   signal[i] = chance[i] < 0.002 ? smooth + 40.0 * (chance[i] * 500.0 - 0.5) : smooth
 }
 
-sorted_out = CArray.double(SAMPLES)
-network_out = CArray.double(SAMPLES)
+sorted_out = CArray.float64(SAMPLES)
+network_out = CArray.float64(SAMPLES)
 
 # One: the window copied into the cell's own row of a workspace and put in
 # order there.  Straightforward, and every comparison is a memory access.
-workspace = CArray.double(SAMPLES, WINDOW)
+workspace = CArray.float64(SAMPLES, WINDOW)
 
 def by_sorting (signal, out, workspace)
   n = signal.elements

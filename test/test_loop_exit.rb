@@ -164,7 +164,7 @@ class TestLoopExit < Minitest::Test
       3.times { k = 0; found = 0.0; while found >= 0.0; found = table.fetch(k); k += 1; end }
     }
     output = run_isolated(<<~RUBY)
-      a = CArray.double(5).seq!(1.0)
+      a = CArray.float64(5).seq!(1.0)
       out = CArray.int64(3)
       begin
         CArray.jit_for(3) { |i|
@@ -235,9 +235,9 @@ class TestLoopExit < Minitest::Test
       16.times { |k| acc += table.fetch(positions[k]) }
     }
     output = run_isolated(<<~RUBY)
-      a = CArray.double(8).seq!(1.0)
+      a = CArray.float64(8).seq!(1.0)
       index = CArray.int64(16).seq!
-      out = CArray.double(2)
+      out = CArray.float64(2)
       begin
         CArray.jit_for(2) { |i|
           acc = 0.0

@@ -30,29 +30,29 @@ def report (label, array)
               label, tier, stride, seconds * 1e3, seconds / array.elements * 1e9)
 end
 
-entity = CArray.double(LENGTH)
+entity = CArray.float64(LENGTH)
 report("entity", entity)
 
-rows = CArray.double(4, LENGTH)
+rows = CArray.float64(4, LENGTH)
 report("contiguous row of a matrix", rows[1, nil])
 
-columns = CArray.double(LENGTH, 2)
+columns = CArray.float64(LENGTH, 2)
 report("strided column (pitch 2)", columns[nil, 0])
 
-wide = CArray.double(LENGTH, 8)
+wide = CArray.float64(LENGTH, 8)
 report("strided column (pitch 8)", wide[nil, 0])
 
-reversed = CArray.double(LENGTH)
+reversed = CArray.float64(LENGTH)
 report("reversed (negative stride)", reversed[-1..0])
 
-gathered = CArray.double(LENGTH).seq!
+gathered = CArray.float64(LENGTH).seq!
 selection = gathered[gathered >= 0.0]
 report("gathered (materialised)", selection)
 
 # Is folding a non-contiguous view actually better than copying it out,
 # running the contiguous loop, and copying it back?
 puts
-copy_source = CArray.double(LENGTH, 2)
+copy_source = CArray.float64(LENGTH, 2)
 column = copy_source[nil, 0]
 run(column)
 folded = SAMPLES.times.map { Benchmark.realtime { run(column) } }.sort[SAMPLES / 2]

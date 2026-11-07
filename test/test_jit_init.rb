@@ -46,7 +46,7 @@ class TestJitInit < Minitest::Test
   end
 
   def test_reaches_an_array_it_closes_over
-    table = CA_INT([10, 20, 30])
+    table = CA_INT32([10, 20, 30])
     assert_equal [20, 40, 60], CArray.int32(3).jit_init { |i| table[i] * 2 }.to_a
   end
 

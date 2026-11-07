@@ -29,7 +29,7 @@ class TestFastPath < Minitest::Test
   end
 
   def test_kernel_is_compiled_once_for_a_block
-    values = CArray.double(8)
+    values = CArray.float64(8)
     calls = counting(CArray::JIT::Compiler, :build) do
       5.times { CArray.jit_for(1...8) { |i| values[i] = values[i-1] + 1.0 } }
     end
@@ -40,7 +40,7 @@ class TestFastPath < Minitest::Test
   # the single most expensive step; the instruction sequence identifies the
   # block so it happens once.
   def test_block_source_is_read_once
-    values = CArray.double(8)
+    values = CArray.float64(8)
     calls = counting(CArray::JIT::BlockReader, :read) do
       5.times { CArray.jit_for(1...8) { |i| values[i] = values[i-1] + 2.0 } }
     end
@@ -48,7 +48,7 @@ class TestFastPath < Minitest::Test
   end
 
   def test_analysis_happens_once_per_kernel
-    values = CArray.double(8)
+    values = CArray.float64(8)
     calls = counting(CArray::JIT::Analyzer, :new) do
       5.times { CArray.jit_for(1...8) { |i| values[i] = values[i-1] + 3.0 } }
     end
@@ -56,7 +56,7 @@ class TestFastPath < Minitest::Test
   end
 
   def test_type_assignment_happens_once_per_kernel
-    values = CArray.double(8)
+    values = CArray.float64(8)
     calls = counting(CArray::JIT::TypeAssignment, :new) do
       5.times { CArray.jit_for(1...8) { |i| values[i] = values[i-1] + 4.0 } }
     end
@@ -71,7 +71,7 @@ class TestFastPath < Minitest::Test
   # A capture whose value changes must not recompile, since only its type is
   # part of the kernel.
   def test_changing_a_capture_value_does_not_recompile
-    values = CArray.double(8)
+    values = CArray.float64(8)
     calls = counting(CArray::JIT::Compiler, :build) do
       [0.5, 0.25, 0.125].each do |weight|
         CArray.jit_for(1...8) { |i| values[i] = weight * values[i-1] }
@@ -93,8 +93,8 @@ class TestFastPath < Minitest::Test
   # Two kernels that differ only in which array they touch still share a
   # compiled object, because the C is the same.
   def test_the_same_source_over_different_arrays_compiles_once
-    first = CArray.double(8)
-    second = CArray.double(8)
+    first = CArray.float64(8)
+    second = CArray.float64(8)
     calls = counting(CArray::JIT::Compiler, :build) do
       CArray.jit_for(1...8) { |i| first[i] = first[i-1] + 1.0 }
       CArray.jit_for(1...8) { |i| second[i] = second[i-1] + 1.0 }
@@ -105,7 +105,7 @@ class TestFastPath < Minitest::Test
 
   def test_capture_values_are_reread_each_call
     weight = 2.0
-    values = CArray.double(4)
+    values = CArray.float64(4)
     kernel = proc { |i| values[i] = values[i-1] * weight }
 
     values[0] = 1.0

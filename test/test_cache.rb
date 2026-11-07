@@ -57,7 +57,7 @@ class TestCache < Minitest::Test
     assert_equal(4, built.size)
     assert_equal(1, built.count(true), "one thread builds and the rest reuse")
 
-    array = CArray.double(3)
+    array = CArray.float64(3)
     array[0] = 1.0
     CArray::JIT.clear_registry
     kernel = compile_kernel(source, arrays: { :a => "float64" })

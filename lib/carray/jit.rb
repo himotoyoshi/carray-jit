@@ -2051,7 +2051,7 @@ class CArray
         }
         return unless shadowed
         raise Unsupported,
-              "`#{shadowed}` is made in this block with `CArray.double` or " \
+              "`#{shadowed}` is made in this block with `CArray.float64` or " \
               "its kin, and the block also closes over an array named " \
               "`#{shadowed}`; in this spelling an assignment writes that " \
               "array's cell, so the line means one thing to a reader and " \

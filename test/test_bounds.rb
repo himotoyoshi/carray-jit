@@ -6,7 +6,7 @@ require_relative "test_helper"
 class TestBounds < Minitest::Test
 
   def test_range_that_starts_too_early
-    values = CArray.double(8)
+    values = CArray.float64(8)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(0...8) { |i| values[i] = values[i-1] * 2.0 }
     end
@@ -15,7 +15,7 @@ class TestBounds < Minitest::Test
   end
 
   def test_extent_that_reaches_past_the_end
-    values = CArray.double(8)
+    values = CArray.float64(8)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(7.step(0, -1)) { |i| values[i] = values[i+1] * 2.0 }
     end
@@ -23,7 +23,7 @@ class TestBounds < Minitest::Test
   end
 
   def test_depth_two_needs_two_cells_of_room
-    values = CArray.double(8)
+    values = CArray.float64(8)
     assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1...8) { |i| values[i] = values[i-1] + values[i-2] }
     end
@@ -31,8 +31,8 @@ class TestBounds < Minitest::Test
   end
 
   def test_bounds_are_checked_per_array
-    short = CArray.double(4)
-    long = CArray.double(16)
+    short = CArray.float64(4)
+    long = CArray.float64(16)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(0...16) { |i| long[i] = short[i] * 2.0 }
     end
@@ -40,8 +40,8 @@ class TestBounds < Minitest::Test
   end
 
   def test_bounds_are_checked_per_axis
-    values = CArray.double(6, 6)
-    other = CArray.double(6, 6).seq!
+    values = CArray.float64(6, 6)
+    other = CArray.float64(6, 6).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1...5, 0...6) { |i, j| values[i, j] = other[i, j-1] }
     end
@@ -49,7 +49,7 @@ class TestBounds < Minitest::Test
   end
 
   def test_extent_count_must_match_the_index_count
-    values = CArray.double(4, 4)
+    values = CArray.float64(4, 4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(0...4) { |i, j| values[i, j] = 1.0 }
     end
@@ -57,7 +57,7 @@ class TestBounds < Minitest::Test
   end
 
   def test_array_rank_must_match_the_index_count
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(0...4, 0...4) { |i, j| values[i, j] = 1.0 }
     end
@@ -65,7 +65,7 @@ class TestBounds < Minitest::Test
   end
 
   def test_endless_range_is_refused
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1..) { |i| values[i] = 1.0 }
     end
@@ -73,7 +73,7 @@ class TestBounds < Minitest::Test
   end
 
   def test_extent_of_the_wrong_kind_is_refused
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for("all") { |i| values[i] = 1.0 }
     end
@@ -85,8 +85,8 @@ class TestBounds < Minitest::Test
   # is called -- alongside the bounds check, which is already there.
   def test_an_offset_may_be_a_captured_integer
     n = 12
-    source = CArray.double(n).seq!(1.0)
-    result = CArray.double(n)
+    source = CArray.float64(n).seq!(1.0)
+    result = CArray.float64(n)
     before = CArray::JIT.registry.size
     [1, 2, 5].each do |window|
       CArray.jit_for(window...n) { |i| result[i] = source[i] - source[i - window] }
@@ -99,8 +99,8 @@ class TestBounds < Minitest::Test
 
   def test_a_captured_offset_is_bounds_checked_with_its_value
     n = 12
-    source = CArray.double(n).seq!(1.0)
-    result = CArray.double(n)
+    source = CArray.float64(n).seq!(1.0)
+    result = CArray.float64(n)
     window = 4
     CArray.jit_for(window...n) { |i| result[i] = source[i - window] }
     error = assert_raises(CArray::JIT::Unsupported) do
@@ -118,7 +118,7 @@ class TestBounds < Minitest::Test
     n = 12
     window = 3
     [(0...(n - window)).to_a, (n - window - 1).step(0, -1).to_a].each do |order|
-      values = CArray.double(n).seq!(1.0)
+      values = CArray.float64(n).seq!(1.0)
       extent = order.first < order.last ? (0...(n - window)) :
                                           (n - window - 1).step(0, -1)
       CArray.jit_for(extent) { |i| values[i] = values[i + window] * 2.0 }
@@ -132,7 +132,7 @@ class TestBounds < Minitest::Test
   # An offset that comes out zero reads the cell it writes, which is no reach
   # at all -- the same as a literal 0.
   def test_a_captured_offset_of_zero
-    values = CArray.double(6).seq!(1.0)
+    values = CArray.float64(6).seq!(1.0)
     shift = 0
     CArray.jit_for(6) { |i| values[i] = values[i + shift] + 1.0 }
     assert_equal((2..7).map(&:to_f), values.to_a)
@@ -142,7 +142,7 @@ class TestBounds < Minitest::Test
   # the loop it looks like runs no passes and says nothing.  A kernel handed
   # one ran no passes too, which is the silence the guide says it prevents.
   def test_a_range_that_counts_down_is_refused
-    values = CArray.double(6)
+    values = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4..0) { |i| values[i] = 1.0 }
     end
@@ -158,7 +158,7 @@ class TestBounds < Minitest::Test
   # An empty range whose ends agree is a count of zero, not a mistake: a
   # slice that came out empty walks no cells and says nothing.
   def test_an_empty_range_still_runs_no_passes_quietly
-    values = CArray.double(3)
+    values = CArray.float64(3)
     CArray.jit_for(0...0) { |i| values[i] = 1.0 }
     CArray.jit_for(2...2) { |i| values[i] = 1.0 }
     assert_equal([0.0] * 3, values.to_a)

@@ -29,8 +29,8 @@ CAP = 50                                # a `while` in a kernel takes a cap
 
 # Stand-ins for the fields that would have been read: a pole-to-pole
 # temperature gradient with a wave in it, and humidity that varies across it.
-temperature = CArray.double(ROWS, COLUMNS)
-humidity = CArray.double(ROWS, COLUMNS)
+temperature = CArray.float64(ROWS, COLUMNS)
+humidity = CArray.float64(ROWS, COLUMNS)
 CArray.jit_for(ROWS, COLUMNS) { |j, i|
   latitude = 90.0 - 180.0 * j / (ROWS - 1)
   temperature[j, i] = 30.0 - 55.0 * (latitude / 90.0).abs +
@@ -38,8 +38,8 @@ CArray.jit_for(ROWS, COLUMNS) { |j, i|
   humidity[j, i] = 35.0 + 60.0 * (0.5 + 0.5 * Math.cos(i / 30.0 + j / 60.0))
 }
 
-dew_point = CArray.double(ROWS, COLUMNS)
-wet_bulb = CArray.double(ROWS, COLUMNS)
+dew_point = CArray.float64(ROWS, COLUMNS)
+wet_bulb = CArray.float64(ROWS, COLUMNS)
 rounds_taken = CArray.int8(ROWS, COLUMNS)
 
 # Everything in one walk.  `vapour` and `gamma` are the cell's own values and

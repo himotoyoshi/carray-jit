@@ -755,7 +755,7 @@ class CArray
         return [] unless node
         return [] if raise_call?(node)
         # The receiver of a constructor is part of a spelling rather than a
-        # name the block reached outside for: `CArray.double(9)` says what to
+        # name the block reached outside for: `CArray.float64(9)` says what to
         # declare, and the class in front of it is not a value to look up.
         # Left in, it is looked up, found to be a Class, and refused for
         # being one -- which says nothing about the line that was written.
@@ -835,7 +835,7 @@ class CArray
         built = statements[0..-2].map { |node| build_statement(node) }
         if map_assignment
           built << build_statement(last)
-          # `w = CArray.double(4)` as the last line: the block's value in Ruby
+          # `w = CArray.float64(4)` as the last line: the block's value in Ruby
           # is the array, and a cell of the result has nowhere to put one.
           if built.last.is_a?(LocalArrayDeclaration)
             raise Unsupported.new(
@@ -2031,7 +2031,7 @@ class CArray
         if passed && @array_names.include?(passed)
           raise Unsupported.new(
             "`#{node.name}` takes a local array -- one this block made with " \
-            "`CArray.double(n)` or its kin -- and `#{passed}` is an array " \
+            "`CArray.float64(n)` or its kin -- and `#{passed}` is an array " \
             "the block closed over. Walking all of it at every cell is a " \
             "pass over the whole array per cell, which is not what the line " \
             "looks like it costs; `#{passed}.#{node.name}` outside the " \
@@ -2096,7 +2096,7 @@ class CArray
         end
       end
 
-      # `CArray.double(9)` and the rest of the singleton methods CArray's own
+      # `CArray.float64(9)` and the rest of the singleton methods CArray's own
       # `Init` defines: the type is the name and the shape is the arguments.
       def read_type_constructor (node, arguments)
         if LOCAL_ARRAY_REFUSED_TYPES.include?(node.name)

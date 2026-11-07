@@ -68,9 +68,9 @@ end
 
 require "carray/jit"
 
-a = CArray.double(N).seq!
-b = CArray.double(N).seq!(0.5, 0.5)
-out = CArray.double(N)
+a = CArray.float64(N).seq!
+b = CArray.float64(N).seq!(0.5, 0.5)
+out = CArray.float64(N)
 
 mode, count, lean = ARGV[0], ARGV[1].to_i, ARGV[2]
 parts = lambda { |x, y| (1..count).map { |k| x + y * k.to_f } }

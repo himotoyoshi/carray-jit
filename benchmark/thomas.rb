@@ -35,10 +35,10 @@ def median (list) = list.sort[list.size / 2]
 
 def build_system (n)
   random = Random.new(20260901)
-  lower = CArray.double(n)
-  diagonal = CArray.double(n)
-  upper = CArray.double(n)
-  right = CArray.double(n)
+  lower = CArray.float64(n)
+  diagonal = CArray.float64(n)
+  upper = CArray.float64(n)
+  right = CArray.float64(n)
   n.times do |i|
     lower[i] = i.zero? ? 0.0 : random.rand(-1.0..1.0)
     upper[i] = (i == n - 1) ? 0.0 : random.rand(-1.0..1.0)
@@ -50,9 +50,9 @@ end
 
 def solve_with_jit (a, b, c, d)
   n = a.elements
-  cc = CArray.double(n)
-  dd = CArray.double(n)
-  x = CArray.double(n)
+  cc = CArray.float64(n)
+  dd = CArray.float64(n)
+  x = CArray.float64(n)
   cc[0] = c[0] / b[0]
   dd[0] = d[0] / b[0]
   CArray.jit_for(1...n) { |i|
@@ -67,9 +67,9 @@ end
 
 def solve_in_ruby_over_carray (a, b, c, d)
   n = a.elements
-  cc = CArray.double(n)
-  dd = CArray.double(n)
-  x = CArray.double(n)
+  cc = CArray.float64(n)
+  dd = CArray.float64(n)
+  x = CArray.float64(n)
   cc[0] = c[0] / b[0]
   dd[0] = d[0] / b[0]
   (1...n).each do |i|

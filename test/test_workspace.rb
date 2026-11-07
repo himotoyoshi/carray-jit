@@ -9,9 +9,9 @@ class TestWorkspace < Minitest::Test
 
   def test_filling_a_row_and_reading_it_back
     rows, width = 5, 4
-    source = CArray.double(rows) { |i| i + 1.0 }
-    work = CArray.double(rows, width)
-    out = CArray.double(rows)
+    source = CArray.float64(rows) { |i| i + 1.0 }
+    work = CArray.float64(rows, width)
+    out = CArray.float64(rows)
 
     CArray.jit_for(rows) { |i|
       (0...width).each { |k| work[i, k] = source[i] * (k + 1) }
@@ -29,8 +29,8 @@ class TestWorkspace < Minitest::Test
   # stride an extent says a downward sweep with.
   def test_walking_the_row_back_down
     rows, width = 3, 5
-    work = CArray.double(rows, width)
-    out = CArray.double(rows)
+    work = CArray.float64(rows, width)
+    out = CArray.float64(rows)
 
     CArray.jit_for(rows) { |i|
       (0...width).each { |k| work[i, k] = i + k * 0.5 }
@@ -54,15 +54,15 @@ class TestWorkspace < Minitest::Test
   def test_a_tridiagonal_solve_per_row
     rows, width = 4, 6
     random = Random.new(20260910)
-    lower = CArray.double(rows, width) { random.rand(-1.0..1.0) }
-    diagonal = CArray.double(rows, width) { 4.0 + random.rand }
-    upper = CArray.double(rows, width) { random.rand(-1.0..1.0) }
-    right = CArray.double(rows, width) { random.rand(-1.0..1.0) }
+    lower = CArray.float64(rows, width) { random.rand(-1.0..1.0) }
+    diagonal = CArray.float64(rows, width) { 4.0 + random.rand }
+    upper = CArray.float64(rows, width) { random.rand(-1.0..1.0) }
+    right = CArray.float64(rows, width) { random.rand(-1.0..1.0) }
     (0...rows).each { |i| lower[i, 0] = 0.0 ; upper[i, width - 1] = 0.0 }
 
-    swept = CArray.double(rows, width)
-    carried = CArray.double(rows, width)
-    answer = CArray.double(rows, width)
+    swept = CArray.float64(rows, width)
+    carried = CArray.float64(rows, width)
+    answer = CArray.float64(rows, width)
 
     CArray.jit_for(rows) { |i|
       swept[i, 0] = upper[i, 0] / diagonal[i, 0]
@@ -96,7 +96,7 @@ class TestWorkspace < Minitest::Test
   # would have read.
   def test_a_row_reading_the_row_before_it
     rows, width = 4, 3
-    work = CArray.double(rows, width)
+    work = CArray.float64(rows, width)
     (0...width).each { |k| work[0, k] = k + 1.0 }
 
     CArray.jit_for(1...rows) { |i|
@@ -116,9 +116,9 @@ class TestWorkspace < Minitest::Test
     values = [3.0, 1.0, 4.0, 1.0, 5.0, 90.0, 2.0, 6.0, 5.0, 3.0]
     width = 5
     half = width / 2
-    signal = CArray.double(values.size) { |i| values[i] }
-    window = CArray.double(values.size, width)
-    median = CArray.double(values.size)
+    signal = CArray.float64(values.size) { |i| values[i] }
+    window = CArray.float64(values.size, width)
+    median = CArray.float64(values.size)
 
     CArray.jit_for(half...(values.size - half)) { |i|
       (0...width).each { |k| window[i, k] = signal[i - half + k] }
@@ -143,7 +143,7 @@ class TestWorkspace < Minitest::Test
   # The reach is checked before anything runs, as a displaced write through
   # an outer index is.
   def test_a_displaced_write_through_an_inner_index_is_bounds_checked
-    work = CArray.double(3, 4)
+    work = CArray.float64(3, 4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| (0...4).each { |k| work[i, k+1] = 1.0 } }
     end
@@ -155,8 +155,8 @@ class TestWorkspace < Minitest::Test
   # index on an axis the writes do not walk with that index.  There the read
   # reaches cells another outer iteration owns.
   def test_reading_a_written_array_on_an_axis_the_write_does_not_share
-    work = CArray.double(3, 4)
-    out = CArray.double(3)
+    work = CArray.float64(3, 4)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i|
         (0...4).each { |k| work[i, k] = 1.0 }
@@ -174,8 +174,8 @@ class TestWorkspace < Minitest::Test
   # as a scatter.  Both are accepted now, and the direct one is the cheaper
   # of the two -- an index needs no bounds check as it is reached.
   def test_the_index_and_a_local_holding_it_agree
-    work = CArray.double(3, 4)
-    copy = CArray.double(3, 4)
+    work = CArray.float64(3, 4)
+    copy = CArray.float64(3, 4)
 
     direct = CArray.jit_for(3) { |i| (0...4).each { |k| work[i, k] = i + k } }
     through_a_local =

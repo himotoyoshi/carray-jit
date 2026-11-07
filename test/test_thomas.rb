@@ -12,10 +12,10 @@ class TestThomas < Minitest::Test
 
   def build_system (n, seed)
     random = Random.new(seed)
-    lower = CArray.double(n)
-    diagonal = CArray.double(n)
-    upper = CArray.double(n)
-    right = CArray.double(n)
+    lower = CArray.float64(n)
+    diagonal = CArray.float64(n)
+    upper = CArray.float64(n)
+    right = CArray.float64(n)
     n.times do |i|
       lower[i] = i.zero? ? 0.0 : random.rand(-1.0..1.0)
       upper[i] = (i == n - 1) ? 0.0 : random.rand(-1.0..1.0)
@@ -27,9 +27,9 @@ class TestThomas < Minitest::Test
 
   def solve_with_jit (lower, diagonal, upper, right)
     n = lower.elements
-    modified_upper = CArray.double(n)
-    modified_right = CArray.double(n)
-    solution = CArray.double(n)
+    modified_upper = CArray.float64(n)
+    modified_right = CArray.float64(n)
+    solution = CArray.float64(n)
 
     modified_upper[0] = upper[0] / diagonal[0]
     modified_right[0] = right[0] / diagonal[0]
@@ -97,8 +97,8 @@ class TestThomas < Minitest::Test
   def test_forward_sweep_writes_two_arrays_in_one_pass
     n = 8
     lower, diagonal, upper, right = build_system(n, 7)
-    modified_upper = CArray.double(n)
-    modified_right = CArray.double(n)
+    modified_upper = CArray.float64(n)
+    modified_right = CArray.float64(n)
     modified_upper[0] = upper[0] / diagonal[0]
     modified_right[0] = right[0] / diagonal[0]
 
@@ -120,9 +120,9 @@ class TestThomas < Minitest::Test
   def test_the_two_sweeps_run_in_opposite_directions
     n = 8
     lower, diagonal, upper, right = build_system(n, 5)
-    modified_upper = CArray.double(n)
-    modified_right = CArray.double(n)
-    solution = CArray.double(n)
+    modified_upper = CArray.float64(n)
+    modified_right = CArray.float64(n)
+    solution = CArray.float64(n)
     modified_upper[0] = upper[0] / diagonal[0]
     modified_right[0] = right[0] / diagonal[0]
 

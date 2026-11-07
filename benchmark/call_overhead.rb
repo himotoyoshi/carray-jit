@@ -29,7 +29,7 @@ end
 
 # Two cells, and a body that runs over one of them: the smallest call there
 # is, so what it measures is the call rather than the arithmetic.
-a, b, c, d, cc, dd = Array.new(6) { CArray.double(2) }
+a, b, c, d, cc, dd = Array.new(6) { CArray.float64(2) }
 
 bodies = {
   2 => proc { CArray.jit_for(1...2) { |i| c[i] = a[i] } },
@@ -78,7 +78,7 @@ puts
 puts "the same 6-array sweep, by size"
 one = costs[6]
 [1, 10, 100, 1_000, 10_000, 100_000].each do |n|
-  a, b, c, d, cc, dd = Array.new(6) { CArray.double(n + 1) }
+  a, b, c, d, cc, dd = Array.new(6) { CArray.float64(n + 1) }
   sweep = proc {
     CArray.jit_for(1...(n+1)) { |i|
       denominator = b[i] - a[i] * cc[i-1]

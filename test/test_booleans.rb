@@ -9,12 +9,12 @@ class TestBooleans < Minitest::Test
   # makes its own rather than sharing them through instance variables.
   def flags = CArray.boolean(8) { |i| (i % 3).zero? ? 1 : 0 }
   def others = CArray.boolean(8) { |i| i < 4 ? 1 : 0 }
-  def numbers = CArray.double(8).seq!(1.0)
+  def numbers = CArray.float64(8).seq!(1.0)
 
   def test_a_boolean_cell_is_a_condition
     flag = flags
     source = numbers
-    result = CArray.double(8)
+    result = CArray.float64(8)
     CArray.jit_for(8) { |i| result[i] = flag[i] ? source[i] : -source[i] }
     assert_equal((0...8).map { |i| flag[i] ? source[i] : -source[i] },
                  result.to_a)
@@ -22,7 +22,7 @@ class TestBooleans < Minitest::Test
 
   def test_a_boolean_cell_in_an_if
     flag = flags
-    result = CArray.double(8)
+    result = CArray.float64(8)
     CArray.jit_for(8) { |i|
       if flag[i]
         result[i] = 1.0
@@ -52,7 +52,7 @@ class TestBooleans < Minitest::Test
 
   def test_comparing_with_true
     flag = flags
-    result = CArray.double(8)
+    result = CArray.float64(8)
     CArray.jit_for(8) { |i| result[i] = flag[i] == true ? 9.0 : 0.0 }
     assert_equal((0...8).map { |i| flag[i] == true ? 9.0 : 0.0 }, result.to_a)
   end
@@ -85,7 +85,7 @@ class TestBooleans < Minitest::Test
 
   def test_a_boolean_is_not_stored_into_a_numeric_array
     flag = flags
-    result = CArray.double(4)
+    result = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| result[i] = flag[i] }
     end
@@ -96,7 +96,7 @@ class TestBooleans < Minitest::Test
   # false -- so compiling it would be compiling a bug.
   def test_comparing_a_boolean_cell_with_a_number_is_refused
     flag = flags
-    result = CArray.double(8)
+    result = CArray.float64(8)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(8) { |i| result[i] = flag[i] == 1 ? 9.0 : 0.0 }
     end
@@ -106,7 +106,7 @@ class TestBooleans < Minitest::Test
 
   def test_arithmetic_on_a_boolean_cell_is_refused
     flag = flags
-    result = CArray.double(8)
+    result = CArray.float64(8)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(8) { |i| result[i] = flag[i] + 1.0 }
     end
@@ -118,7 +118,7 @@ class TestBooleans < Minitest::Test
   # `true * true` raises in Ruby, and is refused where the operator stands.
   def test_arithmetic_between_two_boolean_cells_is_refused
     flag = flags
-    result = CArray.double(8)
+    result = CArray.float64(8)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(8) { |i| result[i] = (flag[i] * flag[i]) ? 1.0 : 0.0 }
     end
@@ -133,7 +133,7 @@ class TestBooleans < Minitest::Test
   # written, so both forms take the cell's answer.
   def test_the_whole_array_form_takes_the_cell_rule_too
     flag = flags
-    result = CArray.double(8)
+    result = CArray.float64(8)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_each { result = flag + 1 }
     end
@@ -150,7 +150,7 @@ class TestBooleans < Minitest::Test
   def test_a_boolean_array_carries_a_mask_like_any_other
     flags = CArray.boolean(8) { |i| 1 }
     flags[2] = UNDEF
-    result = CArray.double(8)
+    result = CArray.float64(8)
     CArray.jit_for(8) { |i|
       if flags[i] == UNDEF
         result[i] = -1.0

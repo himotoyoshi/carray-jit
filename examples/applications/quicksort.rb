@@ -48,7 +48,7 @@ quicksort = CArray.jit_function(
 
 n = 200_000
 random = Random.new(20260905)
-values = CArray.double(n) { |i| random.rand }
+values = CArray.float64(n) { |i| random.rand }
 
 sorted = values.copy                       # `to_ca` would answer this array
 quicksort.call(sorted, 0, n - 1)

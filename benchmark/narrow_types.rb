@@ -47,10 +47,10 @@ end
  ["larger than cache", 4_000_000, 5]].each do |where, n, repeats|
   puts "#{where}, n = #{n}"
 
-  a64 = CArray.double(n).seq!(1.0, 1e-3)
-  b64 = CArray.double(n).seq!(0.5, 5e-4)
-  c64 = CArray.double(n).seq!(2.0, 2e-3)
-  o64 = CArray.double(n)
+  a64 = CArray.float64(n).seq!(1.0, 1e-3)
+  b64 = CArray.float64(n).seq!(0.5, 5e-4)
+  c64 = CArray.float64(n).seq!(2.0, 2e-3)
+  o64 = CArray.float64(n)
 
   a32, b32, c32 = a64.float32, b64.float32, c64.float32
   o32 = CArray.float32(n)

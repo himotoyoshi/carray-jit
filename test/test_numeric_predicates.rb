@@ -7,7 +7,7 @@ class TestNumericPredicates < Minitest::Test
   VALUES = [1.0, 0.0 / 0.0, 1.0 / 0.0, -1.0 / 0.0, -2.5].freeze
 
   def test_nan_and_finite_on_floats
-    values = CArray.double(VALUES.size) { |i| VALUES[i] }
+    values = CArray.float64(VALUES.size) { |i| VALUES[i] }
     missing = CArray.boolean(VALUES.size)
     bounded = CArray.boolean(VALUES.size)
 
@@ -30,8 +30,8 @@ class TestNumericPredicates < Minitest::Test
   # As a guard, which is what it is for: the branch decides and nothing
   # divides by a number that is not there.
   def test_as_a_condition
-    values = CArray.double(VALUES.size) { |i| VALUES[i] }
-    out = CArray.double(VALUES.size)
+    values = CArray.float64(VALUES.size) { |i| VALUES[i] }
+    out = CArray.float64(VALUES.size)
     CArray.jit_for(VALUES.size) { |i|
       if values[i].finite?
         out[i] = values[i] * 2.0
@@ -68,7 +68,7 @@ class TestNumericPredicates < Minitest::Test
   # A value is read to ask about it, so a missing cell carries into the
   # answer, as it does anywhere a value is read.
   def test_a_missing_cell
-    values = CArray.double(3) { 1.0 }
+    values = CArray.float64(3) { 1.0 }
     values[1] = UNDEF
     missing = CArray.boolean(3)
     CArray.jit_for(3) { |i| missing[i] = values[i].nan? }
@@ -99,7 +99,7 @@ class TestNumericPredicates < Minitest::Test
   # `infinite?` answers nil, 1 or -1 rather than true or false, and a kernel
   # has no nil, so it is refused with the comparison to write instead.
   def test_infinite_is_refused
-    values = CArray.double(3)
+    values = CArray.float64(3)
     out = CArray.boolean(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i] = values[i].infinite? }
@@ -111,7 +111,7 @@ class TestNumericPredicates < Minitest::Test
   # And the comparison the message names does answer, so the advice is
   # advice that works.
   def test_the_comparison_the_message_names
-    values = CArray.double(VALUES.size) { |i| VALUES[i] }
+    values = CArray.float64(VALUES.size) { |i| VALUES[i] }
     unbounded = CArray.boolean(VALUES.size)
     CArray.jit_for(VALUES.size) { |i| unbounded[i] = values[i].abs == Float::INFINITY }
     assert_equal(VALUES.map { |v| !v.infinite?.nil? }, unbounded.to_a)

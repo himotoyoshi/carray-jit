@@ -18,8 +18,8 @@ class TestContract < Minitest::Test
   # axes being the free indices in the order the block named them.
   def test_the_returned_form
     ni, nk, nj = 3, 4, 2
-    a = CArray.double(ni, nk).seq!(1)
-    b = CArray.double(nk, nj).seq!(1)
+    a = CArray.float64(ni, nk).seq!(1)
+    b = CArray.float64(nk, nj).seq!(1)
     c = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }
 
     assert_instance_of(CArray, c)
@@ -32,8 +32,8 @@ class TestContract < Minitest::Test
 
   # The parameter order is where the result's axis order is stated.
   def test_the_parameter_order_gives_the_axis_order
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(4, 2).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(4, 2).seq!(1)
     straight = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }
     swapped = CArray.jit_contract { |j, i, k| a[i,k] * b[k,j] }
     assert_equal([3, 2], straight.dim)
@@ -44,8 +44,8 @@ class TestContract < Minitest::Test
   # Every index summed leaves no free axis, so the result is a number in a
   # one-cell array.
   def test_the_returned_form_with_nothing_free
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(3, 4).seq!(2)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(3, 4).seq!(2)
     result = CArray.jit_contract { |i, k| a[i,k] * b[i,k] }
     assert_equal([1], result.dim)
     assert_equal((0...3).sum { |i| (0...4).sum { |k| a[i,k] * b[i,k] } }, result[0])
@@ -83,19 +83,19 @@ class TestContract < Minitest::Test
   end
 
   def test_the_returned_and_assigned_forms_agree
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(4, 2).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(4, 2).seq!(1)
     returned = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }
-    box = CArray.double(3, 2)
+    box = CArray.float64(3, 2)
     CArray.jit_contract { |i, j, k| box[i,j] = a[i,k] * b[k,j] }
     assert_equal(returned.to_a, box.to_a)
   end
 
   def test_matrix_multiply
     ni, nk, nj = 3, 4, 2
-    a = CArray.double(ni, nk).seq!(1)
-    b = CArray.double(nk, nj).seq!(1)
-    c = CArray.double(ni, nj)
+    a = CArray.float64(ni, nk).seq!(1)
+    b = CArray.float64(nk, nj).seq!(1)
+    c = CArray.float64(ni, nj)
     CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
     expected = (0...ni).map { |i|
       (0...nj).map { |j| (0...nk).sum { |k| a[i,k] * b[k,j] } } }
@@ -104,9 +104,9 @@ class TestContract < Minitest::Test
 
   def test_matrix_times_vector
     ni, nk = 3, 4
-    a = CArray.double(ni, nk).seq!(1)
-    v = CArray.double(nk).seq!(1)
-    result = CArray.double(ni)
+    a = CArray.float64(ni, nk).seq!(1)
+    v = CArray.float64(nk).seq!(1)
+    result = CArray.float64(ni)
     CArray.jit_contract { |i, k| result[i] = a[i,k] * v[k] }
     assert_equal((0...ni).map { |i| (0...nk).sum { |k| a[i,k] * v[k] } },
                  result.to_a)
@@ -115,9 +115,9 @@ class TestContract < Minitest::Test
   # Every index summed over, into a one-cell box.
   def test_a_full_contraction
     ni, nk = 3, 4
-    a = CArray.double(ni, nk).seq!(1)
-    b = CArray.double(ni, nk).seq!(2)
-    box = CArray.double(1)
+    a = CArray.float64(ni, nk).seq!(1)
+    b = CArray.float64(ni, nk).seq!(2)
+    box = CArray.float64(1)
     CArray.jit_contract { |i, k| box[0] = a[i,k] * b[i,k] }
     assert_equal((0...ni).sum { |i| (0...nk).sum { |k| a[i,k] * b[i,k] } }, box[0])
   end
@@ -125,8 +125,8 @@ class TestContract < Minitest::Test
   # One index on two axes of one array.
   def test_a_trace
     size = 4
-    square = CArray.double(size, size).seq!(1)
-    box = CArray.double(1)
+    square = CArray.float64(size, size).seq!(1)
+    box = CArray.float64(1)
     CArray.jit_contract { |i| box[0] = square[i,i] }
     assert_equal((0...size).sum { |i| square[i,i] }, box[0])
   end
@@ -137,8 +137,8 @@ class TestContract < Minitest::Test
   # accepted.
   def test_a_sum_along_an_axis_is_not_a_contraction
     ni, nk = 3, 4
-    a = CArray.double(ni, nk).seq!(1)
-    total = CArray.double(ni)
+    a = CArray.float64(ni, nk).seq!(1)
+    total = CArray.float64(ni)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| total[i] = a[i,k] }
     end
@@ -149,9 +149,9 @@ class TestContract < Minitest::Test
 
   def test_an_index_summed_over_cannot_also_be_free
     ni, nk = 3, 4
-    a = CArray.double(ni, nk).seq!(1)
-    b = CArray.double(ni, nk).seq!(2)
-    out = CArray.double(ni)
+    a = CArray.float64(ni, nk).seq!(1)
+    b = CArray.float64(ni, nk).seq!(2)
+    out = CArray.float64(ni)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| out[i] = a[i,k] * b[i,k] }
     end
@@ -160,8 +160,8 @@ class TestContract < Minitest::Test
   end
 
   def test_an_index_that_names_no_axis
-    a = CArray.double(3, 4).seq!(1)
-    out = CArray.double(3)
+    a = CArray.float64(3, 4).seq!(1)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k, z| out[i] = a[i,k] * a[i,k] }
     end
@@ -172,8 +172,8 @@ class TestContract < Minitest::Test
   # at three of them, and the sum runs along the cube's long diagonal.
   def test_an_index_appearing_more_than_twice
     size = 3
-    cube = CArray.double(size, size, size).seq!(1)
-    out = CArray.double(1)
+    cube = CArray.float64(size, size, size).seq!(1)
+    out = CArray.float64(1)
     CArray.jit_contract { |i| out[0] = cube[i,i,i] }
     assert_equal((0...size).sum { |i| cube[i,i,i] }, out[0])
   end
@@ -181,7 +181,7 @@ class TestContract < Minitest::Test
   # The same index summed while another stays free, read at three positions
   # across two arrays.
   def test_an_index_repeated_across_arrays
-    a = CArray.double(3, 3).seq!(1)
+    a = CArray.float64(3, 3).seq!(1)
     result = CArray.jit_contract { |i, k| a[i,k] * a[k,k] }
     expected = (0...3).map { |i| (0...3).sum { |k| a[i,k] * a[k,k] } }
     assert_equal([3], result.dim)
@@ -190,9 +190,9 @@ class TestContract < Minitest::Test
 
   def test_a_double_contraction
     ni, nk, nl, nj = 3, 4, 3, 2
-    left = CArray.double(ni, nk, nl).seq!(1)
-    right = CArray.double(nl, nk, nj).seq!(1)
-    result = CArray.double(ni, nj)
+    left = CArray.float64(ni, nk, nl).seq!(1)
+    right = CArray.float64(nl, nk, nj).seq!(1)
+    result = CArray.float64(ni, nj)
     CArray.jit_contract { |i, j, k, l| result[i,j] = left[i,k,l] * right[l,k,j] }
     expected = (0...ni).map { |i|
       (0...nj).map { |j|
@@ -203,9 +203,9 @@ class TestContract < Minitest::Test
   # Nothing is summed over here; the convention covers that too.
   def test_an_outer_product
     ni, nj = 3, 2
-    left = CArray.double(ni).seq!(1)
-    right = CArray.double(nj).seq!(1)
-    result = CArray.double(ni, nj)
+    left = CArray.float64(ni).seq!(1)
+    right = CArray.float64(nj).seq!(1)
+    result = CArray.float64(ni, nj)
     CArray.jit_contract { |i, j| result[i,j] = left[i] * right[j] }
     assert_equal((0...ni).map { |i| (0...nj).map { |j| left[i] * right[j] } },
                  result.to_a)
@@ -224,9 +224,9 @@ class TestContract < Minitest::Test
   # ---- what it refuses ----
 
   def test_axes_of_different_extents
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(5, 2)
-    c = CArray.double(3, 2)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(5, 2)
+    c = CArray.float64(3, 2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, j, k| c[i,j] = a[i,k] * b[k,j] }
     end
@@ -236,7 +236,7 @@ class TestContract < Minitest::Test
   end
 
   def test_an_array_that_is_both_written_and_read
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| values[i] = values[k] * 2.0 }
     end
@@ -244,9 +244,9 @@ class TestContract < Minitest::Test
   end
 
   def test_more_than_one_assignment
-    a = CArray.double(3, 4).seq!(1)
-    first = CArray.double(3)
-    second = CArray.double(3)
+    a = CArray.float64(3, 4).seq!(1)
+    first = CArray.float64(3)
+    second = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| first[i] = a[i,k]; second[i] = a[i,k] }
     end
@@ -254,8 +254,8 @@ class TestContract < Minitest::Test
   end
 
   def test_an_offset_on_the_left
-    a = CArray.double(4).seq!(1)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1)
+    out = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i| out[i+1] = a[i] }
     end
@@ -263,9 +263,9 @@ class TestContract < Minitest::Test
   end
 
   def test_a_repeated_index_on_the_left
-    a = CArray.double(4, 4).seq!(1)
-    b = CArray.double(4, 4).seq!(2)
-    out = CArray.double(4, 4)
+    a = CArray.float64(4, 4).seq!(1)
+    b = CArray.float64(4, 4).seq!(2)
+    out = CArray.float64(4, 4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, j| out[i,i] = a[i,j] * b[j,i] }
     end
@@ -277,9 +277,9 @@ class TestContract < Minitest::Test
   # kernel, so one compiled kernel serves every row.
   def test_a_contraction_per_row
     rows, columns = 5, 4
-    a = CArray.double(rows, columns).seq!(1)
-    b = CArray.double(rows, columns).seq!(2)
-    out = CArray.double(rows)
+    a = CArray.float64(rows, columns).seq!(1)
+    b = CArray.float64(rows, columns).seq!(2)
+    out = CArray.float64(rows)
 
     CArray::JIT.clear_registry
     rows.times { |i| out[i] = CArray.jit_contract { |k| a[i, k] * b[i, k] }[0] }
@@ -291,16 +291,16 @@ class TestContract < Minitest::Test
   end
 
   def test_a_pinned_subscript_may_be_an_expression
-    a = CArray.double(4, 3).seq!(1)
-    b = CArray.double(4, 3).seq!(2)
+    a = CArray.float64(4, 3).seq!(1)
+    b = CArray.float64(4, 3).seq!(2)
     row = 1
     result = CArray.jit_contract { |k| a[row + 1, k] * b[row + 1, k] }
     assert_equal((0...3).sum { |k| a[2,k] * b[2,k] }, result[0])
   end
 
   def test_a_pinned_position_outside_the_array
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(3, 4).seq!(2)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(3, 4).seq!(2)
     row = 99
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |k| a[row, k] * b[row, k] }
@@ -313,7 +313,7 @@ class TestContract < Minitest::Test
   # covariance is written, and for a while it was refused for no better reason
   # than that the analysis kept one index per axis.
   def test_an_axis_may_be_walked_by_two_indices
-    c = CArray.double(5, 3).seq!(1)
+    c = CArray.float64(5, 3).seq!(1)
     gram = CArray.jit_contract { |a, b, p| c[p,a] * c[p,b] }
     assert_equal([3, 3], gram.dim)
     expected = (0...3).map { |a| (0...3).map { |b| (0...5).sum { |p| c[p,a] * c[p,b] } } }
@@ -321,8 +321,8 @@ class TestContract < Minitest::Test
   end
 
   def test_the_two_indices_may_be_summed_rather_than_free
-    c = CArray.double(4, 3).seq!(1)
-    m = CArray.double(3, 3).seq!(2)
+    c = CArray.float64(4, 3).seq!(1)
+    m = CArray.float64(3, 3).seq!(2)
     # a and b both appear twice, so both are summed: c' M c, summed over rows.
     result = CArray.jit_contract { |p, a, b| c[p,a] * m[a,b] * c[p,b] }
     expected = (0...4).sum { |p|
@@ -331,8 +331,8 @@ class TestContract < Minitest::Test
   end
 
   def test_the_extents_of_both_indices_come_from_the_axis
-    c = CArray.double(5, 3).seq!(1)
-    weight = CArray.double(3, 4).seq!(1)
+    c = CArray.float64(5, 3).seq!(1)
+    weight = CArray.float64(3, 4).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |a, b, p| c[p,a] * c[p,b] * weight[a,b] }
     end
@@ -344,8 +344,8 @@ class TestContract < Minitest::Test
   # cell written is a cell a later one reads, and the answer depends on the
   # order the loop took.
   def test_one_array_under_two_names_is_still_a_recurrence
-    b = CArray.double(3, 3).seq!(1)
-    written = CArray.double(3, 3).seq!(1)
+    b = CArray.float64(3, 3).seq!(1)
+    written = CArray.float64(3, 3).seq!(1)
     same = written
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, j, k| same[i,j] = written[i,k] * b[k,j] }
@@ -356,8 +356,8 @@ class TestContract < Minitest::Test
   end
 
   def test_writing_into_a_view_of_what_is_read
-    b = CArray.double(3, 3).seq!(1)
-    source = CArray.double(3, 3).seq!(1)
+    b = CArray.float64(3, 3).seq!(1)
+    source = CArray.float64(3, 3).seq!(1)
     view = source[nil, nil]
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, j, k| view[i,j] = source[i,k] * b[k,j] }
@@ -374,7 +374,7 @@ class TestContract < Minitest::Test
   # extent.  Ruby reads the same line as rebinding the parameter and runs the
   # loop unchanged, so the two do not mean the same thing.
   def test_assigning_to_an_index
-    out = CArray.double(3)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| i = 2; out[i] = 9.0 }
     end
@@ -383,7 +383,7 @@ class TestContract < Minitest::Test
   end
 
   def test_an_index_named_after_something_the_c_uses
-    a = CArray.double(3, 3).seq!(1)
+    a = CArray.float64(3, 3).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |int, j, k| a[int,k] * a[k,j] }
     end
@@ -413,8 +413,8 @@ class TestContractNamedAxes < Minitest::Test
   # The index that numbers the points stays free, though it appears twice.
   def test_a_quantity_per_point
     np, nk = 4, 3
-    x = CArray.double(np, nk).seq!(1)
-    y = CArray.double(np, nk).seq!(0.5)
+    x = CArray.float64(np, nk).seq!(1)
+    y = CArray.float64(np, nk).seq!(0.5)
     result = CArray.jit_contract(:p) { |k| x[p,k] * y[p,k] }
 
     assert_equal([np], result.dim)
@@ -425,7 +425,7 @@ class TestContractNamedAxes < Minitest::Test
   # The same term is the trace under the convention and the diagonal when the
   # axis is named -- which is the split einsum makes between `ii` and `ii->i`.
   def test_the_diagonal_beside_the_trace
-    square = CArray.double(4, 4).seq!(1)
+    square = CArray.float64(4, 4).seq!(1)
     diagonal = CArray.jit_contract(:a) { square[a,a] }
     trace = CArray.jit_contract { |a| square[a,a] }
 
@@ -439,8 +439,8 @@ class TestContractNamedAxes < Minitest::Test
   # while `k` -- the block's one parameter -- is.
   def test_a_batch_of_products
     nb, ni, nk, nj = 2, 3, 4, 5
-    left = CArray.double(nb, ni, nk).seq!(1)
-    right = CArray.double(nb, nk, nj).seq!(0.5)
+    left = CArray.float64(nb, ni, nk).seq!(1)
+    right = CArray.float64(nb, nk, nj).seq!(0.5)
     result = CArray.jit_contract(:b, :i, :j) { |k| left[b,i,k] * right[b,k,j] }
 
     assert_equal([nb, ni, nj], result.dim)
@@ -454,8 +454,8 @@ class TestContractNamedAxes < Minitest::Test
   # convention -- so naming the axes where the convention would have found
   # them anyway is how the result comes out in another order.
   def test_the_argument_order_gives_the_axis_order
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(4, 2).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(4, 2).seq!(1)
     convention = CArray.jit_contract { |i, j, k| a[i,k] * b[k,j] }
     named = CArray.jit_contract(:i, :j) { |k| a[i,k] * b[k,j] }
     swapped = CArray.jit_contract(:j, :i) { |k| a[i,k] * b[k,j] }
@@ -468,7 +468,7 @@ class TestContractNamedAxes < Minitest::Test
   # With every index named there is nothing left to sum, and the block takes
   # no parameters at all.
   def test_every_index_named_sums_nothing
-    x = CArray.double(2, 3).seq!(1)
+    x = CArray.float64(2, 3).seq!(1)
     result = CArray.jit_contract(:p, :k) { x[p,k] * x[p,k] }
     assert_equal([2, 3], result.dim)
     assert_equal(x.to_a.map { |row| row.map { |v| v * v } }, result.to_a)
@@ -478,9 +478,9 @@ class TestContractNamedAxes < Minitest::Test
   # does under the convention.
   def test_the_assigned_form
     nb, ni, nk, nj = 2, 3, 4, 2
-    left = CArray.double(nb, ni, nk).seq!(1)
-    right = CArray.double(nb, nk, nj).seq!(0.5)
-    out = CArray.double(nb, ni, nj)
+    left = CArray.float64(nb, ni, nk).seq!(1)
+    right = CArray.float64(nb, nk, nj).seq!(0.5)
+    out = CArray.float64(nb, ni, nj)
     CArray.jit_contract(:b, :i, :j) { |k| out[b,i,j] = left[b,i,k] * right[b,k,j] }
 
     expected = CArray.jit_contract(:b, :i, :j) { |k| left[b,i,k] * right[b,k,j] }
@@ -496,7 +496,7 @@ class TestContractNamedAxes < Minitest::Test
 
   # A missing cell is missing in whatever the sum over it reaches.
   def test_a_masked_cell
-    x = CArray.double(2, 3).seq!(1)
+    x = CArray.float64(2, 3).seq!(1)
     x[0,1] = UNDEF
     result = CArray.jit_contract(:p) { |k| x[p,k] * x[p,k] }
     assert_equal(UNDEF, result[0])
@@ -506,7 +506,7 @@ class TestContractNamedAxes < Minitest::Test
   # The naming is not part of the block's source, so it has to be part of what
   # the cache keeps kernels apart by.
   def test_the_same_block_under_two_namings
-    x = CArray.double(2, 3).seq!(1)
+    x = CArray.float64(2, 3).seq!(1)
     2.times do
       assert_equal([2], CArray.jit_contract(:p) { |k| x[p,k] * x[p,k] }.dim)
       assert_equal([2, 3], CArray.jit_contract(:p, :k) { x[p,k] * x[p,k] }.dim)
@@ -516,7 +516,7 @@ class TestContractNamedAxes < Minitest::Test
 
   # An index is one thing or the other: an axis of the result, or summed.
   def test_an_index_named_and_also_a_parameter
-    x = CArray.double(2, 3).seq!(1)
+    x = CArray.float64(2, 3).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract(:p) { |p, k| x[p,k] * x[p,k] }
     end
@@ -530,8 +530,8 @@ class TestContractNamedAxes < Minitest::Test
   # a partial list: it says `j` is summed.  What comes back has one axis, and
   # is the row sums of the product.
   def test_a_list_that_leaves_an_index_out_sums_it
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(4, 2).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(4, 2).seq!(1)
     product = CArray.jit_contract(:i, :j) { |k| a[i,k] * b[k,j] }
     assert_equal(product.sum(axis: 1).to_a,
                  CArray.jit_contract(:i) { |k, j| a[i,k] * b[k,j] }.to_a)
@@ -541,9 +541,9 @@ class TestContractNamedAxes < Minitest::Test
   # result rather than saying anything about `j`, and that is refused -- the
   # left-hand side is what makes it visible.
   def test_a_list_short_of_the_left_hand_side
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(4, 2).seq!(1)
-    out = CArray.double(3, 2)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(4, 2).seq!(1)
+    out = CArray.float64(3, 2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract(:i) { |k, j| out[i,j] = a[i,k] * b[k,j] }
     end
@@ -553,7 +553,7 @@ class TestContractNamedAxes < Minitest::Test
   end
 
   def test_a_named_axis_that_names_no_axis
-    a = CArray.double(3, 4).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract(:q, :i) { |k| a[i,k] }
     end
@@ -561,8 +561,8 @@ class TestContractNamedAxes < Minitest::Test
   end
 
   def test_the_extents_still_come_from_the_axes
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(2, 4).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(2, 4).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract(:p) { |k| a[p,k] * b[p,k] }
     end
@@ -577,7 +577,7 @@ class TestContractNamedAxes < Minitest::Test
   end
 
   def test_an_axis_named_twice
-    x = CArray.double(2, 3).seq!(1)
+    x = CArray.float64(2, 3).seq!(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract(:p, :p) { |k| x[p,k] * x[p,k] }
     end
@@ -590,7 +590,7 @@ class TestContractNamedAxes < Minitest::Test
   # `sum(axis:)` is the faster way to write it, being a reduction rather than
   # a contraction.
   def test_a_lone_parameter_is_summed_where_a_list_was_given
-    a = CArray.double(3, 4).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
     assert_equal(a.sum(axis: 1).to_a,
                  CArray.jit_contract(:i) { |k| a[i,k] }.to_a)
   end
@@ -598,15 +598,15 @@ class TestContractNamedAxes < Minitest::Test
   # And with nothing named the convention decides instead, where an index at
   # one position is free and must be on the left.
   def test_a_lone_index_is_free_where_nothing_was_named
-    a = CArray.double(3, 4).seq!(1)
+    a = CArray.float64(3, 4).seq!(1)
     assert_equal(a.to_a, CArray.jit_contract { |i, k| a[i,k] }.to_a)
   end
 
   # Where the convention refuses, it says what naming the axis would do.
   def test_the_conventions_refusal_points_here
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(3, 4).seq!(2)
-    out = CArray.double(3)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(3, 4).seq!(2)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k| out[i] = a[i,k] * b[i,k] }
     end
@@ -618,10 +618,10 @@ class TestContractNamedAxes < Minitest::Test
   # The hint names the whole left-hand side, which is what the result's axes
   # are -- not only the index the convention tripped over.
   def test_the_refusal_names_every_axis_of_the_result
-    a = CArray.double(3, 4).seq!(1)
-    b = CArray.double(3, 4).seq!(2)
-    v = CArray.double(2).seq!(1)
-    out = CArray.double(3, 2)
+    a = CArray.float64(3, 4).seq!(1)
+    b = CArray.float64(3, 4).seq!(2)
+    v = CArray.float64(2).seq!(1)
+    out = CArray.float64(3, 2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, j, k| out[i,j] = a[i,k] * b[i,k] * v[j] }
     end
@@ -634,11 +634,11 @@ class TestContractNamedAxes < Minitest::Test
   # meant to compile was refused as an unsupported method -- in the probe,
   # before the compile that would have taken it.
   def test_a_compiled_function_in_the_summand
-    left = CArray.double(3, 2).seq!(1.0)
-    right = CArray.double(2, 2).seq!(1.0)
+    left = CArray.float64(3, 2).seq!(1.0)
+    right = CArray.float64(2, 2).seq!(1.0)
     square = CArray.jit_function("double (*)(double)") { |x| x * x }
     result = CArray.jit_contract { |i, j, k| square.call(left[i, k]) * right[k, j] }
-    reference = CArray.double(3, 2)
+    reference = CArray.float64(3, 2)
     3.times { |i|
       2.times { |j|
         reference[i, j] = (0...2).sum { |k| (left[i, k] ** 2) * right[k, j] }
@@ -661,9 +661,9 @@ class TestContractNamedAxes < Minitest::Test
   # taken from the summand and stands above the loop the local is assigned
   # in, so the local looked read before it was assigned.
   def test_a_local_assigned_before_the_summand_says_why
-    left = CArray.double(3, 2).seq!(1.0)
-    right = CArray.double(2, 2).seq!(1.0)
-    into = CArray.double(3, 2)
+    left = CArray.float64(3, 2).seq!(1.0)
+    right = CArray.float64(2, 2).seq!(1.0)
+    into = CArray.float64(3, 2)
     [-> { CArray.jit_contract { |i, j, k| u = left[i, k]; u * right[k, j] } },
      -> { CArray.jit_contract { |i, j, k| u = left[i, k]; into[i, j] = u * right[k, j] } }
     ].each do |spelling|
@@ -679,10 +679,10 @@ class TestContractNamedAxes < Minitest::Test
   # gathering, and counting it either way decides something the notation does
   # not say -- so it is refused, and the same loop written with jit_for runs.
   def test_an_index_inside_a_computed_subscript_is_refused
-    order = CA_INT([0, 2, 1, 3])
-    matrix = CArray.double(3, 4).seq!(1.0)
-    vector = CArray.double(4).seq!(1.0)
-    into = CArray.double(3)
+    order = CA_INT32([0, 2, 1, 3])
+    matrix = CArray.float64(3, 4).seq!(1.0)
+    vector = CArray.float64(4).seq!(1.0)
+    into = CArray.float64(3)
     [-> { CArray.jit_contract { |i, k| matrix[i, order[k]] * vector[k] } },
      -> { CArray.jit_contract { |i, k| into[i] = matrix[i, order[k]] * vector[k] } },
      -> { CArray.jit_contract { |i, k| matrix[i, k] * vector[order[i]] } }
@@ -697,7 +697,7 @@ class TestContractNamedAxes < Minitest::Test
                  CArray.jit_contract { |i, k| matrix[i, k] * vector[k] }.to_a)
 
     # And the loop the refusal names gives the answer the gather asked for.
-    result = CArray.double(3)
+    result = CArray.float64(3)
     CArray.jit_for(3) { |i|
       total = 0.0
       (0...4).each { |k| total = total + matrix[i, order[k]] * vector[k] }

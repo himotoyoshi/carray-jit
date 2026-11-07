@@ -16,7 +16,7 @@ require_relative "test_helper"
 class TestReassociation < Minitest::Test
 
   def row_sum (values, length, **licence)
-    box = CArray.double(1)
+    box = CArray.float64(1)
     kernel = CArray.jit_for(1, **licence) { |i|
       accumulator = 0.0
       (0...length).each { |j| accumulator = accumulator + values[j] }
@@ -30,7 +30,7 @@ class TestReassociation < Minitest::Test
   # Every trip count around the round: the terms that do not fill one are left
   # to a serial tail, and the incoming value is folded in exactly once.
   def test_every_trip_count
-    values = CArray.double(16).seq(1)
+    values = CArray.float64(16).seq(1)
     (0..12).each do |length|
       answer, = row_sum(values, length)
       assert_bits_equal((0...length).inject(0.0) { |sum, j| sum + values[j] },
@@ -39,9 +39,9 @@ class TestReassociation < Minitest::Test
   end
 
   def test_a_dot_product
-    left = CArray.double(64).seq(1)
-    right = CArray.double(64).seq(0.5)
-    box = CArray.double(1)
+    left = CArray.float64(64).seq(1)
+    right = CArray.float64(64).seq(0.5)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0...64).each { |j| accumulator = accumulator + left[j] * right[j] }
@@ -54,8 +54,8 @@ class TestReassociation < Minitest::Test
   # A fold whose operator is `*` starts its extra chains from one rather than
   # from zero.
   def test_a_product
-    values = CArray.double(10).seq(1) / 4.0
-    box = CArray.double(1)
+    values = CArray.float64(10).seq(1) / 4.0
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 1.0
       (0...10).each { |j| accumulator = accumulator * values[j] }
@@ -82,9 +82,9 @@ class TestReassociation < Minitest::Test
 
   def test_a_matrix_multiply
     rows, inner, columns = 5, 7, 3
-    left = CArray.double(rows, inner).seq(1)
-    right = CArray.double(inner, columns).seq(0.25)
-    result = CArray.double(rows, columns)
+    left = CArray.float64(rows, inner).seq(1)
+    right = CArray.float64(inner, columns).seq(0.25)
+    result = CArray.float64(rows, columns)
     CArray.jit_for(rows, columns) { |i, j|
       accumulator = 0.0
       (0...inner).each { |t| accumulator = accumulator + left[i, t] * right[t, j] }
@@ -101,7 +101,7 @@ class TestReassociation < Minitest::Test
   # ---------- what the C says ----------
 
   def test_the_schedule_is_in_the_source
-    values = CArray.double(16).seq(1)
+    values = CArray.float64(16).seq(1)
     _, licensed = row_sum(values, 16)
     _, serial = row_sum(values, 16, reassociate: false)
 
@@ -133,9 +133,9 @@ class TestReassociation < Minitest::Test
   # A masked accumulator carries a mask beside its value, and a partial sum
   # would need one each.
   def test_a_masked_kernel
-    values = CArray.double(8).seq(1)
+    values = CArray.float64(8).seq(1)
     values[3] = UNDEF
-    box = CArray.double(1)
+    box = CArray.float64(1)
     kernel = CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0...8).each { |j| accumulator = accumulator + values[j] }
@@ -147,8 +147,8 @@ class TestReassociation < Minitest::Test
 
   # Two statements in the loop are not one fold.
   def test_a_loop_that_does_more_than_fold
-    values = CArray.double(8).seq(1)
-    box = CArray.double(1)
+    values = CArray.float64(8).seq(1)
+    box = CArray.float64(1)
     kernel = CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0...8).each { |j|
@@ -165,8 +165,8 @@ class TestReassociation < Minitest::Test
   # scales it on the way through, so the terms are not a sum at all and the
   # order is the algorithm.
   def test_an_accumulator_that_is_not_folded_whole
-    values = CArray.double(8).seq(1)
-    box = CArray.double(1)
+    values = CArray.float64(8).seq(1)
+    box = CArray.float64(1)
     kernel = CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0...8).each { |j| accumulator = accumulator * 0.5 + values[j] }
@@ -183,8 +183,8 @@ class TestReassociation < Minitest::Test
   # handed is not known there, and takes the chains whatever it turns out to
   # be.
   def test_a_written_out_extent_shorter_than_a_round
-    values = CArray.double(8).seq(1)
-    box = CArray.double(1)
+    values = CArray.float64(8).seq(1)
+    box = CArray.float64(1)
     short = CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0...4).each { |j| accumulator = accumulator + values[j] }
@@ -212,9 +212,9 @@ class TestReassociation < Minitest::Test
   end
 
   def test_a_contraction_splits_its_sum
-    left = CArray.double(2, 16).seq(1)
-    right = CArray.double(16, 2).seq(1)
-    into = CArray.double(2, 2)
+    left = CArray.float64(2, 16).seq(1)
+    right = CArray.float64(16, 2).seq(1)
+    into = CArray.float64(2, 2)
     kernel = contracted_kernel(left, right, into)
     assert_match(/__p0/, kernel.c_source)
     assert_match(/__p3/, kernel.c_source)
@@ -223,9 +223,9 @@ class TestReassociation < Minitest::Test
   # There is no per-call licence -- a contraction names no loop -- so the
   # process default is what a serial contraction is asked for with.
   def test_a_contraction_under_the_process_default
-    left = CArray.double(2, 16).seq(1)
-    right = CArray.double(16, 2).seq(1)
-    into = CArray.double(2, 2)
+    left = CArray.float64(2, 16).seq(1)
+    right = CArray.float64(16, 2).seq(1)
+    into = CArray.float64(2, 2)
     previous = CArray::JIT.reassociate
     begin
       CArray::JIT.reassociate = false
@@ -240,8 +240,8 @@ class TestReassociation < Minitest::Test
   def test_a_serial_contraction_is_the_ruby_order
     random = Random.new(20260907)
     length = 1_000
-    values = CArray.double(length) { random.rand(-1.0..1.0) * 1e6 }
-    weights = CArray.double(length) { random.rand(-1.0..1.0) }
+    values = CArray.float64(length) { random.rand(-1.0..1.0) * 1e6 }
+    weights = CArray.float64(length) { random.rand(-1.0..1.0) }
     serial_sum = (0...length).inject(0.0) { |sum, k| sum + values[k] * weights[k] }
 
     split = CArray.jit_contract { |k| values[k] * weights[k] }[0]
@@ -263,7 +263,7 @@ class TestReassociation < Minitest::Test
   # ---------- where the default comes from ----------
 
   def test_the_process_default_can_be_turned_off
-    values = CArray.double(16).seq(1)
+    values = CArray.float64(16).seq(1)
     previous = CArray::JIT.reassociate
     begin
       CArray::JIT.reassociate = false

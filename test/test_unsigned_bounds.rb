@@ -37,8 +37,8 @@ class TestUnsignedBounds < Minitest::Test
   end
 
   def test_it_still_answers_what_ruby_answers
-    values = CArray.double(8).seq!(1.0)
-    out = CArray.double(8)
+    values = CArray.float64(8).seq!(1.0)
+    out = CArray.float64(8)
     scale.call(out, values, 8, 3.0)
     assert_equal (1..8).map { |x| x * 3.0 }, out.to_a
   end

@@ -25,8 +25,8 @@ def median (list) = list.sort[list.size / 2]
 def timed (samples) = median(samples.times.map { Benchmark.realtime { yield } })
 
 rows, columns = 2_000, 500
-source = CArray.double(rows, columns).seq!(1)
-total = CArray.double(rows)
+source = CArray.float64(rows, columns).seq!(1)
+total = CArray.float64(rows)
 
 CArray.jit_for(rows) { |i|
   accumulator = 0.0
@@ -50,7 +50,7 @@ serial = timed(SAMPLES) {
   }
 }
 
-plain = CArray.double(rows)
+plain = CArray.float64(rows)
 ruby = timed(SAMPLES) {
   (0...rows).each do |i|
     accumulator = 0.0
@@ -73,9 +73,9 @@ puts format("sum(axis: 1)     %8.1f ms   %5.2f ns/cell   %.2fx",
 
 puts
 n, k, m = 300, 300, 300
-left = CArray.double(n, k).seq!(1)
-right = CArray.double(k, m).seq!(1)
-result = CArray.double(n, m)
+left = CArray.float64(n, k).seq!(1)
+right = CArray.float64(k, m).seq!(1)
+result = CArray.float64(n, m)
 
 CArray.jit_for(n, m) { |i, j|
   accumulator = 0.0

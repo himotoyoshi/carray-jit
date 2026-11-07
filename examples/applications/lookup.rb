@@ -23,16 +23,16 @@ N = 2_000                               # samples in the table
 Q = 500_000                             # queries against it
 
 # A grid that crowds towards zero, and a function sampled on it.
-knots = (CArray.double(N).seq!(0, 1.0 / (N - 1)) ** 2) * 100
+knots = (CArray.float64(N).seq!(0, 1.0 / (N - 1)) ** 2) * 100
 table = knots.sin
-query = CArray.double(Q).seq!(0, 99.9 / Q)
+query = CArray.float64(Q).seq!(0, 99.9 / Q)
 
 # The search and the interpolation in one pass.  `lo` and `hi` are the cell's
 # own, so the kernel reads `knots[lo]` at an address no other cell shares --
 # a gather, written as the subscript it is.
 def interpolate (knots, table, query)
   n = knots.elements
-  out = CArray.double(query.elements)
+  out = CArray.float64(query.elements)
   CArray.jit_for(query.elements) { |i|
     t = query[i]
     lo = 0

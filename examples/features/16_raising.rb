@@ -9,8 +9,8 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 n = 8
-depth = CArray.double(n).seq!(3.0, -1.0)          # 3 2 1 0 -1 -2 ...
-out = CArray.double(n).fill(-99.0)
+depth = CArray.float64(n).seq!(3.0, -1.0)          # 3 2 1 0 -1 -2 ...
+out = CArray.float64(n).fill(-99.0)
 
 begin
   CArray.jit_for(n) { |i|
@@ -38,10 +38,10 @@ puts "  untouched after it    #{out.to_a[4..].all?(-99.0)}"
 # A cell whose value is missing does not raise: the comparison was decided by
 # bytes that mean nothing, and this is the rule the division helper already
 # keeps and that `if` keeps for what it writes.
-holed = CArray.double(4).seq!(1.0)
+holed = CArray.float64(4).seq!(1.0)
 holed[2] = 999.0          # a value that would raise below
 holed[2] = UNDEF          # marked missing; the bytes are left alone
-squares = CArray.double(4)
+squares = CArray.float64(4)
 CArray.jit_for(4) { |i|
   raise "out of range" if holed[i] > 100.0
   squares[i] = holed[i] * holed[i]

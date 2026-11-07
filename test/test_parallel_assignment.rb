@@ -16,8 +16,8 @@ class TestParallelAssignment < Minitest::Test
   # ---------- what it means ----------
 
   def test_two_locals_swap
-    x = CArray.double(4).seq!
-    y = CArray.double(4).seq!(10.0)
+    x = CArray.float64(4).seq!
+    y = CArray.float64(4).seq!(10.0)
     CArray.jit_for(4) { |i|
       left = x[i]
       right = y[i]
@@ -69,8 +69,8 @@ class TestParallelAssignment < Minitest::Test
   end
 
   def test_a_name_and_a_cell_together
-    values = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       carry = 0.0
       carry, out[i] = values[i], carry + values[i]
@@ -83,7 +83,7 @@ class TestParallelAssignment < Minitest::Test
   # line of its own.
   def test_two_types_at_once
     counts = CArray.int64(3)
-    parts = CArray.double(3)
+    parts = CArray.float64(3)
     CArray.jit_for(3) { |i| counts[i], parts[i] = i * 2, i / 4.0 }
     assert_equal([0, 2, 4], counts.to_a)
     assert_equal([0.0, 0.25, 0.5], parts.to_a)
@@ -108,7 +108,7 @@ class TestParallelAssignment < Minitest::Test
   # the author never wrote, about a value dead by the end of its own line.
   def test_two_of_them_at_different_types
     ints = CArray.int64(3)
-    reals = CArray.double(3)
+    reals = CArray.float64(3)
     CArray.jit_for(3) { |i|
       a = 1
       b = 2
@@ -127,8 +127,8 @@ class TestParallelAssignment < Minitest::Test
   # inside them -- and the value carries the branch's mask the way any other
   # assignment standing there does.
   def test_inside_a_branch_and_a_while
-    values = CArray.double(6).seq!
-    out = CArray.double(6)
+    values = CArray.float64(6).seq!
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
       a = values[i]
       b = 0.0
@@ -162,8 +162,8 @@ class TestParallelAssignment < Minitest::Test
   # the swap is the one CArray's own operators would have made -- each side
   # reads what the other started with.
   def test_whole_arrays_swap
-    hi = CArray.double(4).seq!(1.0)
-    lo = CArray.double(4).seq!(10.0)
+    hi = CArray.float64(4).seq!(1.0)
+    lo = CArray.float64(4).seq!(10.0)
     CArray.jit_each { hi, lo = lo, hi }
     assert_equal([10.0, 11.0, 12.0, 13.0], hi.to_a)
     assert_equal([1.0, 2.0, 3.0, 4.0], lo.to_a)
@@ -201,7 +201,7 @@ class TestParallelAssignment < Minitest::Test
   # Every value first, then every write.  Without that the swap below would
   # write the first name and read it back as the second.
   def test_the_values_are_settled_before_anything_is_written
-    x = CArray.double(4).seq!
+    x = CArray.float64(4).seq!
     kernel = CArray.jit_for(4) { |i|
       left = x[i]
       right = x[i] * 2.0
@@ -225,9 +225,9 @@ class TestParallelAssignment < Minitest::Test
   # A local carries a mask beside its value, and a value on the right is a
   # local like any other -- so a missing cell reaches the left.
   def test_a_missing_cell_travels_through
-    values = CArray.double(5).seq!
+    values = CArray.float64(5).seq!
     values[2] = UNDEF
-    out = CArray.double(5)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i|
       left = values[i]
       right = values[i] * 2.0
@@ -299,7 +299,7 @@ class TestParallelAssignment < Minitest::Test
 
   # A statement, and a supported one; what it has not got is a value.
   def test_in_value_position_it_is_refused
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     error = refusal {
       CArray.jit_map {
         x = values

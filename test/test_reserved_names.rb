@@ -19,8 +19,8 @@ class TestReservedNames < Minitest::Test
   # A captured scalar under each of the kernel's own parameter names.  These
   # compiled to C that redeclared the parameter, or to a `double double`.
   def test_a_captured_scalar_named_after_a_kernel_parameter
-    values = CArray.double(4).seq!
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!
+    out = CArray.float64(4)
     data = 2.0
     error = 3.0
     strides = 5.0
@@ -38,8 +38,8 @@ class TestReservedNames < Minitest::Test
   end
 
   def test_a_captured_scalar_named_after_a_c_keyword
-    values = CArray.double(4).seq!
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!
+    out = CArray.float64(4)
     int = 2.0
     double = 3.0
     register = 5.0
@@ -56,8 +56,8 @@ class TestReservedNames < Minitest::Test
     sum = CArray.jit_function("double sum(const double c[4])") { |c|
       c[0] + c[1] + c[2] + c[3]
     }
-    double = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    double = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i| out[i] = sum.call(double) }
     4.times { |i| assert_bits_equal(10.0, out[i]) }
   end
@@ -66,8 +66,8 @@ class TestReservedNames < Minitest::Test
     sum = CArray.jit_function("double sum(const double c[4])") { |c|
       c[0] + c[1] + c[2] + c[3]
     }
-    data = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    data = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i| out[i] = sum.call(data) }
     4.times { |i| assert_bits_equal(10.0, out[i]) }
   end
@@ -76,16 +76,16 @@ class TestReservedNames < Minitest::Test
   # body, under the name the block reached it by.
   def test_a_borrowed_function_named_after_a_c_keyword
     double = CArray.jit_extern("double j0(double)")
-    values = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i| out[i] = double.call(values[i]) }
     4.times { |i| assert_bits_equal(double.call(i + 1.0), out[i]) }
   end
 
   # Two captures that differ only in whether they had to move still differ.
   def test_a_moved_name_does_not_land_on_another
-    values = CArray.double(4).seq!
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!
+    out = CArray.float64(4)
     data = 2.0
     carray_jit_name_data = 100.0
     CArray.jit_for(4) { |i| out[i] = values[i] + data * carray_jit_name_data }
@@ -95,8 +95,8 @@ class TestReservedNames < Minitest::Test
   # Only a name that had to move moves.  The generated C is the debugging
   # surface, so a block that named nothing awkwardly reads as it always did.
   def test_an_ordinary_name_is_left_alone
-    values = CArray.double(4).seq!
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!
+    out = CArray.float64(4)
     data = 2.0
     scale = 3.0
     kernel = CArray.jit_for(4) { |i| out[i] = values[i] * scale + data }
@@ -107,8 +107,8 @@ class TestReservedNames < Minitest::Test
 
   # An index keeps the refusal it had: its name is the block's own text.
   def test_an_index_is_still_refused
-    values = CArray.double(4).seq!
-    out = CArray.double(4)
+    values = CArray.float64(4).seq!
+    out = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |data| out[data] = values[data] }
     end
@@ -122,9 +122,9 @@ class TestReservedNames < Minitest::Test
   # hid the extent a computed index is checked against, and the check
   # compared with 1.
   def test_a_local_named_after_an_arrays_decorations
-    a = CArray.double(5).seq!(1.0)
+    a = CArray.float64(5).seq!(1.0)
     position = CArray.int64(5) { [4, 0, 3, 1, 2] }
-    out = CArray.double(5)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i|
       a_n0 = 1
       p_a = 2.0
@@ -139,12 +139,12 @@ class TestReservedNames < Minitest::Test
       m_a = 4.0
       a[position[i]] * p_a + a_n0 + a_s0 + m_a
     }
-    assert_arrays_bits_equal(CArray.double(5) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(5) { reference }, out)
   end
 
   def test_a_local_named_after_a_kernel_parameter_in_a_kernel_that_reports
     divisor = CArray.int64(4).seq!(1)
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       error = 1.0
       data = 2.0
@@ -159,13 +159,13 @@ class TestReservedNames < Minitest::Test
       strides = 4.0
       10 / divisor[i] + error + data + bounds + strides
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   # `for` is a word Ruby keeps too, so no block can name a local that.
   def test_a_local_named_after_a_c_keyword
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       int = 1
       double = 2.0
@@ -176,13 +176,13 @@ class TestReservedNames < Minitest::Test
       double = 2.0
       a[i] * double + int
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   def test_a_local_named_after_a_temporary_in_a_masked_kernel
-    m = CArray.double(4).seq!(1.0)
+    m = CArray.float64(4).seq!(1.0)
     m[1] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       masked1 = m[i] * 2.0
       masked__1 = m[i] + 1.0
@@ -200,8 +200,8 @@ class TestReservedNames < Minitest::Test
   # The block's own `x__2` and the variable `x` gets when it changes type
   # were one C variable.
   def test_a_local_spelled_like_a_retyped_one
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
       x = 1
       y = x * 3
@@ -216,12 +216,12 @@ class TestReservedNames < Minitest::Test
       x__2 = 10.0
       x + x__2 + y + a[i]
     }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
   end
 
   def test_a_split_accumulator_named_after_a_kernel_parameter
-    b = CArray.double(16).seq!(1.0)
-    out = CArray.double(2)
+    b = CArray.float64(16).seq!(1.0)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i|
       error = 0.0
       (0...16).each { |k| error += b[k] * (i + 1) }
@@ -233,7 +233,7 @@ class TestReservedNames < Minitest::Test
       (0...16).each { |k| error += b[k] * (i + 1) }
       error
     }
-    assert_arrays_bits_equal(CArray.double(2) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(2) { reference }, out)
   end
 
   # A function's C has the flag a pasted body is handed as a parameter, and
@@ -259,8 +259,8 @@ class TestReservedNames < Minitest::Test
   # A fold is recognised by its accumulator appearing in the term, and the
   # one appearing here is the other local, so the loop is not a fold.
   def test_a_loop_reading_a_local_spelled_like_the_accumulators_binding
-    b = CArray.double(16).seq!(1.0)
-    out = CArray.double(2)
+    b = CArray.float64(16).seq!(1.0)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i|
       acc = 0
       acc = 0.5
@@ -275,13 +275,13 @@ class TestReservedNames < Minitest::Test
       (0...16).each { |k| acc = acc__2 + b[k] * (i + 1) }
       acc
     }
-    assert_arrays_bits_equal(CArray.double(2) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(2) { reference }, out)
     refute_match(/__p0/, kernel.c_source, "the loop is not split as a fold")
   end
 
   def test_the_same_loop_inside_a_while
-    b = CArray.double(16).seq!(1.0)
-    out = CArray.double(2)
+    b = CArray.float64(16).seq!(1.0)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i|
       acc = 0
       acc = 0.5
@@ -304,13 +304,13 @@ class TestReservedNames < Minitest::Test
       end
       acc
     }
-    assert_arrays_bits_equal(CArray.double(2) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(2) { reference }, out)
     refute_match(/__p0/, kernel.c_source, "the loop is not split as a fold")
   end
 
   def test_the_same_loop_in_one_arm_of_an_if
-    b = CArray.double(16).seq!(1.0)
-    out = CArray.double(3)
+    b = CArray.float64(16).seq!(1.0)
+    out = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i|
       acc = 0
       acc = 0.5
@@ -329,14 +329,14 @@ class TestReservedNames < Minitest::Test
       end
       acc
     }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
     refute_match(/__p0/, kernel.c_source, "the loop is not split as a fold")
   end
 
   def test_the_same_loop_in_a_masked_kernel
-    b = CArray.double(16).seq!(1.0)
+    b = CArray.float64(16).seq!(1.0)
     b[3] = UNDEF
-    out = CArray.double(2)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i|
       acc = 0
       acc = 0.5
@@ -359,7 +359,7 @@ class TestReservedNames < Minitest::Test
       [acc, missing]
     }
     assert_equal(reference.map(&:last), out.is_masked.to_a)
-    assert_arrays_bits_equal(CArray.double(2) { reference.map(&:first) }, out)
+    assert_arrays_bits_equal(CArray.float64(2) { reference.map(&:first) }, out)
     refute_match(/__p0/, kernel.c_source, "the loop is not split as a fold")
   end
 
@@ -368,8 +368,8 @@ class TestReservedNames < Minitest::Test
   # `error` at its second type and the block's own `error__2` are both moved,
   # and a moved name with a suffix on it may not land on another moved name.
   def test_a_moved_local_with_a_suffix_and_a_moved_local_spelled_that_way
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
       error = 1
       y = error * 3
@@ -384,12 +384,12 @@ class TestReservedNames < Minitest::Test
       error__2 = 10.0
       error + error__2 + y + a[i]
     }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
   end
 
   def test_the_same_with_a_split_accumulator
-    b = CArray.double(16).seq!(1.0)
-    out = CArray.double(2)
+    b = CArray.float64(16).seq!(1.0)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i|
       error = 1
       y = error * 3
@@ -407,13 +407,13 @@ class TestReservedNames < Minitest::Test
       error + error__2 + y
     }
     assert_includes(kernel.c_source, "carray_jit_name1_error__2__p0")
-    assert_arrays_bits_equal(CArray.double(2) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(2) { reference }, out)
   end
 
   def test_the_same_in_a_masked_kernel
-    m = CArray.double(3).seq!(1.0)
+    m = CArray.float64(3).seq!(1.0)
     m[1] = UNDEF
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
       error = 1
       y = error * 3
@@ -435,8 +435,8 @@ class TestReservedNames < Minitest::Test
   # A leading underscore right after the number: `_x__2` is moved, `_x` is
   # not, and `_x` at its second type is written `_x__2`.
   def test_a_moved_local_that_starts_with_an_underscore
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i|
       _x = 1
       y = _x * 3
@@ -452,7 +452,7 @@ class TestReservedNames < Minitest::Test
       _x + _x__2 + y + a[i]
     }
     assert_includes(kernel.c_source, "carray_jit_name1__x__2")
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
   end
 
   # ---------- names that start `carray_jit_` ----------
@@ -460,8 +460,8 @@ class TestReservedNames < Minitest::Test
   # The generated C's own.  A capture spelled like a moved local was hidden
   # by it, and the kernel added the local where the block added the capture.
   def test_a_capture_spelled_like_a_moved_local
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     carray_jit_name1_error = 100.0
     kernel = CArray.jit_for(3) { |i|
       error = 1.0
@@ -471,32 +471,32 @@ class TestReservedNames < Minitest::Test
       error = 1.0
       a[i] + error + carray_jit_name1_error
     }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
     refute_match(/\bcarray_jit_name1_error = reals\[/, kernel.c_source)
   end
 
   def test_a_capture_that_starts_like_the_generators_names
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     carray_jit_error = 7.0
     kernel = CArray.jit_for(3) { |i| out[i] = a[i] + carray_jit_error }
     reference = (0...3).map { |i| a[i] + carray_jit_error }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
     refute_match(/\bcarray_jit_error = reals\[/, kernel.c_source)
   end
 
   def test_a_local_that_starts_like_the_generators_names
-    a = CArray.double(3).seq!(1.0)
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!(1.0)
+    out = CArray.float64(3)
     kernel = CArray.jit_for(3) { |i| carray_jit_x = 2.0; out[i] = a[i] * carray_jit_x }
     reference = (0...3).map { |i| carray_jit_x = 2.0; a[i] * carray_jit_x }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
     refute_match(/\bdouble carray_jit_x;/, kernel.c_source)
   end
 
   def test_an_index_that_starts_like_the_generators_names_is_refused
-    a = CArray.double(3).seq!
-    out = CArray.double(3)
+    a = CArray.float64(3).seq!
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |carray_jit_x| out[carray_jit_x] = a[carray_jit_x] }
     end
@@ -505,8 +505,8 @@ class TestReservedNames < Minitest::Test
   end
 
   def test_an_index_named_after_a_decoration_or_a_suffix_is_refused
-    a = CArray.double(4).seq!
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!
+    out = CArray.float64(4)
     [proc { CArray.jit_for(4) { |p_a| out[p_a] = a[p_a] } },
      proc { CArray.jit_for(4) { |k__2| out[k__2] = a[k__2] } }].each do |run|
       error = assert_raises(CArray::JIT::Unsupported) { run.call }

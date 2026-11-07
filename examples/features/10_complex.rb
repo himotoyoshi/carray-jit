@@ -26,16 +26,16 @@ puts "  matches Ruby      #{(0...n).all? { |i| rotated[i] == reference[i] }}"
 # The way out of the complex type.  `abs`, `real`, `imag` and `arg` hand back
 # a Float, which is what lets a complex kernel write into a real array;
 # `conjugate` stays complex.
-power = CArray.double(n)
-phase = CArray.double(n)
+power = CArray.float64(n)
+phase = CArray.float64(n)
 CArray.jit_for(n) { |i| power[i] = signal[i].abs }
 CArray.jit_for(n) { |i| phase[i] = signal[i].arg }
 puts "  power             #{power.to_a.map { |e| e.round(4) }.inspect}"
 puts "  phase             #{phase.to_a.map { |e| e.round(4) }.inspect}"
 
 # And the way in, from two real arrays.
-real = CArray.double(n).seq!(1.0)
-imaginary = CArray.double(n).seq!(0.0, 0.25)
+real = CArray.float64(n).seq!(1.0)
+imaginary = CArray.float64(n).seq!(0.0, 0.25)
 built = CArray.cmplx128(n)
 CArray.jit_for(n) { |i| built[i] = Complex(real[i], imaginary[i]) }
 puts "  built from parts  #{built.to_a.first(3).inspect}"

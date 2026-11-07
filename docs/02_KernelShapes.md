@@ -17,7 +17,7 @@ The assignment is Ruby's own. Every name in the block is a cell -- the loop is t
 `CScalar` is the one-cell `CArray` it subclasses, minus the index: `s[]` is the value, and `s[] = ...` puts one back. CArray's own operators read that one cell for every cell of everything else, and so does this:
 
 ```ruby
-gain = CScalar.double() { 2.0 }
+gain = CScalar.float64() { 2.0 }
 CArray.jit_each { out = signal * gain }        # gain read at every cell
 CArray.jit_each { gain = gain + 0.5 }          # and written like any cell
 ```
@@ -28,7 +28,7 @@ An indexed kernel reaches it too, and there the missing index is the whole point
 CArray.jit_for(n) { |i| out[i] = signal[i] * gain[] }
 ```
 
-`CScalar.int()` with no block is that one cell zero-filled, as `CArray.int(1)` is, which is enough for an accumulator that starts at zero; the block form says the starting value out loud, and is what to write where the value is part of what the code means.
+`CScalar.int32()` with no block is that one cell zero-filled, as `CArray.int32(1)` is, which is enough for an accumulator that starts at zero; the block form says the starting value out loud, and is what to write where the value is part of what the code means.
 
 The two routes differ in how they get there. `jit_each` stretches it as it stretches a one-cell `CArray` -- a stride of zero -- while `jit_for` reads it where it lies. They compute the same thing, and `s[0]` keeps working in both, since it is still the one-cell array it is. Writing a wider expression into one is refused, with the shapes named, exactly as CArray refuses it.
 
@@ -180,7 +180,7 @@ Written with the indices named, the same thing is [`jit_for`](#extents-steps-and
 
 ```ruby
 rows, columns = image.dim
-smoothed = CArray.double(rows, columns)
+smoothed = CArray.float64(rows, columns)
 CArray.jit_for(1...(rows-1), 1...(columns-1)) { |i, j|
   smoothed[i, j] = 0.25 * (image[i-1, j] + image[i+1, j] +
                            image[i, j-1] + image[i, j+1])
@@ -385,7 +385,7 @@ A row of a captured array is one place to put it, and the body makes one itself 
 
 ```ruby
 median = CArray.jit_stencil(image, border: :clamp) { |a|
-  w = CArray.double(9)                    # nine doubles on this cell's stack
+  w = CArray.float64(9)                    # nine doubles on this cell's stack
   w[0] = a[-1,-1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
   w[3] = a[ 0,-1]; w[4] = a[ 0, 0]; w[5] = a[ 0, 1]
   w[6] = a[ 1,-1]; w[7] = a[ 1, 0]; w[8] = a[ 1, 1]
@@ -396,7 +396,7 @@ median = CArray.jit_stencil(image, border: :clamp) { |a|
 
 `sort(w)` is one of the functions the compiler brings with it (see [Intrinsics](03_SupportedFeatures.md#intrinsics)); at nine cells it is a comparator network with no branch in it. Written against a row of captured workspace instead, the same filter needs `work[rows, cols, 9]` -- 288 MB over a 2000x2000 image to hold 72 bytes at a time -- and `jit_stencil` cannot use one at all, its block having no index.
 
-**What the clearing costs.** `CArray.double(9)` starts its cells at zero every time the line runs, which for a body that writes all nine before reading any is work nobody asked for. Measured over the filter above on 2000x2000: **41.3 ns a cell, against `CArray.empty(:float64, [9])`'s 42.2** -- no difference, because the compiler sees the nine stores that follow and drops the clearing as dead. So the zeroed spelling is the one to write here, and it is the one that reads correctly.
+**What the clearing costs.** `CArray.float64(9)` starts its cells at zero every time the line runs, which for a body that writes all nine before reading any is work nobody asked for. Measured over the filter above on 2000x2000: **41.3 ns a cell, against `CArray.empty(:float64, [9])`'s 42.2** -- no difference, because the compiler sees the nine stores that follow and drops the clearing as dead. So the zeroed spelling is the one to write here, and it is the one that reads correctly.
 
 Where the clearing is *not* dead it costs about what clearing that many bytes costs, and nothing else. Over 1000x1000, with a histogram built per cell and a body that reads back a cell it did not write:
 

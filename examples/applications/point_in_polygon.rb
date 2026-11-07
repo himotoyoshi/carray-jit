@@ -20,8 +20,8 @@ EDGES = 200
 POINTS = 1_000_000
 
 # A lobed blob, closed, going round once.
-corner_x = CArray.double(EDGES)
-corner_y = CArray.double(EDGES)
+corner_x = CArray.float64(EDGES)
+corner_y = CArray.float64(EDGES)
 CArray.jit_for(EDGES) { |k|
   angle = 2.0 * Math::PI * k / EDGES
   radius = 1.0 + 0.35 * Math.sin(7.0 * angle) + 0.15 * Math.cos(3.0 * angle)
@@ -30,10 +30,10 @@ CArray.jit_for(EDGES) { |k|
 }
 
 random = CArray::Rng.new(seed: 20260913)
-point_x = CArray.double(POINTS)
+point_x = CArray.float64(POINTS)
 point_x.random!(rng: random)
 point_x = point_x * 3.2 - 1.6
-point_y = CArray.double(POINTS)
+point_y = CArray.float64(POINTS)
 point_y.random!(rng: random)
 point_y = point_y * 3.2 - 1.6
 

@@ -66,7 +66,7 @@ class TestTypes < Minitest::Test
   end
 
   def test_arrays_of_different_types_in_one_kernel
-    doubles = CArray.double(6).seq!
+    doubles = CArray.float64(6).seq!
     integers = CArray.int64(6)
     CArray.jit_for(0...6) { |i| integers[i] = doubles[i] * 2 }
     assert_equal([0, 2, 4, 6, 8, 10], integers.to_a)
@@ -82,7 +82,7 @@ class TestTypes < Minitest::Test
   def test_scalar_and_array_captures_are_told_apart
     factor = 0.25
     offset = 2
-    values = CArray.double(8)
+    values = CArray.float64(8)
     values[0] = 1.0
     kernel = CArray.jit_for(1...8) { |i| values[i] = factor * values[i-1] + offset }
 
@@ -94,7 +94,7 @@ class TestTypes < Minitest::Test
   def test_storage_type_mismatch_is_refused
     kernel = compile_kernel("->(i) { a[i] = a[i-1] * 2.0 }")
     error = assert_raises(CArray::JIT::Unsupported) do
-      kernel.call({ :a => CArray.float(4) }, {}, [[1, 4, 1]])
+      kernel.call({ :a => CArray.float32(4) }, {}, [[1, 4, 1]])
     end
     assert_match(/float64/, error.message)
   end
@@ -112,7 +112,7 @@ class TestTypes < Minitest::Test
   # and a float one after, and one C variable cannot be both -- so this is
   # refused rather than compiled into whichever of the two it saw first.
   def test_a_type_that_changes_across_a_loop_is_refused
-    result = CArray.double(1)
+    result = CArray.float64(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i|
         x = 2
@@ -128,7 +128,7 @@ class TestTypes < Minitest::Test
   end
 
   def test_one_type_across_the_loop_is_accepted
-    result = CArray.double(1)
+    result = CArray.float64(1)
     CArray.jit_for(1) { |i|
       x = 2.0
       (0...3).each { |j|
@@ -146,7 +146,7 @@ class TestTypes < Minitest::Test
   # A local that only lives inside the loop may still change type: it is
   # assigned before it is read on every pass, so nothing crosses the edge.
   def test_a_local_born_inside_the_loop_may_change_type
-    result = CArray.double(1)
+    result = CArray.float64(1)
     CArray.jit_for(1) { |i|
       (0...3).each { |j|
         t = 3

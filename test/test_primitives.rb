@@ -9,14 +9,14 @@ class TestPrimitives < Minitest::Test
   VALUES = [-2.5, -1.0, 0.0, 0.5, 2.5, 3.7].freeze
 
   def sample
-    array = CArray.double(VALUES.size)
+    array = CArray.float64(VALUES.size)
     VALUES.each_with_index { |value, index| array[index] = value }
     array
   end
 
   def assert_matches_ruby (label)
     source = sample
-    result = CArray.double(VALUES.size)
+    result = CArray.float64(VALUES.size)
     yield(source, result)
     VALUES.each_with_index do |value, index|
       assert_bits_equal(Float(compute(value)), result[index], "#{label}, cell #{index}")
@@ -72,19 +72,19 @@ class TestPrimitives < Minitest::Test
   # Where there is no Integer -- a NaN, an infinity -- Ruby raises, and
   # where there is one an int64 cannot hold, storing it does.
   def test_rounding_past_int64_and_through_nothing
-    values = CArray.double(4)
+    values = CArray.float64(4)
     [1e20, -1e20, 2.5, -2.5].each_with_index { |v, i| values[i] = v }
-    into_float = CArray.double(4)
+    into_float = CArray.float64(4)
     CArray.jit_for(4) { |i| into_float[i] = values[i].floor }
     assert_equal(values.to_a.map { |v| v.floor.to_f }, into_float.to_a)
-    scaled = CArray.double(4)
+    scaled = CArray.float64(4)
     CArray.jit_for(4) { |i| scaled[i] = values[i].round * 0.5 }
     assert_equal(values.to_a.map { |v| v.round * 0.5 }, scaled.to_a)
     into_int = CArray.int64(4)
     assert_raises(RangeError) do
       CArray.jit_for(4) { |i| into_int[i] = values[i].floor }
     end
-    odd = CArray.double(3)
+    odd = CArray.float64(3)
     odd[0] = Float::NAN; odd[1] = Float::INFINITY; odd[2] = -Float::INFINITY
     ["NaN", "Infinity", "-Infinity"].each_with_index do |message, k|
       error = assert_raises(FloatDomainError) do
@@ -122,7 +122,7 @@ class TestPrimitives < Minitest::Test
   end
 
   def test_a_negative_exponent_is_refused
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| values[i] = values[i] ** -1 }
     end
@@ -159,9 +159,9 @@ class TestPrimitives < Minitest::Test
 
   # Both spellings ask the same question, and Ruby lets both be written.
   def test_undef_compares_either_way_round
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     values[1] = UNDEF
-    result = CArray.double(4)
+    result = CArray.float64(4)
     CArray.jit_for(4) { |i| result[i] = (UNDEF == values[i]) ? -1.0 : values[i] }
     assert_equal([0.0, -1.0, 2.0, 3.0], result.to_a)
   end
@@ -170,7 +170,7 @@ class TestPrimitives < Minitest::Test
   # along the way.  No single C variable is both, so each type gets one of its
   # own -- and the reads in between have to resolve to the right one.
   def test_a_local_that_changes_type
-    result = CArray.double(3)
+    result = CArray.float64(3)
     CArray.jit_for(3) { |i|
       x = 5
       y = x / 2        # an integer division, as in Ruby
@@ -200,7 +200,7 @@ class TestPrimitives < Minitest::Test
   end
 
   def test_a_local_bound_to_different_types_in_two_branches
-    result = CArray.double(3)
+    result = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i|
         if i > 0
@@ -233,9 +233,9 @@ class TestPrimitives < Minitest::Test
 
   def test_float_modulo_floors
     pairs = [[7.5, 3.0], [-7.5, 3.0], [7.5, -3.0], [-7.5, -3.0], [6.0, 3.0]]
-    left = CArray.double(pairs.size) { |i| pairs[i][0] }
-    right = CArray.double(pairs.size) { |i| pairs[i][1] }
-    result = CArray.double(pairs.size)
+    left = CArray.float64(pairs.size) { |i| pairs[i][0] }
+    right = CArray.float64(pairs.size) { |i| pairs[i][1] }
+    result = CArray.float64(pairs.size)
     CArray.jit_for(pairs.size) { |i| result[i] = left[i] % right[i] }
     assert_equal(pairs.map { |x, y| x % y }, result.to_a)
     assert_equal((left % right).to_a, result.to_a)
@@ -245,9 +245,9 @@ class TestPrimitives < Minitest::Test
   # CArray's own `%` gives it the divisor's sign instead; a block means what
   # it means in Ruby.
   def test_a_zero_remainder_keeps_the_dividends_sign
-    left = CArray.double(1) { |i| -6.0 }
-    right = CArray.double(1) { |i| 3.0 }
-    result = CArray.double(1)
+    left = CArray.float64(1) { |i| -6.0 }
+    right = CArray.float64(1) { |i| 3.0 }
+    result = CArray.float64(1)
     CArray.jit_for(1) { |i| result[i] = left[i] % right[i] }
     assert_equal((-6.0 % 3.0).to_s, result[0].to_s)
     assert_equal("-0.0", result[0].to_s)
@@ -258,9 +258,9 @@ class TestPrimitives < Minitest::Test
   # where fmod and CArray answer NaN.  A float `/` by zero is an infinity in
   # Ruby, and is not this case.
   def test_float_modulo_by_zero_is_reported
-    left = CArray.double(2).seq!(1.0)
-    right = CArray.double(2)
-    result = CArray.double(2)
+    left = CArray.float64(2).seq!(1.0)
+    right = CArray.float64(2)
+    result = CArray.float64(2)
     assert_raises(ZeroDivisionError) do
       CArray.jit_for(2) { |i| result[i] = left[i] % right[i] }
     end

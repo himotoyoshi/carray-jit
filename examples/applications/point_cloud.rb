@@ -28,12 +28,12 @@ count = 200_000
 random = Random.new(20260902)
 
 # A flattened, tilted blob: wide in x, narrower in y, nearly flat in z.
-points = CArray.double(count, 3) { |p, k| random.rand(-1.0..1.0) }
+points = CArray.float64(count, 3) { |p, k| random.rand(-1.0..1.0) }
 points[nil, 1] = points[nil, 1] * 0.4
 points[nil, 2] = points[nil, 2] * 0.05
 
 angle = Math::PI / 6
-rotation = CArray.double(3, 3)
+rotation = CArray.float64(3, 3)
 rotation[0, nil] = [Math.cos(angle), -Math.sin(angle), 0.0]
 rotation[1, nil] = [Math.sin(angle),  Math.cos(angle), 0.0]
 rotation[2, nil] = [0.0, 0.0, 1.0]
@@ -90,7 +90,7 @@ puts format("  the cloud's total %.1f, and per point summed again %.1f",
             whole[0], squared.sum)
 
 # The same rotation written as a Ruby loop.
-reference = CArray.double(count, 3)
+reference = CArray.float64(count, 3)
 started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 count.times do |p|
   3.times do |i|
@@ -115,7 +115,7 @@ puts "  identical: #{rotated.to_a == reference.to_a}"
 
 # An index whose axes disagree is the mistake this notation exists to catch.
 begin
-  wrong = CArray.double(4, 4).seq!(1.0)
+  wrong = CArray.float64(4, 4).seq!(1.0)
   CArray.jit_contract { |p, i, j| points[p, j] * wrong[i, j] }
 rescue CArray::JIT::Unsupported => error
   puts "  refused:  #{error.message.lines.first.strip}"

@@ -63,7 +63,7 @@ class TestBitOperations < Minitest::Test
   end
 
   def test_a_float_does_not_take_a_bit_operator
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     result = CArray.int32(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| result[i] = values[i] & 1 }

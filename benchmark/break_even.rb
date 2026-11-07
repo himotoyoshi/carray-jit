@@ -48,7 +48,7 @@ Dir.mktmpdir do |cache|
   # What the kernel saves per element, against the same loop in Ruby.
   length = 200_000
   x = 0.5
-  values = CArray.double(length)
+  values = CArray.float64(length)
   values[0] = 1.0
   values[1] = x
   # Compile before timing: what is being measured here is the loop, not the
@@ -65,7 +65,7 @@ Dir.mktmpdir do |cache|
       values[i] = wy + w - wy/i
     }
   }
-  plain = CArray.double(length)
+  plain = CArray.float64(length)
   plain[0] = 1.0
   plain[1] = x
   ruby = Benchmark.realtime {

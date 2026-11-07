@@ -27,8 +27,8 @@ require "benchmark"
 j0 = CArray.jit_extern("double j0(double)")
 puts "bound: #{j0}"
 
-x = CArray.double(6).seq!(1.0)
-out = CArray.double(6)
+x = CArray.float64(6).seq!(1.0)
+out = CArray.float64(6)
 
 CArray.jit_each { out = j0.call(x) }
 puts "j0(x)         #{out.to_a.map { |v| v.round(6) }.inspect}"
@@ -41,7 +41,7 @@ puts
 # intermediate results to hold them, so this is not expressible as a map --
 # but it is an ordinary kernel.
 
-smoothed = CArray.double(6)
+smoothed = CArray.float64(6)
 CArray.jit_for(1...6) { |i| smoothed[i] = 0.5 * (j0.call(x[i]) + j0.call(x[i-1])) }
 puts "half-sum of neighbouring j0"
 puts "  #{smoothed[1..5].to_a.map { |v| v.round(6) }.inspect}"
@@ -50,8 +50,8 @@ puts
 # It mixes into an expression like anything else, and takes as many arguments
 # as the prototype says.
 atan2 = CArray.jit_extern("double atan2(double, double)")
-y = CArray.double(6).seq!(0.5, 0.5)
-mixed = CArray.double(6)
+y = CArray.float64(6).seq!(0.5, 0.5)
+mixed = CArray.float64(6)
 CArray.jit_each { mixed = atan2.call(x, y) * 2.0 - j0.call(x) }
 puts "atan2(x, y) * 2 - j0(x)"
 puts "  #{mixed.to_a.map { |v| v.round(6) }.inspect}"
@@ -106,10 +106,10 @@ puts
 
 # And it is called from a kernel like any other, which is what gives kernels
 # something they did not have: a body you can factor and name.
-w = CArray.double(6).seq!(-0.2, 0.3)
-blended = CArray.double(6)
-low = CArray.double(6) { 10.0 }
-high = CArray.double(6) { 20.0 }
+w = CArray.float64(6).seq!(-0.2, 0.3)
+blended = CArray.float64(6)
+low = CArray.float64(6) { 10.0 }
+high = CArray.float64(6) { 20.0 }
 CArray.jit_each {
   blended = low + (high - low) * smoothstep.call(w)
 }
@@ -140,7 +140,7 @@ puts
 total = CArray.jit_function("double total(int n, const double v[8])") { |n, v|
   n == 0 ? 0.0 : v[n - 1] + total.call(n - 1, v)
 }
-values = CArray.double(8).seq!(1.0)
+values = CArray.float64(8).seq!(1.0)
 puts "sum of #{values.to_a.map(&:to_i).inspect} by recursion  #{total.call(8, values)}"
 puts "  matches Ruby  #{total.call(8, values) == total.block.call(8, values)}"
 puts
@@ -194,7 +194,7 @@ puts
 poly = CArray.jit_function("double (*)(double x, const double coef[3])") { |x, c|
   c[0] + c[1] * x + c[2] * x * x
 }
-coef = CArray.double(3) { |i| [1.0, 2.0, 3.0][i] }
+coef = CArray.float64(3) { |i| [1.0, 2.0, 3.0][i] }
 puts "1 + 2x + 3x^2 at x = 2"
 puts "  compiled C  #{poly.call(2.0, coef)}"
 puts "  same block in Ruby  #{poly.block.call(2.0, coef)}"
@@ -210,8 +210,8 @@ ode = CArray.jit_function(
   dydt[1] = -y[0]
   0
 }
-state = CArray.double(2) { |i| [1.0, 0.0][i] }
-derivative = CArray.double(2)
+state = CArray.float64(2) { |i| [1.0, 0.0][i] }
+derivative = CArray.float64(2)
 ode.call(0.0, state, derivative, nil)
 puts "harmonic oscillator: y = #{state.to_a.inspect} -> dy/dt = #{derivative.to_a.inspect}"
 puts ode.c_source.lines.last(6).join
@@ -221,8 +221,8 @@ puts ode.c_source.lines.last(6).join
 # `x[i]` is a cell and `coef` is the whole array.  Which is meant comes from
 # the declaration rather than from the spelling.
 
-ramp = CArray.double(6).seq!(0.0, 0.5)
-fitted = CArray.double(6)
+ramp = CArray.float64(6).seq!(0.0, 0.5)
+fitted = CArray.float64(6)
 CArray.jit_for(6) { |i| fitted[i] = poly.call(ramp[i], coef) }
 puts "1 + 2x + 3x^2 along a ramp"
 puts "  #{fitted.to_a.map { |v| v.round(4) }.inspect}"
@@ -235,8 +235,8 @@ puts
 # cell at a time, or find a Math method that happens to exist.
 
 n = 200_000
-big = CArray.double(n).seq!(1.0, 1e-5)
-big_out = CArray.double(n)
+big = CArray.float64(n).seq!(1.0, 1e-5)
+big_out = CArray.float64(n)
 gamma = CArray.jit_extern("double tgamma(double)")
 
 def timed

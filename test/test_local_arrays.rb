@@ -38,12 +38,12 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_an_insertion_sort_over_a_local_array_matches_ruby
-    a = CArray.double(4, 9)
+    a = CArray.float64(4, 9)
     a.seq!(3.0, 7.0)
     a.map! { |value| (value * 13) % 29 }
-    median = CArray.double(4)
+    median = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       (0...9).each { |k| w[k] = a[i, k] }
       (1...9).each { |k|
         key = w[k]
@@ -57,7 +57,7 @@ class TestLocalArrays < Minitest::Test
       median[i] = w[4]
     }
     reference = (0...4).map { |i|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       (0...9).each { |k| w[k] = a[i, k] }
       (1...9).each { |k|
         key = w[k]
@@ -70,7 +70,7 @@ class TestLocalArrays < Minitest::Test
       }
       w[4]
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, median)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, median)
   end
 
   # Every storage type the constructors reach, against the same loop in Ruby.
@@ -193,9 +193,9 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_receiver_may_be_written_with_the_leading_colons
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = ::CArray.double(2)
+      w = ::CArray.float64(2)
       w[0] = i * 1.0
       w[1] = w[0] + 1.0
       out[i] = w[1]
@@ -292,11 +292,11 @@ class TestLocalArrays < Minitest::Test
   # local array is moved off them the way a scalar local is.
   %w[data error strides bounds p_a a_n0 a_s0 index0].each do |name|
     define_method("test_a_local_array_may_be_called_#{name}") do
-      out = CArray.double(3)
-      a = CArray.double(3).seq!(1.0)
+      out = CArray.float64(3)
+      a = CArray.float64(3).seq!(1.0)
       kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" })
         proc { |i|
-          #{name} = CArray.double(2)
+          #{name} = CArray.float64(2)
           #{name}[0] = a[i]
           #{name}[1] = #{name}[0] * 2.0
           out[i] = #{name}[1]
@@ -308,25 +308,25 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_sibling_inner_loops_may_each_make_an_array_of_one_name
-    a = CArray.double(3, 4)
+    a = CArray.float64(3, 4)
     a.seq!(1.0)
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
       total = 0.0
       (0...1).each { |k|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         (0...4).each { |m| w[m] = a[i, m] }
         total = total + w[3]
       }
       (0...1).each { |k|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         (0...4).each { |m| w[m] = a[i, m] * 10.0 }
         total = total + w[3]
       }
       out[i] = total
     }
     reference = (0...3).map { |i| a[i, 3] + a[i, 3] * 10.0 }
-    assert_arrays_bits_equal(CArray.double(3) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(3) { reference }, out)
   end
 
   def test_one_name_at_two_shapes_is_two_arrays
@@ -346,9 +346,9 @@ class TestLocalArrays < Minitest::Test
   # so a line below it may introduce a number under the same name, and a line
   # below that reads the number.
   def test_a_name_an_inner_loop_gave_an_array_may_hold_a_number_after_it
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
-      (0...2).each { |k| w = CArray.double(4); w[0] = 1.0 }
+      (0...2).each { |k| w = CArray.float64(4); w[0] = 1.0 }
       w = 2.0
       out[i] = w
     }
@@ -356,10 +356,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_name_an_inner_loop_gave_a_number_may_hold_an_array_after_it
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       (0...2).each { |k| w = 1.0; out[i] = w }
-      w = CArray.double(4)
+      w = CArray.float64(4)
       w[0] = 3.0
       out[i] = w[0]
     }
@@ -371,7 +371,7 @@ class TestLocalArrays < Minitest::Test
     refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
         w = 1.0
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = w[0]
       }
     RUBY
@@ -381,7 +381,7 @@ class TestLocalArrays < Minitest::Test
     pattern = /`w` is a local array here, and cannot hold a number/
     refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w = 1.0
         out[i] = w
       }
@@ -391,7 +391,7 @@ class TestLocalArrays < Minitest::Test
   def test_an_array_may_not_take_the_name_of_a_loop_index
     refuse(<<~RUBY, /`i` is a loop index/, arrays: { :out => "float64" })
       proc { |i|
-        i = CArray.double(4)
+        i = CArray.float64(4)
         out[0] = 1.0
       }
     RUBY
@@ -401,7 +401,7 @@ class TestLocalArrays < Minitest::Test
     pattern = /`w` belongs to the loop block it was assigned in/
     refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
-        (0...3).each { |k| w = CArray.double(4); w[0] = 1.0 }
+        (0...3).each { |k| w = CArray.float64(4); w[0] = 1.0 }
         out[i] = w[0]
       }
     RUBY
@@ -411,7 +411,7 @@ class TestLocalArrays < Minitest::Test
     refuse(<<~RUBY, /`w`/, arrays: { :out => "float64", :a => "float64" })
       proc { |i|
         if a[i] > 0.0
-          w = CArray.double(4)
+          w = CArray.float64(4)
           w[0] = 1.0
         else
           out[i] = 0.0
@@ -426,7 +426,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_reach_past_the_end_through_an_inner_index_is_refused
     error = refuse(<<~RUBY, /`t\[k \+ 1\]`/, arrays: { :out => "float64" })
       proc { |i|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         (0...4).each { |k| t[k + 1] = 0.0 }
         out[i] = t[0]
       }
@@ -437,7 +437,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_reach_past_the_end_is_refused_inside_a_branch_too
     refuse(<<~RUBY, /`t\[k \+ 1\]`/, arrays: { :out => "float64" })
       proc { |i|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         (0...4).each { |k| t[k + 1] = 0.0 if k < 3 }
         out[i] = t[0]
       }
@@ -447,7 +447,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_reach_below_zero_through_an_inner_index_is_refused
     refuse(<<~RUBY, /`t\[k - 1\]`/, arrays: { :out => "float64" })
       proc { |i|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         (0...4).each { |k| t[k - 1] = 0.0 }
         out[i] = t[0]
       }
@@ -455,9 +455,9 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_an_inner_index_inside_the_shape_is_not_refused
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      t = CArray.double(4)
+      t = CArray.float64(4)
       (0...3).each { |k| t[k + 1] = k * 1.0 }
       out[i] = t[3]
     }
@@ -467,7 +467,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_literal_subscript_past_the_end_is_refused
     refuse(<<~RUBY, /`t\[4\]` is outside/, arrays: { :out => "float64" })
       proc { |i|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         t[4] = 0.0
         out[i] = t[0]
       }
@@ -477,7 +477,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_literal_negative_subscript_is_refused
     refuse(<<~RUBY, /counts from the start/, arrays: { :out => "float64" })
       proc { |i|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         t[-1] = 0.0
         out[i] = t[0]
       }
@@ -487,7 +487,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_local_array_takes_one_subscript_in_this_release
     refuse(<<~RUBY, /one axis/, arrays: { :out => "float64" })
       proc { |i|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         t[0, 1] = 0.0
         out[i] = t[0]
       }
@@ -498,10 +498,10 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_read_at_a_position_off_the_end_raises
     a = CArray.int64(3).seq!(10)
-    out = CArray.double(3)
+    out = CArray.float64(3)
     assert_raises(IndexError) do
       CArray.jit_for(3) { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = w[a[i]]
       }
     end
@@ -509,10 +509,10 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_write_at_a_position_off_the_end_raises_and_writes_nothing
     a = CArray.int64(1).seq!(9)
-    probe = CArray.double(1)
+    probe = CArray.float64(1)
     assert_raises(IndexError) do
       CArray.jit_for(1) { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w[0] = 11.0
         w[a[i]] = 99.0
         probe[i] = w[0]
@@ -528,10 +528,10 @@ class TestLocalArrays < Minitest::Test
     positions[0] = 0
     positions[1] = 1
     positions[2] = 9
-    seen = CArray.double(3)
+    seen = CArray.float64(3)
     assert_raises(IndexError) do
       CArray.jit_for(3) { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w[0] = 1.0
         w[positions[i]] = 2.0
         seen[i] = w[0]
@@ -542,9 +542,9 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_read_at_a_local_position_inside_the_array_is_not_checked_away
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = k * 1.0 }
       j = 3
       total = 0.0
@@ -598,10 +598,10 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_while_whose_body_reads_a_local_array_off_the_end_stops
     output = run_isolated(<<~RUBY)
-      out = CArray.double(1)
+      out = CArray.float64(1)
       begin
         CArray.jit_for(1) { |i|
-          w = CArray.double(4)
+          w = CArray.float64(4)
           (0...4).each { |k| w[k] = 1.0 }
           j = 0
           s = 1.0
@@ -668,7 +668,7 @@ class TestLocalArrays < Minitest::Test
   # is allocated there (see the heap section below).
   def test_the_shape_may_be_written_over_a_captured_integer
     arrays = { :out => "float64" }
-    %w[CArray.double(n) CArray.new(:float64,\ [n])].each do |spelling|
+    %w[CArray.float64(n) CArray.new(:float64,\ [n])].each do |spelling|
       kernel = compile_kernel(<<~RUBY, arrays: arrays, scalars: { :n => 4 })
         proc { |i|
           w = #{spelling.tr("\\", " ").squeeze(" ")}
@@ -683,13 +683,13 @@ class TestLocalArrays < Minitest::Test
   def test_a_shape_of_zero_or_less_is_refused
     refuse(<<~RUBY, /at least one cell/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(0)
+        w = CArray.float64(0)
         out[i] = w[0]
       }
     RUBY
     refuse(<<~RUBY, /at least one cell/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(2 - 3)
+        w = CArray.float64(2 - 3)
         out[i] = w[0]
       }
     RUBY
@@ -698,7 +698,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_constructor_takes_no_block
     refuse(<<~RUBY, /block/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4) { 1.0 }
+        w = CArray.float64(4) { 1.0 }
         out[i] = w[0]
       }
     RUBY
@@ -706,23 +706,23 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_constructor_stands_on_the_right_of_an_assignment_and_nowhere_else
     refuse(<<~RUBY, /on the right of an assignment/, arrays: { :out => "float64" })
-      proc { |i| out[i] = CArray.double(4)[0] }
+      proc { |i| out[i] = CArray.float64(4)[0] }
     RUBY
     refuse(<<~RUBY, /on the right of an assignment/, arrays: { :out => "float64" })
-      proc { |i| out[i] = CArray.double(4) + 1 }
+      proc { |i| out[i] = CArray.float64(4) + 1 }
     RUBY
   end
 
   def test_a_local_array_is_read_at_a_subscript_and_not_bare
     refuse(<<~RUBY, /index it/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = w
       }
     RUBY
     refuse(<<~RUBY, /index it/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = w + 1.0
       }
     RUBY
@@ -731,7 +731,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_local_array_has_no_methods
     refuse(<<~RUBY, /`sum`/, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out[i] = w.sum
       }
     RUBY
@@ -740,11 +740,11 @@ class TestLocalArrays < Minitest::Test
   # A masked operand and a local array meet: the array carries a shadow byte
   # a cell, so what was read as missing is written back as missing.
   def test_a_masked_operand_and_a_local_array_meet
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = a[i]
       out[i] = w[0]
     }
@@ -753,11 +753,11 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_block_that_asks_about_undef_and_a_local_array_meet
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = a[i] == UNDEF ? 0.0 : a[i]
       out[i] = w[0]
     }
@@ -765,12 +765,12 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_masked_operand_with_the_mask_stripped_is_taken
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     stripped = a.strip_mask(0.0)
     CArray.jit_for(4) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = stripped[i]
       w[1] = w[0] * 2.0
       out[i] = w[1]
@@ -784,7 +784,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_local_array_in_a_function_body_has_no_mask
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double marks(double x)") { |x|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w[0] = UNDEF
         w[0]
       }
@@ -792,7 +792,7 @@ class TestLocalArrays < Minitest::Test
     assert_match(/nothing there carries masks/, error.message)
     asked = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double asks(double x)") { |x|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w[0] = x
         w[0] == UNDEF ? 1.0 : 2.0
       }
@@ -808,7 +808,7 @@ class TestLocalArrays < Minitest::Test
     cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8 + 1
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(#{cells})
+        w = CArray.float64(#{cells})
         w[0] = 1.0
         out[i] = w[0]
       }
@@ -824,7 +824,7 @@ class TestLocalArrays < Minitest::Test
     cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        w = CArray.double(#{cells})
+        w = CArray.float64(#{cells})
         w[0] = 1.0
         out[i] = w[0]
       }
@@ -840,7 +840,7 @@ class TestLocalArrays < Minitest::Test
     count = CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT /
             CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT + 1
     body = (0...count).map { |n|
-      "  w#{n} = CArray.double(#{each})\n  w#{n}[0] = 1.0\n"
+      "  w#{n} = CArray.float64(#{each})\n  w#{n}[0] = 1.0\n"
     }.join
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
@@ -860,11 +860,11 @@ class TestLocalArrays < Minitest::Test
   # ---------- the entry points that do not take one yet ----------
 
   def test_a_contraction_says_why_it_takes_none
-    x = CArray.double(4, 4).seq!
-    y = CArray.double(4, 4).seq!
+    x = CArray.float64(4, 4).seq!
+    y = CArray.float64(4, 4).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_contract { |i, k, j|
-        w = CArray.double(2)
+        w = CArray.float64(2)
         x[i, k] * y[k, j]
       }
     end
@@ -881,42 +881,42 @@ class TestLocalArrays < Minitest::Test
   # a row by at all.
 
   def test_a_local_array_in_a_jit_each_block
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_each {
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a
       w[1] = a * 2.0
       w[2] = a * 3.0
       out = w[0] + w[1] + w[2]
     }
     reference = (0...6).map { |k| a[k] + a[k] * 2.0 + a[k] * 3.0 }
-    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(6) { reference }, out)
   end
 
   def test_a_local_array_in_a_jit_map_block
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     out = CArray.jit_map {
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a
       w[1] = a * 2.0
       w[2] = a * 3.0
       w[0] + w[1] + w[2]
     }
     reference = (0...6).map { |k| a[k] + a[k] * 2.0 + a[k] * 3.0 }
-    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(6) { reference }, out)
   end
 
   def test_a_local_array_in_a_jit_stencil_block
-    image = CArray.double(6, 6).seq!
+    image = CArray.float64(6, 6).seq!
     out = CArray.jit_stencil(image, border: :clamp) { |a|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a[-1, 0]
       w[1] = a[0, 0]
       w[2] = a[1, 0]
       w[0] + w[1] + w[2]
     }
-    reference = CArray.double(6, 6)
+    reference = CArray.float64(6, 6)
     6.times { |row| 6.times { |column|
       above = image[[row - 1, 0].max, column]
       below = image[[row + 1, 5].min, column]
@@ -930,7 +930,7 @@ class TestLocalArrays < Minitest::Test
   # and `sort(w)` -- and both held to the same Ruby loop.
   def median_reference (image)
     rows, columns = image.dim
-    reference = CArray.double(rows, columns)
+    reference = CArray.float64(rows, columns)
     rows.times { |row| columns.times { |column|
       window = (-1..1).flat_map { |dr| (-1..1).map { |dc|
         image[[[row + dr, 0].max, rows - 1].min,
@@ -942,10 +942,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_median_filter_with_the_insertion_sort_written_out
-    image = CArray.double(7, 7).seq!
+    image = CArray.float64(7, 7).seq!
     image.map! { |value| (value * 13) % 29 }
     out = CArray.jit_stencil(image, border: :clamp) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -964,10 +964,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_median_filter_with_sort
-    image = CArray.double(7, 7).seq!
+    image = CArray.float64(7, 7).seq!
     image.map! { |value| (value * 13) % 29 }
     out = CArray.jit_stencil(image, border: :clamp) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -981,17 +981,17 @@ class TestLocalArrays < Minitest::Test
   # no index either, and the five members are five operands.
   def ensemble_reference (members)
     count = members.first.elements
-    CArray.double(count) { (0...count).map { |k| members.map { |m| m[k] }.sort[2] } }
+    CArray.float64(count) { (0...count).map { |k| members.map { |m| m[k] }.sort[2] } }
   end
 
   def test_the_ensemble_median_with_the_insertion_sort_written_out
-    m1 = CArray.double(8).seq!(3.0, 7.0).map! { |v| v % 29 }
-    m2 = CArray.double(8).seq!(11.0, 5.0).map! { |v| v % 29 }
-    m3 = CArray.double(8).seq!(2.0, 13.0).map! { |v| v % 29 }
-    m4 = CArray.double(8).seq!(23.0, 3.0).map! { |v| v % 29 }
-    m5 = CArray.double(8).seq!(17.0, 19.0).map! { |v| v % 29 }
+    m1 = CArray.float64(8).seq!(3.0, 7.0).map! { |v| v % 29 }
+    m2 = CArray.float64(8).seq!(11.0, 5.0).map! { |v| v % 29 }
+    m3 = CArray.float64(8).seq!(2.0, 13.0).map! { |v| v % 29 }
+    m4 = CArray.float64(8).seq!(23.0, 3.0).map! { |v| v % 29 }
+    m5 = CArray.float64(8).seq!(17.0, 19.0).map! { |v| v % 29 }
     out = CArray.jit_map {
-      w = CArray.double(5)
+      w = CArray.float64(5)
       w[0] = m1; w[1] = m2; w[2] = m3; w[3] = m4; w[4] = m5
       (1...5).each { |k|
         key = w[k]
@@ -1008,13 +1008,13 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_ensemble_median_with_sort
-    m1 = CArray.double(8).seq!(3.0, 7.0).map! { |v| v % 29 }
-    m2 = CArray.double(8).seq!(11.0, 5.0).map! { |v| v % 29 }
-    m3 = CArray.double(8).seq!(2.0, 13.0).map! { |v| v % 29 }
-    m4 = CArray.double(8).seq!(23.0, 3.0).map! { |v| v % 29 }
-    m5 = CArray.double(8).seq!(17.0, 19.0).map! { |v| v % 29 }
+    m1 = CArray.float64(8).seq!(3.0, 7.0).map! { |v| v % 29 }
+    m2 = CArray.float64(8).seq!(11.0, 5.0).map! { |v| v % 29 }
+    m3 = CArray.float64(8).seq!(2.0, 13.0).map! { |v| v % 29 }
+    m4 = CArray.float64(8).seq!(23.0, 3.0).map! { |v| v % 29 }
+    m5 = CArray.float64(8).seq!(17.0, 19.0).map! { |v| v % 29 }
     out = CArray.jit_map {
-      w = CArray.double(5)
+      w = CArray.float64(5)
       w[0] = m1; w[1] = m2; w[2] = m3; w[3] = m4; w[4] = m5
       sort(w)
       w[2]
@@ -1030,23 +1030,23 @@ class TestLocalArrays < Minitest::Test
   # read, or checked at the access -- so both paths keep them.  These say so.
 
   def test_the_swept_path_is_the_one_under_test
-    a = CArray.double(64).seq!(1.0)
-    out = CArray.double(64)
+    a = CArray.float64(64).seq!(1.0)
+    out = CArray.float64(64)
     assert(CArray::JIT.send(:sweepable_pass?, { :a => a, :out => out },
                             [64], false),
            "these operands should take the swept path")
-    kernel = CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
+    kernel = CArray.jit_each { w = CArray.float64(2); w[0] = a; out = w[0] }
     assert_equal(1, kernel.rank, "a swept pass is compiled flat")
   end
 
   def test_a_read_off_the_end_on_the_swept_path_raises
     a = CArray.int64(64).seq!(70)
-    out = CArray.double(64)
+    out = CArray.float64(64)
     assert(CArray::JIT.send(:sweepable_pass?, { :a => a, :out => out },
                             [64], false))
     assert_raises(IndexError) do
       CArray.jit_each {
-        w = CArray.double(4)
+        w = CArray.float64(4)
         out = w[a]
       }
     end
@@ -1054,13 +1054,13 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_write_off_the_end_on_the_swept_path_writes_nothing
     positions = CArray.int64(64).seq!(70)
-    seen = CArray.double(64)
+    seen = CArray.float64(64)
     assert(CArray::JIT.send(:sweepable_pass?,
                             { :positions => positions, :seen => seen },
                             [64], false))
     assert_raises(IndexError) do
       CArray.jit_each {
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w[0] = 11.0
         w[positions] = 99.0
         seen = w[0]
@@ -1069,10 +1069,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_read_off_the_end_on_a_bordered_path_raises
-    image = CArray.double(8, 8).seq!
+    image = CArray.float64(8, 8).seq!
     assert_raises(IndexError) do
       CArray.jit_stencil(image, border: :clamp) { |a|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         j = 9
         w[j]
       }
@@ -1080,10 +1080,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_write_off_the_end_on_a_bordered_path_writes_nothing
-    image = CArray.double(8, 8).seq!
+    image = CArray.float64(8, 8).seq!
     assert_raises(IndexError) do
       CArray.jit_stencil(image, border: :clamp) { |a|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         w[0] = 11.0
         j = 9
         w[j] = 99.0
@@ -1095,10 +1095,10 @@ class TestLocalArrays < Minitest::Test
   # (a) is settled as the block is read, so it does not depend on which
   # driver would have run.
   def test_the_reach_is_refused_in_a_stencil_too
-    image = CArray.double(8, 8).seq!
+    image = CArray.float64(8, 8).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(image, border: :clamp) { |a|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         (0...4).each { |k| t[k + 1] = a[0, 0] }
         t[0]
       }
@@ -1107,11 +1107,11 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_reach_is_refused_in_a_jit_each_block_too
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_each {
-        t = CArray.double(4)
+        t = CArray.float64(4)
         (0...4).each { |k| t[k + 1] = a }
         out = t[0]
       }
@@ -1147,11 +1147,11 @@ class TestLocalArrays < Minitest::Test
   # ---------- the name the block makes, against a name outside ----------
 
   def test_an_outer_array_of_the_same_name_is_refused_before_the_broadcast
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
-    w = CArray.double(9)          # a different shape: the broadcast would fail
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
+    w = CArray.float64(9)          # a different shape: the broadcast would fail
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { w = CArray.double(9); out = a * 1.0 }
+      CArray.jit_each { w = CArray.float64(9); out = a * 1.0 }
     end
     assert_match(/`w` is made in this block/, error.message)
     assert_match(/closes over an array named `w`/, error.message)
@@ -1160,11 +1160,11 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_an_outer_array_of_the_same_name_is_refused_when_the_shapes_agree
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
-    w = CArray.double(6)          # the same shape: it would slip in unnoticed
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
+    w = CArray.float64(6)          # the same shape: it would slip in unnoticed
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { w = CArray.double(6); out = a * 1.0 }
+      CArray.jit_each { w = CArray.float64(6); out = a * 1.0 }
     end
     assert_match(/`w` is made in this block/, error.message)
     assert_equal([0.0] * 6, w.to_a, "the outer array is untouched")
@@ -1173,10 +1173,10 @@ class TestLocalArrays < Minitest::Test
   # `jit_map` reaches the probe before it reaches the kernel, so the check has
   # to be in front of that too.
   def test_an_outer_array_of_the_same_name_is_refused_in_a_map
-    a = CArray.double(6).seq!(1.0)
-    w = CArray.double(9)
+    a = CArray.float64(6).seq!(1.0)
+    w = CArray.float64(9)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_map { w = CArray.double(9); a * 1.0 }
+      CArray.jit_map { w = CArray.float64(9); a * 1.0 }
     end
     assert_match(/`w` is made in this block/, error.message)
   end
@@ -1196,9 +1196,9 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_name_the_block_makes_is_not_an_operand
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
-    kernel = CArray.jit_each { w = CArray.double(2); w[0] = a; out = w[0] }
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
+    kernel = CArray.jit_each { w = CArray.float64(2); w[0] = a; out = w[0] }
     refute_includes(kernel.arrays, :w,
                     "a local array is not one of the kernel's operands")
   end
@@ -1215,12 +1215,12 @@ class TestLocalArrays < Minitest::Test
   # writes by hand is which cells are missing and what the rest hold.
 
   def test_a_masked_window_copied_into_a_local_array_keeps_its_holes
-    a = CArray.double(8).seq!(1.0)
+    a = CArray.float64(8).seq!(1.0)
     a[2] = UNDEF
     a[5] = UNDEF
-    out = CArray.double(8)
+    out = CArray.float64(8)
     CArray.jit_for(1...7) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a[i - 1]
       w[1] = a[i]
       w[2] = a[i + 1]
@@ -1238,10 +1238,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_masked_operand_and_a_local_array_meet_in_a_jit_each_block
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(6)
-    CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a * 2.0; out = w[0] + w[1] }
+    out = CArray.float64(6)
+    CArray.jit_each { w = CArray.float64(2); w[0] = a; w[1] = a * 2.0; out = w[0] + w[1] }
     assert_equal([false, false, true, false, false, false], out.is_masked.to_a)
     [0, 1, 3, 4, 5].each { |k|
       assert_bits_equal(a[k] + a[k] * 2.0, out[k], "cell #{k}")
@@ -1249,19 +1249,19 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_block_that_asks_about_undef_and_a_local_array_meet_in_a_map
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.jit_map { w = CArray.double(2); w[0] = (a == UNDEF ? -1.0 : a); w[0] * 10.0 }
+    out = CArray.jit_map { w = CArray.float64(2); w[0] = (a == UNDEF ? -1.0 : a); w[0] * 10.0 }
     # The question is answered rather than carried: a cell asked about UNDEF
     # is a cell whose value is known, so nothing here is missing.
     assert_equal([10.0, 20.0, -10.0, 40.0, 50.0, 60.0], out.to_a)
   end
 
   def test_a_masked_operand_and_a_local_array_meet_in_a_stencil
-    image = CArray.double(6, 6).seq!
+    image = CArray.float64(6, 6).seq!
     image[2, 2] = UNDEF
     out = CArray.jit_stencil(image, border: :clamp) { |a|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = a[0, 0]
       w[1] = a[0, 1]
       w[0] + w[1]
@@ -1280,13 +1280,13 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_local_array_in_a_function_body_called_from_a_masked_kernel
     scale = CArray.jit_function("double scale(double x)") { |x|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       (0...3).each { |k| w[k] = x + k }
       w[0] + w[1] + w[2]
     }
-    a = CArray.double(5).seq!(1.0)
+    a = CArray.float64(5).seq!(1.0)
     a[3] = UNDEF
-    out = CArray.double(5)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i| out[i] = scale.call(a[i]) }
     assert_equal([false, false, false, true, false], out.is_masked.to_a)
     [0, 1, 2, 4].each { |k|
@@ -1297,10 +1297,10 @@ class TestLocalArrays < Minitest::Test
   # ---------- UNDEF written into a local array, and asked about ----------
 
   def test_undef_written_into_a_cell_of_a_local_array_comes_back_out
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       if a[i] > 3.0
         w[0] = UNDEF
       else
@@ -1314,10 +1314,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_cell_of_a_local_array_can_be_asked_about
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       if a[i] > 3.0
         w[0] = UNDEF
       else
@@ -1332,11 +1332,11 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_cell_of_a_local_array_can_be_asked_the_other_way_round
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     a[1] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(1)
+      w = CArray.float64(1)
       w[0] = a[i]
       out[i] = w[0] != UNDEF ? 1.0 : 0.0
     }
@@ -1347,10 +1347,10 @@ class TestLocalArrays < Minitest::Test
   # branch, what the arm that ran put there -- the mask byte with it, since
   # the two are written together.
   def test_one_arm_of_a_branch_marks_the_cell_and_the_other_does_not
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(1)
+      w = CArray.float64(1)
       if a[i] % 2.0 == 0.0
         w[0] = UNDEF
       else
@@ -1366,10 +1366,10 @@ class TestLocalArrays < Minitest::Test
   # the array starts every pass present rather than holding what the pass
   # before left there.
   def test_the_zeroed_spelling_clears_the_shadow_at_every_cell
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       if a[i] == 1.0
         w[0] = UNDEF
       end
@@ -1382,7 +1382,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_zeroed_spelling_clears_the_shadow_in_the_c
     kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
       proc { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         w[0] = a[i]
         out[i] = w[0]
       }
@@ -1408,7 +1408,7 @@ class TestLocalArrays < Minitest::Test
   def test_an_unmasked_kernel_declares_no_shadow
     kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" })
       proc { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         w[0] = a[i]
         out[i] = w[0]
       }
@@ -1425,7 +1425,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_computed_subscript_reports_once_under_masks
     kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :idx => "int64", :out => "float64" }, masked: true)
       proc { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         w[idx[i]] = a[i]
         out[i] = w[idx[i]]
       }
@@ -1441,13 +1441,13 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_computed_subscript_out_of_range_under_masks_raises
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     a[1] = UNDEF
     where = CArray.int64(4).seq!
-    out = CArray.double(4)
+    out = CArray.float64(4)
     assert_raises(IndexError) do
       CArray.jit_for(4) { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         w[where[i]] = a[i]
         out[i] = w[0]
       }
@@ -1461,11 +1461,11 @@ class TestLocalArrays < Minitest::Test
   # four are refused over an array that carries one rather than given a
   # meaning here.
   def test_an_intrinsic_over_a_local_array_is_refused_under_masks
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(6)
+    out = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a; out = sum(w) }
+      CArray.jit_each { w = CArray.float64(2); w[0] = a; w[1] = a; out = sum(w) }
     end
     assert_match(/`sum`/, error.message)
     assert_match(/carries masks/, error.message)
@@ -1473,9 +1473,9 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_an_intrinsic_over_a_local_array_is_taken_without_masks
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
-    CArray.jit_each { w = CArray.double(2); w[0] = a; w[1] = a * 2.0; out = sum(w) }
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
+    CArray.jit_each { w = CArray.float64(2); w[0] = a; w[1] = a * 2.0; out = sum(w) }
     assert_equal((0...6).map { |k| a[k] * 3.0 }, out.to_a)
   end
 
@@ -1483,12 +1483,12 @@ class TestLocalArrays < Minitest::Test
     total3 = CArray.jit_function("double total3(const double *v)") { |v|
       v[0] + v[1] + v[2]
     }
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(6)
+    out = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(6) { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         w[0] = a[i]; w[1] = 1.0; w[2] = 2.0
         out[i] = total3.call(w)
       }
@@ -1502,10 +1502,10 @@ class TestLocalArrays < Minitest::Test
     total3 = CArray.jit_function("double total3(const double *v)") { |v|
       v[0] + v[1] + v[2]
     }
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = a[i]; w[1] = 1.0; w[2] = 2.0
       out[i] = total3.call(w)
     }
@@ -1524,7 +1524,7 @@ class TestLocalArrays < Minitest::Test
     cells = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8
     unmasked = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" })
       proc { |i|
-        w = CArray.double(#{cells})
+        w = CArray.float64(#{cells})
         w[0] = a[i]
         out[i] = w[0]
       }
@@ -1532,7 +1532,7 @@ class TestLocalArrays < Minitest::Test
     assert_match(/double w\[#{cells}\];/, unmasked.c_source)
     masked = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, masked: true)
       proc { |i|
-        w = CArray.double(#{cells})
+        w = CArray.float64(#{cells})
         w[0] = a[i]
         out[i] = w[0]
       }
@@ -1550,7 +1550,7 @@ class TestLocalArrays < Minitest::Test
     each = 400
     count = CArray::JIT::Analyzer::LOCAL_ARRAY_TOTAL_BYTE_LIMIT / (8 * each)
     body = (0...count).map { |n|
-      "  w#{n} = CArray.double(#{each})\n  w#{n}[0] = a[i]\n"
+      "  w#{n} = CArray.float64(#{each})\n  w#{n}[0] = a[i]\n"
     }.join
     arrays = { :a => "float64", :out => "float64" }
     taken = compile_kernel(<<~RUBY, arrays: arrays)
@@ -1576,9 +1576,9 @@ class TestLocalArrays < Minitest::Test
   # loop runs and the loop never reaches it, so what the kernel carries is
   # what the operands carry.  A local array is therefore fine under it.
   def test_a_frame_border_is_not_a_masked_kernel
-    field = CArray.double(6, 6).seq!
+    field = CArray.float64(6, 6).seq!
     out = CArray.jit_stencil(field, border: :mask) { |a|
-      w = CArray.double(9)
+      w = CArray.float64(9)
       w[0] = a[-1, -1]; w[1] = a[-1, 0]; w[2] = a[-1, 1]
       w[3] = a[0, -1];  w[4] = a[0, 0];  w[5] = a[0, 1]
       w[6] = a[1, -1];  w[7] = a[1, 0];  w[8] = a[1, 1]
@@ -1594,10 +1594,10 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_every_border_takes_a_local_array
-    field = CArray.double(6, 6).seq!
+    field = CArray.float64(6, 6).seq!
     [:mask, :skip, :zero, :clamp, :wrap].each do |border|
       out = CArray.jit_stencil(field, border: border) { |a|
-        w = CArray.double(2)
+        w = CArray.float64(2)
         w[0] = a[0, 0]
         w[1] = a[0, 0] * 2.0
         w[0] + w[1]
@@ -1628,17 +1628,17 @@ class TestLocalArrays < Minitest::Test
   # Example 6 of the proposal.
   def test_a_local_array_is_handed_to_a_compiled_function
     n = 12
-    signal = CArray.double(n).seq!(1.0, 0.5)
-    weights = CArray.double(4)
+    signal = CArray.float64(n).seq!(1.0, 0.5)
+    weights = CArray.float64(4)
     weights[0] = 0.1; weights[1] = 0.2; weights[2] = 0.3; weights[3] = 0.4
-    smoothed = CArray.double(n)
+    smoothed = CArray.float64(n)
     CArray.jit_for(0...(n - 3)) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       w[0] = signal[i]; w[1] = signal[i + 1]
       w[2] = signal[i + 2]; w[3] = signal[i + 3]
       smoothed[i] = DOT4.call(w, weights)
     }
-    reference = CArray.double(n)
+    reference = CArray.float64(n)
     (0...(n - 3)).each { |i|
       reference[i] = (0...4).inject(0.0) { |total, k|
         total + signal[i + k] * weights[k]
@@ -1648,13 +1648,13 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_local_array_reaches_a_function_from_every_entry_point
-    a = CArray.double(6).seq!(1.0)
-    ones = CArray.double(4)
+    a = CArray.float64(6).seq!(1.0)
+    ones = CArray.float64(4)
     (0...4).each { |k| ones[k] = 1.0 }
 
-    out = CArray.double(6)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = a[i] }
       out[i] = DOT4.call(w, ones)
     }
@@ -1664,10 +1664,10 @@ class TestLocalArrays < Minitest::Test
     # array handed over by address joins the line-up and is broadcast against
     # the operands, so one of a different length clashes there -- which is
     # so with or without a local array, and is not this release's business.
-    each = CArray.double(6)
+    each = CArray.float64(6)
     CArray.jit_each {
-      w = CArray.double(4)
-      u = CArray.double(4)
+      w = CArray.float64(4)
+      u = CArray.float64(4)
       w[0] = a; w[1] = a; w[2] = a; w[3] = a
       u[0] = 1.0; u[1] = 1.0; u[2] = 1.0; u[3] = 1.0
       each = DOT4.call(w, u)
@@ -1675,18 +1675,18 @@ class TestLocalArrays < Minitest::Test
     assert_equal((0...6).map { |k| a[k] * 4.0 }, each.to_a, "jit_each")
 
     mapped = CArray.jit_map {
-      w = CArray.double(4)
-      u = CArray.double(4)
+      w = CArray.float64(4)
+      u = CArray.float64(4)
       w[0] = a; w[1] = a; w[2] = a; w[3] = a
       u[0] = 1.0; u[1] = 1.0; u[2] = 1.0; u[3] = 1.0
       DOT4.call(w, u)
     }
     assert_equal((0...6).map { |k| a[k] * 4.0 }, mapped.to_a, "jit_map")
 
-    image = CArray.double(5, 5).seq!
+    image = CArray.float64(5, 5).seq!
     stencilled = CArray.jit_stencil(image, border: :clamp) { |win|
-      w = CArray.double(4)
-      u = CArray.double(4)
+      w = CArray.float64(4)
+      u = CArray.float64(4)
       w[0] = win[0, 0]; w[1] = win[0, 0]
       w[2] = win[0, 0]; w[3] = win[0, 0]
       u[0] = 1.0; u[1] = 1.0; u[2] = 1.0; u[3] = 1.0
@@ -1704,11 +1704,11 @@ class TestLocalArrays < Minitest::Test
       x[2] = 30.0
       x[0] + x[1] + x[2]
     }
-    total = CArray.double(3)
-    first = CArray.double(3)
-    last = CArray.double(3)
+    total = CArray.float64(3)
+    first = CArray.float64(3)
+    last = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       total[i] = fill.call(w)
       first[i] = w[0]
       last[i] = w[2]
@@ -1725,17 +1725,17 @@ class TestLocalArrays < Minitest::Test
       x[0] = x[0] + 1.0
       x[0]
     }
-    seen = CArray.double(4)
-    CArray.jit_for(4) { |i| w = CArray.double(2); seen[i] = bump.call(w) }
+    seen = CArray.float64(4)
+    CArray.jit_for(4) { |i| w = CArray.float64(2); seen[i] = bump.call(w) }
     assert_equal([1.0] * 4, seen.to_a,
                  "each cell starts from a cleared array, so each sees 1.0")
   end
 
   def test_the_same_local_array_may_be_handed_to_two_arguments
     # The declarations carry no `restrict`, so this is well-formed C.
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       (0...4).each { |k| w[k] = 2.0 }
       out[i] = DOT4.call(w, w)
     }
@@ -1751,7 +1751,7 @@ class TestLocalArrays < Minitest::Test
 
   def test_an_element_type_that_does_not_match_is_refused
     error = assert_raises(CArray::JIT::Unsupported) do
-      out = CArray.double(1)
+      out = CArray.float64(1)
       CArray.jit_for(1) { |i|
         w = CArray.float32(4)
         (0...4).each { |k| w[k] = 1.0 }
@@ -1766,9 +1766,9 @@ class TestLocalArrays < Minitest::Test
 
   def test_an_array_shorter_than_the_declaration_is_refused
     error = assert_raises(CArray::JIT::Unsupported) do
-      out = CArray.double(3)
+      out = CArray.float64(3)
       CArray.jit_for(3) { |i|
-        w = CArray.double(3)
+        w = CArray.float64(3)
         (0...3).each { |k| w[k] = 1.0 }
         out[i] = DOT4.call(w, w)
       }
@@ -1781,10 +1781,10 @@ class TestLocalArrays < Minitest::Test
   # Refused as the block is read, so no kernel is ever built for it.
   def test_a_short_array_is_refused_before_a_kernel_is_built
     CArray::JIT.clear_registry
-    out = CArray.double(1)
+    out = CArray.float64(1)
     assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i|
-        w = CArray.double(2)
+        w = CArray.float64(2)
         w[0] = 1.0; w[1] = 2.0
         out[i] = DOT4.call(w, w)
       }
@@ -1797,9 +1797,9 @@ class TestLocalArrays < Minitest::Test
   def test_an_array_longer_than_the_declaration_is_taken
     # The callee reads four of the six, which is what a captured array of six
     # is allowed to do as well.
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(6)
+      w = CArray.float64(6)
       (0...6).each { |k| w[k] = 2.0 }
       out[i] = DOT4.call(w, w)
     }
@@ -1808,9 +1808,9 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_declaration_with_no_length_takes_any_local_array
     star = CArray.jit_function("double first(const double *x)") { |x| x[0] }
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = 7.0
       out[i] = star.call(w)
     }
@@ -1823,7 +1823,7 @@ class TestLocalArrays < Minitest::Test
     # machine, so the borrowed declaration is `qsort`-free and uses libm's
     # `frexp`, which takes an `int *`.
     frexp = CArray.jit_extern("double frexp(double value, int *exponent)")
-    out = CArray.double(1)
+    out = CArray.float64(1)
     got = CArray.int32(1)
     CArray.jit_for(1) { |i|
       e = CArray.new(:int32, [1])
@@ -1850,7 +1850,7 @@ class TestLocalArrays < Minitest::Test
   NEVILLE = CArray.jit_function(
     "double neville(double x, const double xs[4], const double ys[4])"
   ) { |x, xs, ys|
-    t = CArray.double(4)
+    t = CArray.float64(4)
     4.times { |k| t[k] = ys[k] }
     (1...4).each { |m|
       (0...3).each { |k|
@@ -1877,8 +1877,8 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_neville_interpolates_as_the_same_loop_in_ruby
-    xs = CArray.double(4)
-    ys = CArray.double(4)
+    xs = CArray.float64(4)
+    ys = CArray.float64(4)
     [0.0, 1.0, 2.0, 3.0].each_with_index { |v, k| xs[k] = v }
     [1.0, 2.5, 0.5, 4.0].each_with_index { |v, k| ys[k] = v }
     plain_xs = (0...4).map { |k| xs[k] }
@@ -1890,16 +1890,16 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_neville_interpolates_the_same_way_from_a_kernel
-    xs = CArray.double(4)
-    ys = CArray.double(4)
+    xs = CArray.float64(4)
+    ys = CArray.float64(4)
     [0.0, 1.0, 2.0, 3.0].each_with_index { |v, k| xs[k] = v }
     [1.0, 2.5, 0.5, 4.0].each_with_index { |v, k| ys[k] = v }
-    query = CArray.double(5).seq!(0.25, 0.5)
-    out = CArray.double(5)
+    query = CArray.float64(5).seq!(0.25, 0.5)
+    out = CArray.float64(5)
     CArray.jit_for(5) { |i| out[i] = NEVILLE.call(query[i], xs, ys) }
     plain_xs = (0...4).map { |k| xs[k] }
     plain_ys = (0...4).map { |k| ys[k] }
-    reference = CArray.double(5) {
+    reference = CArray.float64(5) {
       (0...5).map { |i| neville_reference(query[i], plain_xs, plain_ys) }
     }
     assert_arrays_bits_equal(reference, out)
@@ -1919,12 +1919,12 @@ class TestLocalArrays < Minitest::Test
       x[0] + x[1] + x[2]
     }
     outer = CArray.jit_function("double outer(double s)") { |s|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = s; w[1] = s * 2.0; w[2] = s * 3.0
       total.call(w)
     }
     assert_equal(12.0, outer.call(2.0), "2 + 4 + 6")
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i| out[i] = outer.call(i * 1.0) }
     assert_equal([0.0, 6.0, 12.0], out.to_a, "and the same from a kernel")
   end
@@ -1935,12 +1935,12 @@ class TestLocalArrays < Minitest::Test
       x[1] = 6.0
     }
     outer = CArray.jit_function("double outer2(double s)") { |s|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       fill.call(w)
       s + w[0] + w[1]
     }
     assert_equal(11.0, outer.call(1.0), "1 + 4 + 6")
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i| out[i] = outer.call(i * 1.0) }
     assert_equal([10.0, 11.0], out.to_a)
   end
@@ -1954,7 +1954,7 @@ class TestLocalArrays < Minitest::Test
     relay = CArray.jit_function("double relay(const double x[3])") { |x|
       total.call(x)
     }
-    given = CArray.double(3)
+    given = CArray.float64(3)
     given[0] = 1.0; given[1] = 2.0; given[2] = 4.0
     assert_equal(7.0, relay.call(given))
   end
@@ -1963,7 +1963,7 @@ class TestLocalArrays < Minitest::Test
     wants4 = CArray.jit_function("double wants4(const double x[4])") { |x| x[0] }
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double tooshort(double s)") { |s|
-        w = CArray.double(2)
+        w = CArray.float64(2)
         w[0] = s
         wants4.call(w)
       }
@@ -1990,13 +1990,13 @@ class TestLocalArrays < Minitest::Test
   # Each activation declares its own array, as C does for an automatic.
   def test_a_recursive_body_gets_one_array_per_call
     down = CArray.jit_function("double down(double n)") { |n|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = n
       w[1] = n <= 0.0 ? 0.0 : down.call(n - 1.0)
       w[0] + w[1]
     }
     assert_equal(6.0, down.call(3.0), "3 + 2 + 1 + 0, each level keeping its n")
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i| out[i] = down.call(i * 1.0) }
     assert_equal([0.0, 1.0, 3.0, 6.0], out.to_a)
   end
@@ -2005,7 +2005,7 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_read_off_the_end_in_a_body_raises
     reader = CArray.jit_function("double reader(double j)") { |j|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       k = j.to_i
       w[k]
     }
@@ -2014,7 +2014,7 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_write_off_the_end_in_a_body_writes_nothing
     writer = CArray.jit_function("double writer(double j)") { |j|
-      w = CArray.double(4)
+      w = CArray.float64(4)
       w[0] = 11.0
       k = j.to_i
       w[k] = 99.0
@@ -2030,7 +2030,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_reach_is_refused_in_a_body_as_the_block_is_read
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double reach(double s)") { |s|
-        t = CArray.double(4)
+        t = CArray.float64(4)
         (0...4).each { |k| t[k + 1] = s }
         t[0]
       }
@@ -2041,7 +2041,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_while_in_a_body_that_reads_off_the_end_stops
     output = run_isolated(<<~RUBY)
       f = CArray.jit_function("double spin(double start)") { |start|
-        w = CArray.double(4)
+        w = CArray.float64(4)
         (0...4).each { |k| w[k] = 1.0 }
         j = start.to_i
         s = 1.0
@@ -2069,11 +2069,11 @@ class TestLocalArrays < Minitest::Test
   def test_one_body_is_held_to_the_total
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double big(double s)") { |s|
-        a = CArray.double(512)
-        b = CArray.double(512)
-        c = CArray.double(512)
-        d = CArray.double(512)
-        e = CArray.double(512)
+        a = CArray.float64(512)
+        b = CArray.float64(512)
+        c = CArray.float64(512)
+        d = CArray.float64(512)
+        e = CArray.float64(512)
         a[0] = s; b[0] = s; c[0] = s; d[0] = s; e[0] = s
         a[0] + b[0] + c[0] + d[0] + e[0]
       }
@@ -2088,20 +2088,20 @@ class TestLocalArrays < Minitest::Test
   # is the same bargain a deep recursion already takes.
   def test_a_chain_of_functions_each_within_the_limit_is_taken
     inner = CArray.jit_function("double inner(double s)") { |s|
-      u = CArray.double(512)
-      v = CArray.double(512)
+      u = CArray.float64(512)
+      v = CArray.float64(512)
       u[0] = s; v[0] = s
       u[0] + v[0]
     }
     middle = CArray.jit_function("double middle(double s)") { |s|
-      u = CArray.double(512)
-      v = CArray.double(512)
+      u = CArray.float64(512)
+      v = CArray.float64(512)
       u[0] = inner.call(s); v[0] = 1.0
       u[0] + v[0]
     }
     outer = CArray.jit_function("double outer3(double s)") { |s|
-      u = CArray.double(512)
-      v = CArray.double(512)
+      u = CArray.float64(512)
+      v = CArray.float64(512)
       u[0] = middle.call(s); v[0] = 1.0
       u[0] + v[0]
     }
@@ -2120,13 +2120,13 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_body_and_the_kernel_pasting_it_may_use_one_name
     doubler = CArray.jit_function("double doubler(double x)") { |x|
-      w = CArray.double(2)
+      w = CArray.float64(2)
       w[0] = x * 2.0
       w[0]
     }
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      w = CArray.double(3)
+      w = CArray.float64(3)
       w[0] = i * 1.0
       out[i] = doubler.call(w[0]) + w[0]
     }
@@ -2136,11 +2136,11 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_body_may_name_its_array_after_a_kernel_parameter
     named = CArray.jit_function("double named(double x)") { |x|
-      error = CArray.double(2)
+      error = CArray.float64(2)
       error[0] = x * 3.0
       error[0]
     }
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i| out[i] = named.call(i * 1.0) }
     assert_equal([0.0, 3.0], out.to_a)
   end
@@ -2148,10 +2148,10 @@ class TestLocalArrays < Minitest::Test
   # ---------- a contraction still takes none ----------
 
   def test_a_contraction_still_takes_no_local_array
-    x = CArray.double(4, 4).seq!
-    y = CArray.double(4, 4).seq!
+    x = CArray.float64(4, 4).seq!
+    y = CArray.float64(4, 4).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_contract { |i, k, j| w = CArray.double(2); x[i, k] * y[k, j] }
+      CArray.jit_contract { |i, k, j| w = CArray.float64(2); x[i, k] * y[k, j] }
     end
     assert_match(/a contraction's body is one expression/, error.message)
   end
@@ -2164,9 +2164,9 @@ class TestLocalArrays < Minitest::Test
   # says nothing, where `m[r, c]` is refused.
 
   def test_a_two_dimensional_local_array_is_addressed_per_axis
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i|
-      m = CArray.double(3, 4)
+      m = CArray.float64(3, 4)
       3.times { |r| 4.times { |c| m[r, c] = (r * 4 + c) * 1.0 } }
       out[i] = m[2, 3] * 100.0 + m[0, 1]
     }
@@ -2176,7 +2176,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_declaration_is_flat_and_the_strides_are_constants
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         m[2, 3] = 1.0
         out[i] = m[2, 3]
       }
@@ -2188,9 +2188,9 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_three_dimensional_local_array
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
-      m = CArray.double(2, 3, 4)
+      m = CArray.float64(2, 3, 4)
       2.times { |p| 3.times { |r| 4.times { |c| m[p, r, c] = (p * 12 + r * 4 + c) * 1.0 } } }
       out[i] = m[1, 2, 3]
     }
@@ -2200,7 +2200,7 @@ class TestLocalArrays < Minitest::Test
   def test_three_axes_bake_two_strides
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(2, 3, 4)
+        m = CArray.float64(2, 3, 4)
         m[1, 2, 3] = 1.0
         out[i] = m[1, 2, 3]
       }
@@ -2214,15 +2214,15 @@ class TestLocalArrays < Minitest::Test
   # back substitution, with the triangular ranges written as `if` (§6.8).
   def test_the_three_by_three_solve_matches_the_same_loop_in_ruby
     ny, nx = 3, 4
-    coef = CArray.double(ny, nx, 3, 4)
+    coef = CArray.float64(ny, nx, 3, 4)
     coef.seq!(1.0, 0.25)
     # Make the diagonal dominant so the pivotless elimination is sound.
     ny.times { |i| nx.times { |j| 3.times { |r|
       coef[i, j, r, r] = coef[i, j, r, r] + 20.0
     } } }
-    x = CArray.double(ny, nx, 3)
+    x = CArray.float64(ny, nx, 3)
     CArray.jit_for(ny, nx) { |i, j|
-      m = CArray.double(3, 4)
+      m = CArray.float64(3, 4)
       3.times { |r| 4.times { |c| m[r, c] = coef[i, j, r, c] } }
       3.times { |p|
         3.times { |r|
@@ -2232,7 +2232,7 @@ class TestLocalArrays < Minitest::Test
           end
         }
       }
-      sol = CArray.double(3)
+      sol = CArray.float64(3)
       2.step(0, -1) { |r|
         s = m[r, 3]
         3.times { |c| s -= m[r, c] * sol[c] if c > r }
@@ -2240,9 +2240,9 @@ class TestLocalArrays < Minitest::Test
       }
       3.times { |r| x[i, j, r] = sol[r] }
     }
-    reference = CArray.double(ny, nx, 3)
+    reference = CArray.float64(ny, nx, 3)
     ny.times { |i| nx.times { |j|
-      m = CArray.double(3, 4)
+      m = CArray.float64(3, 4)
       3.times { |r| 4.times { |c| m[r, c] = coef[i, j, r, c] } }
       3.times { |p|
         3.times { |r|
@@ -2252,7 +2252,7 @@ class TestLocalArrays < Minitest::Test
           end
         }
       }
-      sol = CArray.double(3)
+      sol = CArray.float64(3)
       2.step(0, -1) { |r|
         sum = m[r, 3]
         3.times { |c| sum -= m[r, c] * sol[c] if c > r }
@@ -2269,7 +2269,7 @@ class TestLocalArrays < Minitest::Test
     pattern = /the subscript `c` on axis 1 of `m`, which is 3 x 4,/
     error = refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         3.times { |r| 5.times { |c| m[r, c] = 1.0 } }
         out[i] = m[0, 0]
       }
@@ -2281,7 +2281,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_row_axis_past_its_end_is_refused_too
     refuse(<<~RUBY, /reaches cell 3/, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         4.times { |r| 4.times { |c| m[r, c] = 1.0 } }
         out[i] = m[0, 0]
       }
@@ -2290,10 +2290,10 @@ class TestLocalArrays < Minitest::Test
 
   def test_a_computed_column_out_of_range_raises
     columns = CArray.int64(3).seq!(9)
-    out = CArray.double(3)
+    out = CArray.float64(3)
     assert_raises(IndexError) do
       CArray.jit_for(3) { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         out[i] = m[0, columns[i]]
       }
     end
@@ -2306,10 +2306,10 @@ class TestLocalArrays < Minitest::Test
     columns[0] = 0
     columns[1] = 1
     columns[2] = 9
-    seen = CArray.double(3)
+    seen = CArray.float64(3)
     assert_raises(IndexError) do
       CArray.jit_for(3) { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         m[1, 0] = 7.0
         m[0, columns[i]] = 99.0
         seen[i] = m[1, 0]
@@ -2322,7 +2322,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_number_of_subscripts_has_to_match_the_axes
     error = refuse(<<~RUBY, /has 2 axes/, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         out[i] = m[1]
       }
     RUBY
@@ -2334,7 +2334,7 @@ class TestLocalArrays < Minitest::Test
     pattern = /the subscript `4` on axis 1 of `m`, which is 3 x 4, is outside/
     error = refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(3, 4)
+        m = CArray.float64(3, 4)
         m[0, 4] = 1.0
         out[i] = m[0, 0]
       }
@@ -2351,7 +2351,7 @@ class TestLocalArrays < Minitest::Test
     side = Integer(Math.sqrt(cells)) + 1
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
-        m = CArray.double(#{side}, #{side})
+        m = CArray.float64(#{side}, #{side})
         m[0, 0] = 1.0
         out[i] = m[0, 0]
       }
@@ -2363,7 +2363,7 @@ class TestLocalArrays < Minitest::Test
   def test_two_dimensional_arrays_count_towards_the_placement
     each = CArray::JIT::Analyzer::LOCAL_ARRAY_BYTE_LIMIT / 8 / 16
     body = (0...5).map { |n|
-      "  m#{n} = CArray.double(16, #{each})\n  m#{n}[0, 0] = 1.0\n"
+      "  m#{n} = CArray.float64(16, #{each})\n  m#{n}[0, 0] = 1.0\n"
     }.join
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
       proc { |i|
@@ -2380,19 +2380,19 @@ class TestLocalArrays < Minitest::Test
   # ---------- across the entry points ----------
 
   def test_more_than_one_axis_in_every_entry_point
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
 
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      m = CArray.double(2, 2)
+      m = CArray.float64(2, 2)
       m[0, 0] = a[i]; m[1, 1] = a[i] * 2.0
       out[i] = m[0, 0] + m[1, 1]
     }
     assert_equal((0...4).map { |k| a[k] * 3.0 }, out.to_a, "jit_for")
 
-    each = CArray.double(4)
+    each = CArray.float64(4)
     CArray.jit_each {
-      m = CArray.double(2, 2)
+      m = CArray.float64(2, 2)
       m[0, 0] = a
       m[1, 1] = a * 2.0
       each = m[0, 0] + m[1, 1]
@@ -2400,16 +2400,16 @@ class TestLocalArrays < Minitest::Test
     assert_equal((0...4).map { |k| a[k] * 3.0 }, each.to_a, "jit_each")
 
     mapped = CArray.jit_map {
-      m = CArray.double(2, 2)
+      m = CArray.float64(2, 2)
       m[0, 0] = a
       m[1, 1] = a * 2.0
       m[0, 0] + m[1, 1]
     }
     assert_equal((0...4).map { |k| a[k] * 3.0 }, mapped.to_a, "jit_map")
 
-    image = CArray.double(5, 5).seq!
+    image = CArray.float64(5, 5).seq!
     stencilled = CArray.jit_stencil(image, border: :clamp) { |win|
-      m = CArray.double(2, 2)
+      m = CArray.float64(2, 2)
       m[0, 0] = win[0, 0]
       m[1, 1] = win[0, 0] * 2.0
       m[0, 0] + m[1, 1]
@@ -2417,13 +2417,13 @@ class TestLocalArrays < Minitest::Test
     assert_equal(image[2, 2] * 3.0, stencilled[2, 2], "jit_stencil")
 
     body = CArray.jit_function("double twodim(double x)") { |x|
-      m = CArray.double(2, 2)
+      m = CArray.float64(2, 2)
       m[0, 0] = x
       m[1, 1] = x * 2.0
       m[0, 0] + m[1, 1]
     }
     assert_equal(9.0, body.call(3.0), "a function body")
-    from_kernel = CArray.double(2)
+    from_kernel = CArray.float64(2)
     CArray.jit_for(2) { |i| from_kernel[i] = body.call(i * 1.0) }
     assert_equal([0.0, 3.0], from_kernel.to_a, "and the same body pasted")
   end
@@ -2438,9 +2438,9 @@ class TestLocalArrays < Minitest::Test
       (0...12).each { |k| s = s + a[k] }
       s
     }
-    out = CArray.double(2)
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
-      m = CArray.double(3, 4)
+      m = CArray.float64(3, 4)
       3.times { |r| 4.times { |c| m[r, c] = (r * 4 + c) * 1.0 } }
       out[i] = total.call(m)
     }
@@ -2451,9 +2451,9 @@ class TestLocalArrays < Minitest::Test
     first = CArray.jit_function("double cell(const double a[12], double k)") { |a, k|
       a[k.to_i]
     }
-    out = CArray.double(12)
+    out = CArray.float64(12)
     CArray.jit_for(12) { |i|
-      m = CArray.double(3, 4)
+      m = CArray.float64(3, 4)
       3.times { |r| 4.times { |c| m[r, c] = r * 100.0 + c } }
       out[i] = first.call(m, i * 1.0)
     }
@@ -2464,9 +2464,9 @@ class TestLocalArrays < Minitest::Test
   def test_too_few_cells_for_the_declaration_is_refused_as_it_is_read
     error = assert_raises(CArray::JIT::Unsupported) do
       total = CArray.jit_function("double total12b(const double a[12])") { |a| a[0] }
-      out = CArray.double(1)
+      out = CArray.float64(1)
       CArray.jit_for(1) { |i|
-        m = CArray.double(2, 4)
+        m = CArray.float64(2, 4)
         out[i] = total.call(m)
       }
     end
@@ -2480,9 +2480,9 @@ class TestLocalArrays < Minitest::Test
       (0...24).each { |k| s = s + a[k] }
       s
     }
-    out = CArray.double(1)
+    out = CArray.float64(1)
     CArray.jit_for(1) { |i|
-      m = CArray.double(2, 3, 4)
+      m = CArray.float64(2, 3, 4)
       2.times { |p| 3.times { |r| 4.times { |c| m[p, r, c] = 1.0 } } }
       out[i] = total.call(m)
     }
@@ -2496,9 +2496,9 @@ class TestLocalArrays < Minitest::Test
   # therefore right; what was wrong was the account of it, the axis count
   # alone saying nothing about where the window went.
   def test_an_array_may_take_the_windows_name_and_rebinds_it
-    image = CArray.double(4, 4).seq!
+    image = CArray.float64(4, 4).seq!
     out = CArray.jit_stencil(image, border: :clamp) { |a|
-      a = CArray.double(9)
+      a = CArray.float64(9)
       a[0] = 7.0
       a[0]
     }
@@ -2507,22 +2507,22 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_window_may_be_read_before_its_name_is_taken
-    image = CArray.double(4, 4).seq!
+    image = CArray.float64(4, 4).seq!
     out = CArray.jit_stencil(image, border: :clamp) { |a|
       v = a[0, 0]
-      a = CArray.double(9)
+      a = CArray.float64(9)
       a[0] = v * 2.0
       a[0]
     }
-    reference = CArray.double(4, 4) { |r, c| image[r, c] * 2.0 }
+    reference = CArray.float64(4, 4) { |r, c| image[r, c] * 2.0 }
     assert_equal(reference.to_a, out.to_a)
   end
 
   def test_reaching_the_window_after_its_name_is_taken_says_where_it_went
-    image = CArray.double(4, 4).seq!
+    image = CArray.float64(4, 4).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_stencil(image, border: :clamp) { |a|
-        a = CArray.double(9)
+        a = CArray.float64(9)
         a[0] = 1.0
         a[-1, 0] + a[1, 0]
       }
@@ -2537,18 +2537,18 @@ class TestLocalArrays < Minitest::Test
   # ---------- what a map block may end with ----------
 
   def test_a_map_block_may_not_end_by_making_an_array
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_map { s = a * 1.0; v = CArray.double(2) }
+      CArray.jit_map { s = a * 1.0; v = CArray.float64(2) }
     end
     assert_match(/ends by making `v`/, error.message)
     assert_match(/no cell for one to go in/, error.message)
   end
 
   def test_a_map_block_may_not_end_with_the_array_read_bare
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
-      CArray.jit_map { v = CArray.double(2); v[0] = a; v }
+      CArray.jit_map { v = CArray.float64(2); v[0] = a; v }
     end
     assert_match(/`v` is a local array; index it/, error.message)
   end
@@ -2562,48 +2562,48 @@ class TestLocalArrays < Minitest::Test
   # where the cell is reached.
 
   def test_a_shape_over_a_captured_integer_matches_the_same_loop_in_ruby
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     n = 300
-    out = CArray.double(6)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       (0...n).each { |k| w[k] = a[i] * k }
       s = 0.0
       (0...n).each { |k| s += w[k] }
       out[i] = s
     }
     reference = (0...6).map { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       (0...n).each { |k| w[k] = a[i] * k }
       s = 0.0
       (0...n).each { |k| s += w[k] }
       s
     }
-    assert_arrays_bits_equal(CArray.double(6) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(6) { reference }, out)
   end
 
   def test_a_literal_shape_over_the_limit_matches_the_same_loop_in_ruby
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(4096)
+      w = CArray.float64(4096)
       (0...4096).each { |k| w[k] = a[i] + k }
       out[i] = w[0] + w[4095]
     }
     reference = (0...4).map { |i| a[i] + (a[i] + 4095) }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   # The same block at two lengths is one kernel: the length travels as an
   # argument, so it is not in the C and the C is shared.  Written out rather
   # than built from a variable, because the source text is the cache key.
   def test_two_lengths_of_one_block_are_one_kernel
-    a = CArray.double(6).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(6).seq!(1.0)
+    out = CArray.float64(6)
     # One `proc`, called twice: two blocks written out would be two source
     # texts and so two kernels whatever the lengths were.
     pass = proc { |n|
-      CArray.jit_for(6) { |i| w = CArray.double(n); w[0] = a[i] * n; out[i] = w[0] }
+      CArray.jit_for(6) { |i| w = CArray.float64(n); w[0] = a[i] * n; out[i] = w[0] }
     }
     before = CArray::JIT.registry.size
     pass.call(7)
@@ -2619,7 +2619,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_length_is_worked_out_at_the_entry_and_freed_at_the_exit
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 8 })
       proc { |i|
-        w = CArray.double(n * 2)
+        w = CArray.float64(n * 2)
         w[0] = 1.0
         out[i] = w[0]
       }
@@ -2639,10 +2639,10 @@ class TestLocalArrays < Minitest::Test
   # Every body allocates and frees: the two the dispatcher chooses between,
   # and the frame's own walk.
   def test_each_body_allocates_and_frees
-    field = CArray.double(6, 6).seq!
+    field = CArray.float64(6, 6).seq!
     n = 40
     CArray.jit_stencil(field, border: :clamp) { |x|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       w[0] = x[0, 0]
       w[1] = x[0, 1]
       w[0] + w[1]
@@ -2662,12 +2662,12 @@ class TestLocalArrays < Minitest::Test
   # A `raise` leaves the function from inside the loop, which is the one way
   # out that is not the end of it.
   def test_a_raise_frees_before_it_leaves
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     n = 40
-    out = CArray.double(6)
+    out = CArray.float64(6)
     error = assert_raises(RuntimeError) do
       CArray.jit_for(6) { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         raise "past four" if a[i] > 4.5
         w[0] = a[i]
         out[i] = w[0]
@@ -2683,11 +2683,11 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_the_cells_are_cleared_at_every_pass
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 300
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       if i == 0
         (0...n).each { |k| w[k] = 99.0 }
       end
@@ -2719,7 +2719,7 @@ class TestLocalArrays < Minitest::Test
   def test_every_position_on_such_an_axis_is_checked_at_the_access
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 8 })
       proc { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         w[0] = 1.0
         (0...3).each { |k| w[k] = 2.0 }
         out[i] = w[1]
@@ -2731,12 +2731,12 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_read_past_the_end_raises
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 3
-    out = CArray.double(4)
+    out = CArray.float64(4)
     assert_raises(IndexError) do
       CArray.jit_for(4) { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         (0...4).each { |k| w[k] = a[i] }
         out[i] = w[0]
       }
@@ -2744,13 +2744,13 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_write_past_the_end_writes_nothing_and_raises
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 3
-    out = CArray.double(4)
-    witness = CArray.double(4)
+    out = CArray.float64(4)
+    witness = CArray.float64(4)
     assert_raises(IndexError) do
       CArray.jit_for(4) { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         w[0] = 11.0
         w[n] = 99.0
         witness[i] = w[0]
@@ -2768,11 +2768,11 @@ class TestLocalArrays < Minitest::Test
   # ---------- a length that is no length ----------
 
   def test_a_captured_length_of_zero_is_reported
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 0
-    out = CArray.double(4)
+    out = CArray.float64(4)
     error = assert_raises(ArgumentError) do
-      CArray.jit_for(4) { |i| w = CArray.double(n); w[0] = a[i]; out[i] = w[0] }
+      CArray.jit_for(4) { |i| w = CArray.float64(n); w[0] = a[i]; out[i] = w[0] }
     end
     assert_match(/at least one cell/, error.message)
     assert_match(/`w`/, error.message)
@@ -2780,11 +2780,11 @@ class TestLocalArrays < Minitest::Test
   end
 
   def test_a_negative_captured_length_is_reported
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = -3
-    out = CArray.double(4)
+    out = CArray.float64(4)
     error = assert_raises(ArgumentError) do
-      CArray.jit_for(4) { |i| w = CArray.double(n); w[0] = a[i]; out[i] = w[0] }
+      CArray.jit_for(4) { |i| w = CArray.float64(n); w[0] = a[i]; out[i] = w[0] }
     end
     assert_match(/-3 cells/, error.message)
   end
@@ -2797,11 +2797,11 @@ class TestLocalArrays < Minitest::Test
   # anything, and the allocation that does fail reports through the same
   # slot with its own message.
   def test_a_length_too_large_to_count_in_bytes_is_reported
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 2**62
-    out = CArray.double(4)
+    out = CArray.float64(4)
     error = assert_raises(ArgumentError) do
-      CArray.jit_for(4) { |i| w = CArray.double(n); w[0] = a[i]; out[i] = w[0] }
+      CArray.jit_for(4) { |i| w = CArray.float64(n); w[0] = a[i]; out[i] = w[0] }
     end
     assert_match(/more cells than its bytes could be counted in/, error.message)
   end
@@ -2811,12 +2811,12 @@ class TestLocalArrays < Minitest::Test
   # product, that fit, and `w[0, 1000]` -- in range on both axes -- was
   # written into an allocation of no cells.
   def test_lengths_whose_product_is_too_large_are_reported
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 2**32
-    out = CArray.double(4)
+    out = CArray.float64(4)
     error = assert_raises(ArgumentError) do
       CArray.jit_for(4) { |i|
-        w = CArray.double(n, n)
+        w = CArray.float64(n, n)
         w[0, 1000] = a[i]
         out[i] = w[0, 1000]
       }
@@ -2825,7 +2825,7 @@ class TestLocalArrays < Minitest::Test
     m = 2**22
     error = assert_raises(ArgumentError) do
       CArray.jit_for(4) { |i|
-        w = CArray.double(m, m, m)
+        w = CArray.float64(m, m, m)
         w[1, 1, 1] = a[i]
         out[i] = w[1, 1, 1]
       }
@@ -2837,21 +2837,21 @@ class TestLocalArrays < Minitest::Test
     arrays = { :a => "float64", :out => "float64" }
     index = refuse(<<~RUBY, /loop index/, arrays: arrays)
       proc { |i|
-        w = CArray.double(i + 2)
+        w = CArray.float64(i + 2)
         out[i] = w[0]
       }
     RUBY
     assert_match(/one allocation made before the first cell/, index.message)
     refuse(<<~RUBY, /is a cell of an array/, arrays: arrays)
       proc { |i|
-        w = CArray.double(a[i])
+        w = CArray.float64(a[i])
         out[i] = w[0]
       }
     RUBY
     refuse(<<~RUBY, /worked out inside the block/, arrays: arrays)
       proc { |i|
         m = 4
-        w = CArray.double(m)
+        w = CArray.float64(m)
         out[i] = w[0]
       }
     RUBY
@@ -2860,7 +2860,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_captured_length_is_a_whole_number_of_cells
     refuse(<<~RUBY, /a whole number of cells/, arrays: { :out => "float64" }, scalars: { :q => 3.5 })
       proc { |i|
-        w = CArray.double(q)
+        w = CArray.float64(q)
         out[i] = w[0]
       }
     RUBY
@@ -2869,12 +2869,12 @@ class TestLocalArrays < Minitest::Test
   # ---------- the shadow, and the intrinsics, and a C function ----------
 
   def test_an_allocated_array_carries_its_shadow
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     a[2] = UNDEF
     n = 200
-    out = CArray.double(6)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       w[0] = a[i]
       w[1] = 1.0
       out[i] = w[0] + w[1]
@@ -2888,7 +2888,7 @@ class TestLocalArrays < Minitest::Test
   def test_the_shadow_of_an_allocated_array_is_allocated_with_it
     kernel = compile_kernel(<<~RUBY, arrays: { :a => "float64", :out => "float64" }, scalars: { :n => 8 }, masked: true)
       proc { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         w[0] = a[i]
         out[i] = w[0]
       }
@@ -2905,11 +2905,11 @@ class TestLocalArrays < Minitest::Test
   # comparators -- so a length that is not a number sorts by the helper that
   # takes one, which is the insertion sort.
   def test_the_intrinsics_over_a_length_the_kernel_worked_out
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 20
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       (0...n).each { |k| w[k] = a[i] * (n - k) }
       sort(w)
       out[i] = sum(w) * 1000 + min(w) * 10 + max(w)
@@ -2918,13 +2918,13 @@ class TestLocalArrays < Minitest::Test
       cells = (0...n).map { |k| a[i] * (n - k) }.sort
       cells.sum * 1000 + cells.first * 10 + cells.last
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   def test_a_sort_over_such_a_length_is_the_insertion_sort
     kernel = compile_kernel(<<~RUBY, arrays: { :out => "float64" }, scalars: { :n => 4 })
       proc { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         w[0] = 1.0
         sort(w)
         out[i] = w[0]
@@ -2939,11 +2939,11 @@ class TestLocalArrays < Minitest::Test
     total = CArray.jit_function("double heap_total3(const double *v)") { |v|
       v[0] + v[1] + v[2]
     }
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 300
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       w[0] = a[i]; w[1] = 1.0; w[2] = 2.0
       out[i] = total.call(w)
     }
@@ -2954,12 +2954,12 @@ class TestLocalArrays < Minitest::Test
     sized = CArray.jit_function("double heap_sized(const double v[3])") { |v|
       v[0] + v[1] + v[2]
     }
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     n = 300
-    out = CArray.double(4)
+    out = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         w[0] = a[i]
         out[i] = sized.call(w)
       }
@@ -2973,7 +2973,7 @@ class TestLocalArrays < Minitest::Test
   def test_a_function_body_takes_no_allocated_array
     runtime = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double body_runtime(int64_t n)") { |n|
-        w = CArray.double(n)
+        w = CArray.float64(n)
         w[0] = 1.0
         w[0]
       }
@@ -2983,7 +2983,7 @@ class TestLocalArrays < Minitest::Test
     assert_match(/pass it in/, runtime.message)
     big = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_function("double body_big(double x)") { |x|
-        w = CArray.double(4096)
+        w = CArray.float64(4096)
         w[0] = x
         w[0]
       }
@@ -2996,27 +2996,27 @@ class TestLocalArrays < Minitest::Test
   # ---------- across the entry points ----------
 
   def test_an_allocated_array_in_every_entry_point
-    a = CArray.double(6).seq!(1.0)
+    a = CArray.float64(6).seq!(1.0)
     n = 300
 
-    out = CArray.double(6)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       w[0] = a[i]; w[1] = a[i] * 2.0
       out[i] = w[0] + w[1]
     }
     assert_equal((0...6).map { |k| a[k] * 3.0 }, out.to_a, "jit_for")
 
-    each = CArray.double(6)
-    CArray.jit_each { w = CArray.double(n); w[0] = a; w[1] = a * 2.0; each = w[0] + w[1] }
+    each = CArray.float64(6)
+    CArray.jit_each { w = CArray.float64(n); w[0] = a; w[1] = a * 2.0; each = w[0] + w[1] }
     assert_equal((0...6).map { |k| a[k] * 3.0 }, each.to_a, "jit_each")
 
-    mapped = CArray.jit_map { w = CArray.double(n); w[0] = a; w[1] = a * 2.0; w[0] + w[1] }
+    mapped = CArray.jit_map { w = CArray.float64(n); w[0] = a; w[1] = a * 2.0; w[0] + w[1] }
     assert_equal((0...6).map { |k| a[k] * 3.0 }, mapped.to_a, "jit_map")
 
-    field = CArray.double(5, 5).seq!
+    field = CArray.float64(5, 5).seq!
     stencilled = CArray.jit_stencil(field, border: :clamp) { |x|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       w[0] = x[0, 0]; w[1] = x[0, 1]
       w[0] + w[1]
     }
@@ -3025,9 +3025,9 @@ class TestLocalArrays < Minitest::Test
     # The fifth is a body, which allocates nothing of its own: what it takes
     # is the array the kernel allocated, as a pointer.
     reader = CArray.jit_function("double heap_head(const double *v)") { |v| v[0] }
-    through = CArray.double(6)
+    through = CArray.float64(6)
     CArray.jit_for(6) { |i|
-      w = CArray.double(n)
+      w = CArray.float64(n)
       w[0] = a[i] * 5.0
       through[i] = reader.call(w)
     }
@@ -3038,10 +3038,10 @@ class TestLocalArrays < Minitest::Test
   # at is reached once per chunk -- which is still outside the cell loop,
   # and is what the allocation being one per entry means there.
   def test_a_swept_pass_allocates_per_chunk_and_answers_the_same
-    a = CArray.double(50_000).seq!(1.0)
+    a = CArray.float64(50_000).seq!(1.0)
     n = 300
-    out = CArray.double(50_000)
-    CArray.jit_each { w = CArray.double(n); w[0] = a; w[1] = a * 2.0; out = w[0] + w[1] }
+    out = CArray.float64(50_000)
+    CArray.jit_each { w = CArray.float64(n); w[0] = a; w[1] = a * 2.0; out = w[0] + w[1] }
     kernel = CArray::JIT.registry.values.last
     assert(kernel.sweepable?, "a jit_each block with no mask sweeps")
     assert_equal(3.0, out[0])
@@ -3052,10 +3052,10 @@ class TestLocalArrays < Minitest::Test
 
   def test_two_shapes_of_one_block_are_two_kernels
     first = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
-      proc { |i| w = CArray.double(4); w[0] = 1.0; out[i] = w[0] }
+      proc { |i| w = CArray.float64(4); w[0] = 1.0; out[i] = w[0] }
     RUBY
     second = compile_kernel(<<~RUBY, arrays: { :out => "float64" })
-      proc { |i| w = CArray.double(5); w[0] = 1.0; out[i] = w[0] }
+      proc { |i| w = CArray.float64(5); w[0] = 1.0; out[i] = w[0] }
     RUBY
     refute_equal(first.c_source, second.c_source)
   end

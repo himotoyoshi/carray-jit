@@ -10,9 +10,9 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 rows, columns = 5, 7
-source = CArray.double(rows, columns).seq!(1.0)
-total = CArray.double(rows)
-largest = CArray.double(rows)
+source = CArray.float64(rows, columns).seq!(1.0)
+total = CArray.float64(rows)
+largest = CArray.float64(rows)
 positives = CArray.int32(rows)
 
 CArray.jit_for(rows) { |i|
@@ -49,9 +49,9 @@ puts "  count    #{positives.to_a.inspect}"
 
 # A matrix multiply is the same shape of thing: two output indices and one
 # inner loop.
-left = CArray.double(3, 4).seq!(1.0)
-right = CArray.double(4, 2).seq!(0.5, 0.5)
-product = CArray.double(3, 2)
+left = CArray.float64(3, 4).seq!(1.0)
+right = CArray.float64(4, 2).seq!(0.5, 0.5)
+product = CArray.float64(3, 2)
 
 CArray.jit_for(3, 2) { |i, j|
   accumulator = 0.0
@@ -79,7 +79,7 @@ puts
 # Counting from zero is what an inner loop mostly does, and `n.times` says it
 # without naming an end.  It compiles to the loop the range spells out --
 # `(0...n).each` -- so the choice is the reader's, not the compiler's.
-counted = CArray.double(rows)
+counted = CArray.float64(rows)
 CArray.jit_for(rows) { |i|
   accumulator = 0.0
   columns.times { |j| accumulator = accumulator + source[i, j] }

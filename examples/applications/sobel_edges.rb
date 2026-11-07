@@ -23,7 +23,7 @@ end
 
 # A synthetic picture: a disc, a bar, and a soft background gradient.
 rows, columns = 40, 96
-image = CArray.double(rows, columns)
+image = CArray.float64(rows, columns)
 rows.times do |i|
   columns.times do |j|
     y = (i - 20.0) / 16.0
@@ -35,7 +35,7 @@ rows.times do |i|
   end
 end
 
-edges = CArray.double(rows, columns)
+edges = CArray.float64(rows, columns)
 sobel(image, edges)
 
 def draw (field, title)
@@ -54,15 +54,15 @@ draw(edges, "edges")
 # On an image of a size you would actually filter -- the same filter, and the
 # same loop written in Ruby, both over the whole thing.
 size = 512
-large = CArray.double(size, size) { |i, j| Math.sin(i * 0.03) * Math.cos(j * 0.02) }
-result = CArray.double(size, size)
+large = CArray.float64(size, size) { |i, j| Math.sin(i * 0.03) * Math.cos(j * 0.02) }
+result = CArray.float64(size, size)
 
 sobel(large, result)   # compile it before timing it
 started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 5.times { sobel(large, result) }
 compiled = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) / 5
 
-reference = CArray.double(size, size)
+reference = CArray.float64(size, size)
 started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 (1...(size-1)).each do |i|
   (1...(size-1)).each do |j|

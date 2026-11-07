@@ -9,14 +9,14 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 rows, columns = 6, 8
-src = CArray.double(rows, columns).seq!(1.0)
-out = CArray.double(rows, columns)
+src = CArray.float64(rows, columns).seq!(1.0)
+out = CArray.float64(rows, columns)
 
 CArray.jit_for(1...(rows-1), 1...(columns-1)) { |i, j|
   out[i, j] = 0.25 * (src[i-1, j] + src[i+1, j] + src[i, j-1] + src[i, j+1])
 }
 
-reference = CArray.double(rows, columns)
+reference = CArray.float64(rows, columns)
 (1...(rows-1)).each do |i|
   (1...(columns-1)).each do |j|
     reference[i, j] = 0.25 * (src[i-1, j] + src[i+1, j] + src[i, j-1] + src[i, j+1])
@@ -30,7 +30,7 @@ puts "  border untouched                 #{out[0, nil].to_a.all?(0.0)}"
 # An extent may step by more than one, which changes which cells are written
 # and therefore which offsets are dependencies: with a step of two, a[i-1] is
 # a cell this loop never writes.
-values = CArray.double(10).seq!(1.0)
+values = CArray.float64(10).seq!(1.0)
 CArray.jit_for((2...10).step(2)) { |i| values[i] = values[i-1] * 100.0 }
 puts "  every other cell                 #{values.to_a.inspect}"
 

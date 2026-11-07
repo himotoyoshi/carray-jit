@@ -10,7 +10,7 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 rows, columns = 5, 8
-source = CArray.double(rows, columns) { |i, j| (j - i) * 1.0 }
+source = CArray.float64(rows, columns) { |i, j| (j - i) * 1.0 }
 threshold = 1.5
 
 # A search: the first column past the threshold, or -1.  `break` in an inner
@@ -41,11 +41,11 @@ puts "  matches Ruby           #{first.to_a == reference}"
 # the better spelling wherever a bound exists: the kernel cannot fail to stop,
 # and a cell that ran out of passes can be told from one that converged.
 n = 2000
-a = CArray.double(n).seq!(1.0)
+a = CArray.float64(n).seq!(1.0)
 tolerance = 1e-12
 cap = 40
 
-root = CArray.double(n)
+root = CArray.float64(n)
 passes = CArray.int32(n)
 CArray.jit_for(n) { |i|
   x = a[i]
@@ -63,7 +63,7 @@ puts
 puts "Newton, bounded by the extent"
 # Against Math.sqrt rather than against the loop's own residual: the residual
 # is what the break tested, so it can only come back at the tolerance.
-exact = CArray.double(n) { |i| Math.sqrt(a[i]) }
+exact = CArray.float64(n) { |i| Math.sqrt(a[i]) }
 puts format("  worst relative error   %.1e  (vs Math.sqrt)",
             ((root - exact).abs / exact).max)
 puts format("  worst residual         %.1e  (what the break tested)",
@@ -76,7 +76,7 @@ puts "  none ran out           #{passes.max < cap}"
 # Where the bound is not knowable, `while` says so.  The condition is read at
 # the top of every pass, as Ruby's is; a local the condition reads has to be a
 # local before the loop, since the condition is read before the body is.
-by_while = CArray.double(n)
+by_while = CArray.float64(n)
 CArray.jit_for(n) { |i|
   guess = a[i]
   while (guess * guess - a[i]).abs > tolerance * a[i]
@@ -107,7 +107,7 @@ end
 
 # `next` in the kernel block skips the cell, the way it would end a block Ruby
 # was running: the cell keeps its value and its mask, and the loop moves on.
-kept = CArray.double(n).fill(-1.0)
+kept = CArray.float64(n).fill(-1.0)
 CArray.jit_for(n) { |i|
   next if a[i] % 2.0 == 0.0
   kept[i] = a[i]

@@ -7,8 +7,8 @@ class TestClamp < Minitest::Test
   VALUES = [-1.0, 0.25, 5.0].freeze
 
   def test_a_float
-    values = CArray.double(3) { |i| VALUES[i] }
-    out = CArray.double(3)
+    values = CArray.float64(3) { |i| VALUES[i] }
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i| out[i] = values[i].clamp(0.0, 1.0) }
     assert_equal(VALUES.map { |v| v.clamp(0.0, 1.0) }, out.to_a)
   end
@@ -39,15 +39,15 @@ class TestClamp < Minitest::Test
   end
 
   def test_bounds_that_are_captured_or_read
-    values = CArray.double(3) { |i| VALUES[i] }
+    values = CArray.float64(3) { |i| VALUES[i] }
     low, high = 0.0, 1.0
-    captured = CArray.double(3)
+    captured = CArray.float64(3)
     CArray.jit_for(3) { |i| captured[i] = values[i].clamp(low, high) }
     assert_equal(VALUES.map { |v| v.clamp(0.0, 1.0) }, captured.to_a)
 
-    lows = CArray.double(3) { 0.0 }
-    highs = CArray.double(3) { |i| i * 1.0 }
-    per_cell = CArray.double(3)
+    lows = CArray.float64(3) { 0.0 }
+    highs = CArray.float64(3) { |i| i * 1.0 }
+    per_cell = CArray.float64(3)
     CArray.jit_for(3) { |i| per_cell[i] = values[i].clamp(lows[i], highs[i]) }
     expected = (0...3).map { |i| VALUES[i].clamp(0.0, i * 1.0) }
     assert_equal(expected, per_cell.to_a)
@@ -56,8 +56,8 @@ class TestClamp < Minitest::Test
   # Ruby raises rather than answering when the bounds are the wrong way
   # round, and so does the kernel -- with Ruby's class and Ruby's words.
   def test_bounds_the_wrong_way_round
-    values = CArray.double(3) { |i| VALUES[i] }
-    out = CArray.double(3)
+    values = CArray.float64(3) { |i| VALUES[i] }
+    out = CArray.float64(3)
     error = assert_raises(ArgumentError) do
       CArray.jit_for(3) { |i| out[i] = values[i].clamp(1.0, 0.0) }
     end
@@ -69,8 +69,8 @@ class TestClamp < Minitest::Test
   # same here, and the message names the reason rather than the value, the
   # error slot carrying a code rather than a number.
   def test_a_nan_value
-    values = CArray.double(1) { 0.0 / 0.0 }
-    out = CArray.double(1)
+    values = CArray.float64(1) { 0.0 / 0.0 }
+    out = CArray.float64(1)
     error = assert_raises(ArgumentError) do
       CArray.jit_for(1) { |i| out[i] = values[i].clamp(0.0, 1.0) }
     end
@@ -79,8 +79,8 @@ class TestClamp < Minitest::Test
   end
 
   def test_a_nan_bound
-    values = CArray.double(1) { 1.0 }
-    out = CArray.double(1)
+    values = CArray.float64(1) { 1.0 }
+    out = CArray.float64(1)
     error = assert_raises(ArgumentError) do
       CArray.jit_for(1) { |i| out[i] = values[i].clamp(0.0 / 0.0, 1.0) }
     end
@@ -91,9 +91,9 @@ class TestClamp < Minitest::Test
   # A cell with no value in it does not raise, which is the rule the
   # division helpers already keep.
   def test_a_missing_cell_does_not_raise
-    values = CArray.double(3) { |i| VALUES[i] }
+    values = CArray.float64(3) { |i| VALUES[i] }
     values[1] = UNDEF
-    out = CArray.double(3)
+    out = CArray.float64(3)
     CArray.jit_for(3) { |i| out[i] = values[i].clamp(0.0, 1.0) }
     assert_equal(0.0, out[0])
     assert_equal(UNDEF, out[1])
@@ -103,8 +103,8 @@ class TestClamp < Minitest::Test
   # An Integer bound under a Float value is the case Ruby answers with two
   # different classes depending on the value, so it is refused.
   def test_an_integer_bound_on_a_float
-    values = CArray.double(3)
-    out = CArray.double(3)
+    values = CArray.float64(3)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i] = values[i].clamp(0, 1) }
     end
@@ -117,7 +117,7 @@ class TestClamp < Minitest::Test
 
   def test_a_float_bound_on_an_integer
     values = CArray.int32(3)
-    out = CArray.double(3)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i] = values[i].clamp(0.0, 1.0) }
     end
@@ -126,8 +126,8 @@ class TestClamp < Minitest::Test
   end
 
   def test_the_range_form_is_refused
-    values = CArray.double(3)
-    out = CArray.double(3)
+    values = CArray.float64(3)
+    out = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i] = values[i].clamp(0.0..1.0) }
     end

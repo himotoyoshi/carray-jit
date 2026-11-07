@@ -13,7 +13,7 @@ x = 0.5
 jit_length = 1_000_000
 ruby_length = 100_000
 
-values = CArray.double(jit_length)
+values = CArray.float64(jit_length)
 values[0] = 1.0
 values[1] = x
 
@@ -34,7 +34,7 @@ jit_time = Benchmark.realtime do
   }
 end
 
-plain = CArray.double(ruby_length)
+plain = CArray.float64(ruby_length)
 plain[0] = 1.0
 plain[1] = x
 ruby_time = Benchmark.realtime do

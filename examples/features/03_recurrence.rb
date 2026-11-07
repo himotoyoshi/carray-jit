@@ -11,7 +11,7 @@ require "carray/jit"
 # Legendre polynomials at x, by their three-term recurrence.
 n = 24
 x = 0.5
-legendre = CArray.double(n)
+legendre = CArray.float64(n)
 legendre[0] = 1.0
 legendre[1] = x
 

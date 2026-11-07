@@ -8,8 +8,8 @@ require_relative "test_helper"
 class TestScopes < Minitest::Test
 
   def test_sibling_inner_loops_may_use_one_name
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       s = 0.0
       (0...3).each { |k| t = a[i] * k; s = s + t }
@@ -22,12 +22,12 @@ class TestScopes < Minitest::Test
       (0...3).each { |k| t = a[i] + k; s = s + t }
       s
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   def test_sibling_inner_loops_may_use_one_name_at_two_types
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       s = 0.0
       (0...3).each { |k| t = a[i] * k; s = s + t }
@@ -40,12 +40,12 @@ class TestScopes < Minitest::Test
       (0...3).each { |k| t = k * 7 / 2; s = s + t }
       s
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   def test_a_local_assigned_before_a_while_is_read_after_it
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       v = a[i]
       c = 0
@@ -64,7 +64,7 @@ class TestScopes < Minitest::Test
       end
       v + c
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   # Ruby's value there is nil when the loop ran no passes, and the C would
@@ -82,8 +82,8 @@ class TestScopes < Minitest::Test
   end
 
   def test_an_inner_loop_assigns_the_local_outside_it
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       total = 0.0
       (0...3).each { |k| w = a[i] * k; total = total + w }
@@ -94,12 +94,12 @@ class TestScopes < Minitest::Test
       (0...3).each { |k| w = a[i] * k; total = total + w }
       total
     }
-    assert_arrays_bits_equal(CArray.double(4) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(4) { reference }, out)
   end
 
   def test_a_reduction_is_still_split
-    b = CArray.double(16).seq!(1.0)
-    out = CArray.double(2)
+    b = CArray.float64(16).seq!(1.0)
+    out = CArray.float64(2)
     kernel = CArray.jit_for(2) { |i|
       acc = 0.0
       (0...16).each { |k| acc += b[k] * (i + 1) }
@@ -111,13 +111,13 @@ class TestScopes < Minitest::Test
       acc
     }
     assert_includes(kernel.c_source, "acc__p0")
-    assert_arrays_bits_equal(CArray.double(2) { reference }, out)
+    assert_arrays_bits_equal(CArray.float64(2) { reference }, out)
   end
 
   def test_a_masked_local_is_declared_with_its_mask
-    a = CArray.double(4).seq!(1.0)
+    a = CArray.float64(4).seq!(1.0)
     a[2] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     kernel = CArray.jit_for(4) { |i|
       x = a[i] * 2.0
       (0...2).each { |k| y = x + k; out[i] = y }
@@ -135,9 +135,9 @@ class TestScopes < Minitest::Test
   # the same declarations as the other two.
   def test_a_stencil_border_declares_what_the_body_declares
     rows, columns = 4, 5
-    source = CArray.double(rows, columns) { |i, j| (i * 10 + j).to_f }
+    source = CArray.float64(rows, columns) { |i, j| (i * 10 + j).to_f }
     read = lambda { |i, j| source[i.clamp(0, rows - 1), j.clamp(0, columns - 1)] }
-    reference = CArray.double(rows, columns) { |i, j|
+    reference = CArray.float64(rows, columns) { |i, j|
       s = 0.0
       (0...2).each { |k| t = read.(i - 1, j) * k; s = s + t }
       (0...2).each { |k| t = read.(i, j + 1) + k; s = s + t }
@@ -153,8 +153,8 @@ class TestScopes < Minitest::Test
   end
 
   def test_a_swept_pass_declares_what_the_body_declares
-    a = CArray.double(3, 4).seq!(1.0)
-    out = CArray.double(3, 4)
+    a = CArray.float64(3, 4).seq!(1.0)
+    out = CArray.float64(3, 4)
     kernel = CArray.jit_each {
       s = 0.0
       (0...2).each { |k| t = a * k; s = s + t }

@@ -95,10 +95,10 @@ serial order -- a compensated summation, or checking against the loop.
 
 A `CArray` the block makes is a C array of the block's own -- in any block
 but a contraction's, of any number of axes, cleared at the line each pass
-unless it is `CArray.empty(:type, [n])`. Note `CArray.float` is float32 and
-`CArray.complex` is cmplx64. Up to 4 KiB it stands in the frame; past that,
+unless it is `CArray.empty(:type, [n])`. Note `CArray.float32` is float32 and
+`CArray.cmplx64` is cmplx64. Up to 4 KiB it stands in the frame; past that,
 or where the shape is written over an integer the block captured
-(`CArray.double(n)`), the kernel allocates it at its entry and frees it at
+(`CArray.float64(n)`), the kernel allocates it at its entry and frees it at
 its exit -- and then every subscript is checked where the cell is reached,
 and a C function takes it only through a pointer with no length. Where the kernel carries masks
 each cell gets a mask byte beside it, so `w[k] = UNDEF` and `w[k] == UNDEF`
@@ -125,7 +125,7 @@ calls, not methods on the array -- `w.sum` is refused.
 
 ```ruby
 median = CArray.jit_for(rows) { |i|
-  w = CArray.double(9)
+  w = CArray.float64(9)
   (0...9).each { |k| w[k] = a[i, k] }
   sort(w)
   out[i] = w[4]
@@ -135,8 +135,8 @@ median = CArray.jit_for(rows) { |i|
 ## Filling from the indices
 
 ```ruby
-CArray.double(3, 4).jit_init { |i, j| i * 10.0 + j }
-grid = CArray.double(n)
+CArray.float64(3, 4).jit_init { |i, j| i * 10.0 + j }
+grid = CArray.float64(n)
 grid.jit_init { |i| Math.sin(i * step) }                # fills in place
 ```
 
@@ -149,8 +149,8 @@ no index is `jit_each`'s work, and is refused here saying so.
 ## A scalar from outside
 
 ```ruby
-gain  = CScalar.double() { 2.0 }
-total = CScalar.int()
+gain  = CScalar.float64() { 2.0 }
+total = CScalar.int32()
 
 CArray.jit_each { out = signal * gain }         # read at every cell
 CArray.jit_for(a.size) { |i| total[] += a[i] }  # and written like any cell
@@ -164,8 +164,8 @@ axis to walk; written to, a bare name is a local of the block's own, so an
 accumulator is `s[] = s[] + ...` and not `s = s + ...`.
 
 Every iteration writing the one cell it has is what makes it an accumulator,
-and what is left is what the same Ruby loop leaves. `CScalar.int()` is that one
-cell zero-filled, as `CArray.int(1)` is; write `CScalar.int() { 0 }` where the
+and what is left is what the same Ruby loop leaves. `CScalar.int32()` is that one
+cell zero-filled, as `CArray.int32(1)` is; write `CScalar.int32() { 0 }` where the
 starting value is part of what the code says.
 
 See [CScalar](02_KernelShapes.md#a-cscalar-is-a-value-with-a-home) for how the
@@ -240,8 +240,8 @@ borrowed with `jit_extern`, which the generated file declares and calls by
 name, are the two things such a body may reach outside its parameters.
 
 ```ruby
-values = CArray.double(8) { |i| i }
-out    = CArray.double(8)
+values = CArray.float64(8) { |i| i }
+out    = CArray.float64(8)
 n      = values.elements
 
 CArray.jit_call("void (*)(double *out, const double *values, size_t n)") {

@@ -8,8 +8,8 @@ class TestInnerSteps < Minitest::Test
 
   def test_a_downward_sweep
     rows, width = 3, 6
-    source = CArray.double(rows, width) { |i, k| i * 10 + k }
-    out = CArray.double(rows, width)
+    source = CArray.float64(rows, width) { |i, k| i * 10 + k }
+    out = CArray.float64(rows, width)
 
     CArray.jit_for(rows) { |i|
       carried = 0.0
@@ -32,9 +32,9 @@ class TestInnerSteps < Minitest::Test
   # write it before.  Both are still the same numbers.
   def test_the_reversed_index_agrees
     width = 6
-    source = CArray.double(1, width) { |i, k| k + 1.0 }
-    stepped = CArray.double(1, width)
-    reversed = CArray.double(1, width)
+    source = CArray.float64(1, width) { |i, k| k + 1.0 }
+    stepped = CArray.float64(1, width)
+    reversed = CArray.float64(1, width)
 
     CArray.jit_for(1) { |i|
       carried = 0.0
@@ -67,8 +67,8 @@ class TestInnerSteps < Minitest::Test
 
   def test_an_ascending_stride
     width = 7
-    source = CArray.double(2, width) { |i, k| k * 1.0 }
-    out = CArray.double(2)
+    source = CArray.float64(2, width) { |i, k| k * 1.0 }
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       total = 0.0
       0.step(width-1, 2) { |k| total = total + source[i, k] }
@@ -79,8 +79,8 @@ class TestInnerSteps < Minitest::Test
 
   # A range states its own ends, so it takes the stride alone.
   def test_a_range_with_a_stride
-    source = CArray.double(2, 7) { |i, k| k * 1.0 }
-    out = CArray.double(2)
+    source = CArray.float64(2, 7) { |i, k| k * 1.0 }
+    out = CArray.float64(2)
     CArray.jit_for(2) { |i|
       total = 0.0
       (0...7).step(2) { |k| total = total + source[i, k] }
@@ -88,7 +88,7 @@ class TestInnerSteps < Minitest::Test
     }
     assert_equal([12.0, 12.0], out.to_a)
 
-    inclusive = CArray.double(2)
+    inclusive = CArray.float64(2)
     CArray.jit_for(2) { |i|
       total = 0.0
       (0..6).step(3) { |k| total = total + source[i, k] }
@@ -99,8 +99,8 @@ class TestInnerSteps < Minitest::Test
 
   # Every cell the loop lands on has to exist, whichever way it runs.
   def test_the_span_a_stride_covers_is_bounds_checked
-    source = CArray.double(2, 6)
-    out = CArray.double(2)
+    source = CArray.float64(2, 6)
+    out = CArray.float64(2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i|
         total = 0.0
@@ -112,8 +112,8 @@ class TestInnerSteps < Minitest::Test
   end
 
   def test_a_stride_that_is_not_a_literal
-    source = CArray.double(2, 6)
-    out = CArray.double(2)
+    source = CArray.float64(2, 6)
+    out = CArray.float64(2)
     stride = -1
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i|
@@ -126,8 +126,8 @@ class TestInnerSteps < Minitest::Test
   end
 
   def test_a_stride_of_zero
-    source = CArray.double(2, 6)
-    out = CArray.double(2)
+    source = CArray.float64(2, 6)
+    out = CArray.float64(2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i| 0.step(5, 0) { |k| out[i] = source[i, k] } }
     end
@@ -137,8 +137,8 @@ class TestInnerSteps < Minitest::Test
   # A range that steps backwards raises in Ruby too, so the message names
   # the spelling that does count down.
   def test_a_range_cannot_step_backwards
-    source = CArray.double(2, 6)
-    out = CArray.double(2)
+    source = CArray.float64(2, 6)
+    out = CArray.float64(2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i| (0...6).step(-1) { |k| out[i] = source[i, k] } }
     end
@@ -148,8 +148,8 @@ class TestInnerSteps < Minitest::Test
   # Ruby's other ways of counting are refused by name, with the spelling to
   # use rather than a list to search.
   def test_downto_says_what_to_write_instead
-    source = CArray.double(2, 6)
-    out = CArray.double(2)
+    source = CArray.float64(2, 6)
+    out = CArray.float64(2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i|
         total = 0.0
@@ -166,9 +166,9 @@ class TestInnerSteps < Minitest::Test
   # for that, and the message still speaks the name the block wrote.
   def test_two_loops_may_share_the_index_name
     width = 6
-    source = CArray.double(1, width) { |i, k| k + 1.0 }
-    forward = CArray.double(1, width)
-    backward = CArray.double(1, width)
+    source = CArray.float64(1, width) { |i, k| k + 1.0 }
+    forward = CArray.float64(1, width)
+    backward = CArray.float64(1, width)
 
     kernel = CArray.jit_for(1) { |i|
       (1...width).each { |k| forward[i, k] = source[i, k] - source[i, k-1] }
@@ -183,8 +183,8 @@ class TestInnerSteps < Minitest::Test
 
   def test_a_reused_index_name_is_reported_as_it_was_written
     width = 6
-    source = CArray.double(1, width)
-    out = CArray.double(1, width)
+    source = CArray.float64(1, width)
+    out = CArray.float64(1, width)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i|
         (1...width).each { |k| out[i, k] = source[i, k] }
@@ -198,8 +198,8 @@ class TestInnerSteps < Minitest::Test
   # The accumulator is split into partial sums only for a loop that counts by
   # one; a stride keeps the serial chain, and so keeps Ruby's order.
   def test_a_stride_keeps_the_serial_accumulator
-    source = CArray.double(1, 64) { |i, k| k * 1.0 }
-    out = CArray.double(1)
+    source = CArray.float64(1, 64) { |i, k| k * 1.0 }
+    out = CArray.float64(1)
 
     serial = CArray.jit_for(1) { |i|
       total = 0.0

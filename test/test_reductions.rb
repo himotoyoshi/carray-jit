@@ -12,13 +12,13 @@ require_relative "test_helper"
 class TestReductions < Minitest::Test
 
   def matrix (rows = 3, columns = 4)
-    CArray.double(rows, columns).seq!(1)
+    CArray.float64(rows, columns).seq!(1)
   end
 
   def test_row_sums
     source = matrix
     rows, columns = source.dim
-    total = CArray.double(rows)
+    total = CArray.float64(rows)
     CArray.jit_for(rows) { |i|
       accumulator = 0.0
       (0...columns).each { |j| accumulator = accumulator + source[i, j] }
@@ -32,7 +32,7 @@ class TestReductions < Minitest::Test
   def test_row_maxima
     source = matrix
     rows, columns = source.dim
-    peak = CArray.double(rows)
+    peak = CArray.float64(rows)
     CArray.jit_for(rows) { |i|
       best = source[i, 0]
       (1...columns).each { |j| best = source[i, j] if source[i, j] > best }
@@ -44,7 +44,7 @@ class TestReductions < Minitest::Test
   def test_column_sums
     source = matrix
     rows, columns = source.dim
-    total = CArray.double(columns)
+    total = CArray.float64(columns)
     CArray.jit_for(columns) { |j|
       accumulator = 0.0
       (0...rows).each { |i| accumulator = accumulator + source[i, j] }
@@ -58,9 +58,9 @@ class TestReductions < Minitest::Test
   # broadcast expression reaches this shape.
   def test_matrix_multiply
     rows, inner, columns = 3, 4, 2
-    left = CArray.double(rows, inner).seq!(1)
-    right = CArray.double(inner, columns).seq!(1)
-    result = CArray.double(rows, columns)
+    left = CArray.float64(rows, inner).seq!(1)
+    right = CArray.float64(inner, columns).seq!(1)
+    result = CArray.float64(rows, columns)
 
     CArray.jit_for(rows, columns) { |i, j|
       accumulator = 0.0
@@ -81,9 +81,9 @@ class TestReductions < Minitest::Test
   # Inner loops nest, so a contraction over several indices is several loops.
   def test_a_double_contraction
     ni, nk, nl, nj = 3, 4, 3, 2
-    left = CArray.double(ni, nk, nl).seq!(1)
-    right = CArray.double(nl, nk, nj).seq!(1)
-    result = CArray.double(ni, nj)
+    left = CArray.float64(ni, nk, nl).seq!(1)
+    right = CArray.float64(nl, nk, nj).seq!(1)
+    result = CArray.float64(ni, nj)
 
     CArray.jit_for(ni, nj) { |i, j|
       accumulator = 0.0
@@ -104,8 +104,8 @@ class TestReductions < Minitest::Test
   # One index may walk two axes of the same array, which is a trace.
   def test_a_trace
     rows, size = 3, 4
-    source = CArray.double(rows, size, size).seq!(1)
-    trace = CArray.double(rows)
+    source = CArray.float64(rows, size, size).seq!(1)
+    trace = CArray.float64(rows)
     CArray.jit_for(rows) { |i|
       accumulator = 0.0
       (0...size).each { |j| accumulator = accumulator + source[i, j, j] }
@@ -117,9 +117,9 @@ class TestReductions < Minitest::Test
 
   def test_a_full_contraction_into_a_one_cell_box
     rows, columns = 3, 4
-    left = CArray.double(rows, columns).seq!(1)
-    right = CArray.double(rows, columns).seq!(2)
-    box = CArray.double(1)
+    left = CArray.float64(rows, columns).seq!(1)
+    right = CArray.float64(rows, columns).seq!(2)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |z|
       accumulator = 0.0
       (0...rows).each { |i|
@@ -133,16 +133,16 @@ class TestReductions < Minitest::Test
 
   # The outer indices need not address the axes in their own order.
   def test_a_transposing_read
-    source = CArray.double(3, 4).seq!(1)
-    result = CArray.double(4, 3)
+    source = CArray.float64(3, 4).seq!(1)
+    result = CArray.float64(4, 3)
     CArray.jit_for(4, 3) { |i, j| result[i, j] = source[j, i] }
     assert_equal(source.transpose.to_a, result.to_a)
   end
 
   def test_whole_array_sum_into_a_one_cell_box
-    values = CArray.double(10).seq!(1)
+    values = CArray.float64(10).seq!(1)
     length = values.elements
-    box = CArray.double(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0...length).each { |j| accumulator = accumulator + values[j] }
@@ -152,10 +152,10 @@ class TestReductions < Minitest::Test
   end
 
   def test_count_and_product
-    values = CArray.double(3, 4).seq!(1)
+    values = CArray.float64(3, 4).seq!(1)
     rows, columns = values.dim
     counted = CArray.int64(rows)
-    product = CArray.double(rows)
+    product = CArray.float64(rows)
     CArray.jit_for(rows) { |i|
       seen = 0
       running = 1.0
@@ -173,8 +173,8 @@ class TestReductions < Minitest::Test
   end
 
   def test_an_inclusive_inner_range
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       (0..4).each { |j| accumulator = accumulator + values[j] }
@@ -184,10 +184,10 @@ class TestReductions < Minitest::Test
   end
 
   def test_the_inner_range_may_be_built_from_captured_scalars
-    values = CArray.double(8).seq!(1)
+    values = CArray.float64(8).seq!(1)
     first = 2
     last = 6
-    box = CArray.double(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       (first...last).each { |j| accumulator = accumulator + values[j] }
@@ -200,8 +200,8 @@ class TestReductions < Minitest::Test
   # same loop -- so the count is built from what a range end is built from,
   # and the index is scoped and bounds-checked the same way.
   def test_times_as_an_inner_loop
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       5.times { |j| accumulator = accumulator + values[j] }
@@ -211,9 +211,9 @@ class TestReductions < Minitest::Test
   end
 
   def test_the_count_of_times_may_be_a_captured_scalar
-    values = CArray.double(8).seq!(1)
+    values = CArray.float64(8).seq!(1)
     count = 6
-    box = CArray.double(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       count.times { |j| accumulator = accumulator + values[j] }
@@ -223,8 +223,8 @@ class TestReductions < Minitest::Test
   end
 
   def test_times_and_the_range_it_stands_for_compile_alike
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(1)
     counted = CArray.jit_for(1) { |i|
       accumulator = 0.0
       5.times { |j| accumulator = accumulator + values[j] }
@@ -243,8 +243,8 @@ class TestReductions < Minitest::Test
   # `break` and `next` mean in the generated loop what they mean in the Ruby
   # loop, and `times` is a loop in both languages, so both belong to it.
   def test_break_and_next_inside_times
-    values = CArray.double(8).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(8).seq!(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       8.times { |j|
@@ -258,8 +258,8 @@ class TestReductions < Minitest::Test
   end
 
   def test_the_index_of_times_is_scoped_to_its_loop
-    values = CArray.double(4).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(4).seq!(1)
+    box = CArray.float64(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i| 4.times { |j| box[i] = values[j] }; box[i] = values[j] }
     end
@@ -267,8 +267,8 @@ class TestReductions < Minitest::Test
   end
 
   def test_times_may_not_reuse_an_index_in_scope
-    values = CArray.double(4).seq!(1)
-    box = CArray.double(4)
+    values = CArray.float64(4).seq!(1)
+    box = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| 4.times { |i| box[i] = values[i] } }
     end
@@ -280,7 +280,7 @@ class TestReductions < Minitest::Test
   def test_a_fixed_subscript
     source = matrix
     rows, columns = source.dim
-    difference = CArray.double(rows)
+    difference = CArray.float64(rows)
     CArray.jit_for(rows) { |i|
       accumulator = 0.0
       (1...columns).each { |j| accumulator = accumulator + (source[i, j] - source[i, 0]) }
@@ -292,7 +292,7 @@ class TestReductions < Minitest::Test
   end
 
   def test_the_inner_index_is_scoped_to_its_loop
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     length = 4
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i|
@@ -307,7 +307,7 @@ class TestReductions < Minitest::Test
   # An array the kernel writes is written once per outer cell; reading it
   # through an inner index would reach cells another outer iteration owns.
   def test_a_written_array_cannot_be_read_through_an_inner_index
-    values = CArray.double(4).seq!
+    values = CArray.float64(4).seq!
     length = 4
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i|
@@ -322,8 +322,8 @@ class TestReductions < Minitest::Test
   # An inner loop runs over a range, which is what makes its extent knowable
   # before the kernel runs.
   def test_an_inner_loop_over_something_other_than_a_range
-    values = CArray.double(4)
-    other = CArray.double(4).seq!
+    values = CArray.float64(4)
+    other = CArray.float64(4).seq!
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| other.each { |j| values[i] = 1.0 } }
     end
@@ -331,10 +331,10 @@ class TestReductions < Minitest::Test
   end
 
   def test_masks_accumulate_through_a_reduction
-    source = CArray.double(2, 3).seq!(1)
+    source = CArray.float64(2, 3).seq!(1)
     source[0, 1] = UNDEF
     rows, columns = source.dim
-    total = CArray.double(rows)
+    total = CArray.float64(rows)
     CArray.jit_for(rows) { |i|
       accumulator = 0.0
       (0...columns).each { |j| accumulator = accumulator + source[i, j] }
@@ -349,8 +349,8 @@ class TestReductions < Minitest::Test
   # a Gram matrix; the point is that the two indices address one axis, which
   # the analysis used to keep to one index apiece.
   def test_an_axis_read_at_two_index_positions
-    source = CArray.double(5, 3).seq!(1)
-    gram = CArray.double(3, 3)
+    source = CArray.float64(5, 3).seq!(1)
+    gram = CArray.float64(3, 3)
     CArray.jit_for(3, 3) { |a, b|
       accumulator = 0.0
       (0...5).each { |p| accumulator = accumulator + source[p, a] * source[p, b] }
@@ -362,8 +362,8 @@ class TestReductions < Minitest::Test
   end
 
   def test_two_index_positions_alongside_a_pinned_one
-    source = CArray.double(5, 3).seq!(1)
-    result = CArray.double(3, 3)
+    source = CArray.float64(5, 3).seq!(1)
+    result = CArray.float64(3, 3)
     CArray.jit_for(3, 3) { |a, b|
       accumulator = 0.0
       (0...5).each { |p|
@@ -377,8 +377,8 @@ class TestReductions < Minitest::Test
   end
 
   def test_each_index_is_bounds_checked_on_its_own
-    source = CArray.double(5, 3).seq!(1)
-    result = CArray.double(3, 3)
+    source = CArray.float64(5, 3).seq!(1)
+    result = CArray.float64(3, 3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3, 3) { |a, b|
         accumulator = 0.0
@@ -400,13 +400,13 @@ class TestReductions < Minitest::Test
   end
 
   def test_a_written_axis_walked_by_two_indices_runs_the_extent_upward
-    values = CArray.double(3, 3).seq!
+    values = CArray.float64(3, 3).seq!
     CArray.jit_for(3, 3) { |a, b| values[a, b] = values[a, a] + 1.0 }
     assert_equal(self_reference_in_ruby((0...3).to_a), values.to_a)
   end
 
   def test_a_written_axis_walked_by_two_indices_runs_the_extent_downward
-    values = CArray.double(3, 3).seq!
+    values = CArray.float64(3, 3).seq!
     CArray.jit_for(3, 2.step(0, -1)) { |a, b| values[a, b] = values[a, a] + 1.0 }
     assert_equal(self_reference_in_ruby(2.step(0, -1).to_a), values.to_a)
     refute_equal(self_reference_in_ruby((0...3).to_a), values.to_a,

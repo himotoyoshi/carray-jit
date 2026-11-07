@@ -75,8 +75,8 @@ CASES = [
   Case.new("out = a + b", "two arrays, and one pass either way: " \
                           "the least a kernel can save",
     ->(n) {
-      a = CArray.double(n).seq; b = CArray.double(n).seq
-      out = CArray.double(n); plain_out = CArray.double(n)
+      a = CArray.float64(n).seq; b = CArray.float64(n).seq
+      out = CArray.float64(n); plain_out = CArray.float64(n)
       [proc { CArray.jit_each { out = a + b } },
        proc { plain_out[] = a + b },
        proc { largest_difference(out, plain_out) }]
@@ -85,9 +85,9 @@ CASES = [
   Case.new("out = a + b + c + d", "four arrays, and three passes and three " \
                                   "intermediate arrays saved",
     ->(n) {
-      a = CArray.double(n).seq; b = CArray.double(n).seq
-      c = CArray.double(n).seq; d = CArray.double(n).seq
-      out = CArray.double(n); plain_out = CArray.double(n)
+      a = CArray.float64(n).seq; b = CArray.float64(n).seq
+      c = CArray.float64(n).seq; d = CArray.float64(n).seq
+      out = CArray.float64(n); plain_out = CArray.float64(n)
       [proc { CArray.jit_each { out = a + b + c + d } },
        proc { plain_out[] = a + b + c + d },
        proc { largest_difference(out, plain_out) }]
@@ -96,9 +96,9 @@ CASES = [
   Case.new("out = (a + b) * (c - a) + b * c - a", "the long expression from " \
                                                   "element_wise.rb",
     ->(n) {
-      a = CArray.double(n).seq; b = CArray.double(n).seq
-      c = CArray.double(n).seq
-      out = CArray.double(n); plain_out = CArray.double(n)
+      a = CArray.float64(n).seq; b = CArray.float64(n).seq
+      c = CArray.float64(n).seq
+      out = CArray.float64(n); plain_out = CArray.float64(n)
       [proc { CArray.jit_each { out = (a + b) * (c - a) + b * c - a } },
        proc { plain_out[] = (a + b) * (c - a) + b * c - a },
        proc { largest_difference(out, plain_out) }]
@@ -107,8 +107,8 @@ CASES = [
   Case.new("three-point stencil", "the plain spelling has to make the three " \
                                   "shifted views first",
     ->(n) {
-      a = CArray.double(n).seq
-      out = CArray.double(n); plain_out = CArray.double(n)
+      a = CArray.float64(n).seq
+      out = CArray.float64(n); plain_out = CArray.float64(n)
       [proc { CArray.jit_for(1...(n - 1)) { |i| out[i] = a[i-1] + a[i] + a[i+1] } },
        proc { plain_out[1..-2] = a[0..-3] + a[1..-2] + a[2..-1] },
        proc { largest_difference(out[1..-2], plain_out[1..-2]) }]
@@ -117,12 +117,12 @@ CASES = [
   Case.new("periodic tendency, eight fields", "the shape a one-dimensional " \
                                               "shallow-water model has",
     ->(n) {
-      eta = CArray.double(n).seq; u = CArray.double(n).seq
-      v = CArray.double(n).seq
-      fc = CArray.double(n).seq; ff = CArray.double(n).seq
-      d_eta = CArray.double(n); d_u = CArray.double(n); d_v = CArray.double(n)
-      plain_eta = CArray.double(n); plain_u = CArray.double(n)
-      plain_v = CArray.double(n)
+      eta = CArray.float64(n).seq; u = CArray.float64(n).seq
+      v = CArray.float64(n).seq
+      fc = CArray.float64(n).seq; ff = CArray.float64(n).seq
+      d_eta = CArray.float64(n); d_u = CArray.float64(n); d_v = CArray.float64(n)
+      plain_eta = CArray.float64(n); plain_u = CArray.float64(n)
+      plain_v = CArray.float64(n)
       g = 9.8; h = 100.0; dx = 50.0
       [proc {
          CArray.jit_for(n) { |i|

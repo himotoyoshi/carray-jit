@@ -19,7 +19,7 @@ dx = 1.0 / (n - 1)
 dt = 2.5e-5        # eight times the step an explicit scheme would survive
 r = dt / (dx * dx)
 
-temperature = CArray.double(n)
+temperature = CArray.float64(n)
 # A hot band in the middle of a cold rod, ends held at zero.
 CArray.jit_for(n) { |i| temperature[i] = 0.0 }
 (n * 4 / 10...(n * 6 / 10)).each { |i| temperature[i] = 1.0 }
@@ -32,8 +32,8 @@ lower = -r
 diagonal = 1.0 + 2.0 * r
 upper = -r
 
-cc = CArray.double(n)
-dd = CArray.double(n)
+cc = CArray.float64(n)
+dd = CArray.float64(n)
 
 def solve (temperature, cc, dd, lower, diagonal, upper, n)
   cc[0] = 0.0                      # boundary: T[0] fixed
@@ -103,8 +103,8 @@ def time (repeats)
 end
 
 [400, 4_000, 40_000].each do |size|
-  field = CArray.double(size).seq! { |i| i.to_f / size }
-  work = [CArray.double(size), CArray.double(size)]
+  field = CArray.float64(size).seq! { |i| i.to_f / size }
+  work = [CArray.float64(size), CArray.float64(size)]
   compiled = time(20) { solve(field, *work, lower, diagonal, upper, size) }
   interpreted = time(3) { ruby_solve(field, *work, lower, diagonal, upper, size) }
   puts format("  n = %6d   %7.1f us compiled   %8.1f us Ruby   %3.0fx",

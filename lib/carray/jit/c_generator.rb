@@ -2606,7 +2606,7 @@ class CArray
         @intrinsic_needs << entry unless @intrinsic_needs.include?(entry)
       end
 
-      # `w = CArray.double(9)` where the statement stands.  The declaration is
+      # `w = CArray.float64(9)` where the statement stands.  The declaration is
       # at the head of the block; what is left here is what Ruby does at this
       # line, which for the zeroed spellings is a fresh array of zeros.
       #

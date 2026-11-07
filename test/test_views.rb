@@ -18,7 +18,7 @@ class TestViews < Minitest::Test
   end
 
   def test_contiguous_row_of_a_matrix
-    matrix = CArray.double(3, 8)
+    matrix = CArray.float64(3, 8)
     row = matrix[1, nil]
     row[0] = 1.0
     doubling(row, 1...8)
@@ -29,7 +29,7 @@ class TestViews < Minitest::Test
   # A column is strided: its stride is the row pitch, not the element size.
   # This is the case a contiguous-only kernel would have to copy.
   def test_strided_column_of_a_matrix
-    matrix = CArray.double(8, 3)
+    matrix = CArray.float64(8, 3)
     column = matrix[nil, 1]
     assert_equal(CArray::JIT::Access::TIER_STRIDE,
                  CArray::JIT::Access.classify(column)[:tier])
@@ -42,7 +42,7 @@ class TestViews < Minitest::Test
   end
 
   def test_reversed_view_has_a_negative_stride
-    array = CArray.double(6)
+    array = CArray.float64(6)
     reversed = array[-1..0]
     assert_equal(CArray::JIT::Access::TIER_STRIDE,
                  CArray::JIT::Access.classify(reversed)[:tier])
@@ -52,7 +52,7 @@ class TestViews < Minitest::Test
   end
 
   def test_a_slice_of_a_slice
-    array = CArray.double(20).seq!
+    array = CArray.float64(20).seq!
     inner = array[4..15][2..9]
     inner[0] = 1.0
     doubling(inner, 1...8)
@@ -62,22 +62,22 @@ class TestViews < Minitest::Test
   end
 
   def test_transposed_two_dimensional_view
-    matrix = CArray.double(4, 3).seq!
+    matrix = CArray.float64(4, 3).seq!
     transposed = matrix.transpose
-    result = CArray.double(3, 4)
+    result = CArray.float64(3, 4)
     CArray.jit_for(*transposed.dim) { |i, j| result[i, j] = transposed[i, j] * 2.0 }
     3.times { |i| 4.times { |j| assert_equal(matrix[j, i] * 2.0, result[i, j]) } }
   end
 
   def test_entity_takes_the_direct_tier
     assert_equal(CArray::JIT::Access::TIER_ENTITY,
-                 CArray::JIT::Access.classify(CArray.double(4))[:tier])
+                 CArray::JIT::Access.classify(CArray.float64(4))[:tier])
   end
 
   # A gather view has no stride expression, so the box the kernel touches is
   # transferred and written back.
   def test_gathered_view_is_transferred_and_written_back
-    source = CArray.double(8).seq!
+    source = CArray.float64(8).seq!
     selected = source[source > 3.0]
     assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(selected)[:tier])
@@ -91,7 +91,7 @@ class TestViews < Minitest::Test
   # cost that does not scale with the work is one the caller cannot reason
   # about.
   def test_only_the_requested_region_crosses
-    source = CArray.double(64).seq!
+    source = CArray.float64(64).seq!
     gathered = source[source >= 0.0]
 
     seen = nil
@@ -112,7 +112,7 @@ class TestViews < Minitest::Test
   # The box a gather view has to transfer is the loop range grown by how far
   # the kernel reaches, not the whole view.
   def test_the_region_covers_the_dependency_reach
-    source = CArray.double(32).seq!
+    source = CArray.float64(32).seq!
     gathered = source[source >= 0.0]
     gathered[10] = 1.0
     CArray.jit_for(11...14) { |i| gathered[i] = gathered[i-1] * 2.0 }
@@ -126,19 +126,19 @@ class TestViews < Minitest::Test
   # one kernel need not be read at the same offsets, and one array need not be
   # read at the same offsets on each of its axes.
   def test_two_dimensional_region_is_read_in_the_view_order
-    source = CArray.double(4, 5).seq!
+    source = CArray.float64(4, 5).seq!
     rolled = source.roll(1, 2)
     assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(rolled)[:tier])
 
-    result = CArray.double(4, 5)
+    result = CArray.float64(4, 5)
     CArray.jit_for(4, 5) { |i, j| result[i, j] = rolled[i, j] * 10.0 }
     4.times { |i| 5.times { |j|
       assert_equal(rolled[i, j] * 10.0, result[i, j], "cell #{i},#{j}") } }
   end
 
   def test_two_dimensional_region_writes_back_only_the_box
-    target = CArray.double(4, 5).seq!
+    target = CArray.float64(4, 5).seq!
     view = target.roll(1, 2)
     CArray.jit_for(1...3, 1...4) { |i, j| view[i, j] = -9.0 }
 
@@ -154,7 +154,7 @@ class TestViews < Minitest::Test
   # A wrong region shape has to come back as a message; a C extension that
   # reads whatever it was handed would crash instead.
   def test_a_malformed_region_is_refused
-    array = CArray.double(4)
+    array = CArray.float64(4)
     assert_raises(TypeError) do
       CArray::JIT::Access.open([array], [true], 0, 4) { }
     end
@@ -165,14 +165,14 @@ class TestViews < Minitest::Test
       CArray::JIT::Access.open([array], [true], [[0], [0]], [[4], [4]]) { }
     end
     assert_raises(ArgumentError) do
-      CArray::JIT::Access.open([CArray.double(4, 4)], [true], [[0]], [[4]]) { }
+      CArray::JIT::Access.open([CArray.float64(4, 4)], [true], [[0]], [[4]]) { }
     end
   end
 
   def test_two_dimensional_region_covers_the_halo
-    base = CArray.double(5, 5).seq!
+    base = CArray.float64(5, 5).seq!
     view = base.roll(1, 1)
-    result = CArray.double(5, 5)
+    result = CArray.float64(5, 5)
     CArray.jit_for(1...4, 1...4) { |i, j|
       result[i, j] = view[i-1, j] + view[i+1, j] + view[i, j-1] + view[i, j+1]
     }
@@ -185,7 +185,7 @@ class TestViews < Minitest::Test
   end
 
   def test_region_outside_the_array_is_refused
-    source = CArray.double(8).seq!
+    source = CArray.float64(8).seq!
     gathered = source[source >= 0.0]
     assert_raises(ArgumentError) do
       CArray::JIT::Access.open([gathered], [true], [[6]], [[10]]) { }
@@ -195,7 +195,7 @@ class TestViews < Minitest::Test
   # A mask is a CArray of the same shape and, for a view, the same kind of
   # view, so it opens by the same tier logic as the data.
   def test_a_masked_view_reports_its_mask_basis
-    matrix = CArray.double(4, 5).seq!
+    matrix = CArray.float64(4, 5).seq!
     matrix[1, 2] = UNDEF
     column = matrix[nil, 2]
     CArray::JIT::Access.open([column], [true]) do |bases|
@@ -209,14 +209,14 @@ class TestViews < Minitest::Test
   end
 
   def test_an_unmasked_array_reports_no_mask_basis
-    CArray::JIT::Access.open([CArray.double(4)], [true]) do |bases|
+    CArray::JIT::Access.open([CArray.float64(4)], [true]) do |bases|
       assert_nil(bases.first[:mask_pointer])
       assert_nil(bases.first[:mask_strides])
     end
   end
 
   def test_arrays_are_closed_when_the_body_raises
-    matrix = CArray.double(4, 2)
+    matrix = CArray.float64(4, 2)
     column = matrix[nil, 1]
     assert_raises(RuntimeError) do
       CArray::JIT::Access.open([column], [true]) { raise "boom" }
@@ -227,7 +227,7 @@ class TestViews < Minitest::Test
 
   # Both loops are compiled; which one runs is decided once, outside the loop.
   def test_a_kernel_carries_both_loops
-    values = CArray.double(4)
+    values = CArray.float64(4)
     kernel = CArray.jit_for(1...4) { |i| values[i] = values[i-1] * 2.0 }
     assert_includes(kernel.c_source, "carray_jit_strided")
     assert_includes(kernel.c_source, "carray_jit_contiguous")
@@ -237,11 +237,11 @@ class TestViews < Minitest::Test
   # A view with no stride expression is reached a box at a time, and an axis
   # walked by two indices takes the box that covers both of them.
   def test_the_region_covers_both_indices_on_one_axis
-    base = CArray.double(6, 4).seq!
+    base = CArray.float64(6, 4).seq!
     view = base.roll(1, 1)
     assert_equal(CArray::JIT::Access::TIER_XFER,
                  CArray::JIT::Access.classify(view)[:tier])
-    gram = CArray.double(4, 4)
+    gram = CArray.float64(4, 4)
     CArray.jit_for(4, 4) { |a, b|
       accumulator = 0.0
       (0...6).each { |p| accumulator = accumulator + view[p, a] * view[p, b] }
@@ -257,7 +257,7 @@ class TestViews < Minitest::Test
   # lands on the CASelect, which does not: attaching it materialises a copy,
   # and the kernel's writes used to be thrown away with it.
   def test_a_fold_that_does_not_reach_an_entity_is_not_the_stride_tier
-    whole = CArray.double(16).seq!
+    whole = CArray.float64(16).seq!
     view = whole[whole >= 0.0].reshape(4, 4)
     assert(view.class.to_s.include?("Refer"), "the view is a refer over a select")
     assert_equal(CArray::JIT::Access::TIER_XFER,

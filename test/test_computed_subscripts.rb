@@ -6,16 +6,16 @@ require_relative "test_helper"
 class TestComputedSubscripts < Minitest::Test
 
   def test_a_gather_matches_the_ruby_loop
-    table = CArray.double(5) { |i| (i * i).to_f }
+    table = CArray.float64(5) { |i| (i * i).to_f }
     index = CArray.int32(6) { |i| i % 5 }
-    result = CArray.double(6)
+    result = CArray.float64(6)
     CArray.jit_for(6) { |i| result[i] = table[index[i]] }
     assert_equal((0...6).map { |i| table[index[i]] }, result.to_a)
   end
 
   def test_a_subscript_may_be_a_local
-    table = CArray.double(5) { |i| (i * i).to_f }
-    result = CArray.double(6)
+    table = CArray.float64(5) { |i| (i * i).to_f }
+    result = CArray.float64(6)
     CArray.jit_for(6) { |i|
       j = i / 2
       result[i] = table[j]
@@ -24,9 +24,9 @@ class TestComputedSubscripts < Minitest::Test
   end
 
   def test_a_read_outside_the_array_raises_where_the_ruby_loop_raises
-    table = CArray.double(5) { |i| (i * i).to_f }
+    table = CArray.float64(5) { |i| (i * i).to_f }
     index = CArray.int32(6) { |i| i }        # 5 is outside
-    result = CArray.double(6)
+    result = CArray.float64(6)
     assert_raises(IndexError) do
       CArray.jit_for(6) { |i| result[i] = table[index[i]] }
     end
@@ -36,7 +36,7 @@ class TestComputedSubscripts < Minitest::Test
   end
 
   def test_a_scatter_matches_the_ruby_loop
-    values = CArray.double(20) { |i| (i * 7 % 20) / 4.0 }
+    values = CArray.float64(20) { |i| (i * 7 % 20) / 4.0 }
     histogram = CArray.int32(5)
     CArray.jit_for(20) { |i|
       bin = values[i].floor
@@ -70,16 +70,16 @@ class TestComputedSubscripts < Minitest::Test
   # whole view -- which costs what copying it would have cost, and is what the
   # caller would otherwise have written by hand.
   def test_a_gather_view_takes_a_computed_index_by_crossing_whole
-    whole = CArray.double(16).seq!
+    whole = CArray.float64(16).seq!
     view = whole[whole >= 8.0]
     index = CArray.int32(4) { |i| 3 - i }
-    result = CArray.double(4)
+    result = CArray.float64(4)
     CArray.jit_for(4) { |i| result[i] = view[index[i]] }
     assert_equal((0...4).map { |i| view[3 - i] }, result.to_a)
   end
 
   def test_a_scatter_through_a_gather_view_reaches_the_parent
-    whole = CArray.double(16).seq!
+    whole = CArray.float64(16).seq!
     view = whole[whole >= 8.0]
     index = CArray.int32(4) { |i| 3 - i }
     CArray.jit_for(4) { |i| view[index[i]] = -1.0 }
@@ -88,9 +88,9 @@ class TestComputedSubscripts < Minitest::Test
   end
 
   def test_a_strided_view_takes_one
-    column = CArray.double(8, 3).seq![nil, 1]
+    column = CArray.float64(8, 3).seq![nil, 1]
     index = CArray.int32(4) { |i| i }
-    result = CArray.double(4)
+    result = CArray.float64(4)
     CArray.jit_for(4) { |i| result[i] = column[index[i]] }
     assert_equal((0...4).map { |i| column[i] }, result.to_a)
   end
@@ -100,7 +100,7 @@ class TestComputedSubscripts < Minitest::Test
   # end is the bounds check, not a refusal to compile the shape.  A computed
   # one is a scatter, and is checked at the cell instead.
   def test_writing_a_neighbouring_cell_is_bounds_checked
-    values = CArray.double(6)
+    values = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(6) { |i| values[i + 1] = 1.0 }
     end
@@ -115,10 +115,10 @@ class TestComputedSubscripts < Minitest::Test
   # ever feeds one is not an error the caller asked about -- the same rule
   # integer division by zero already follows.
   def test_a_masked_cell_swallows_the_index_error
-    source = CArray.double(4).seq!(1.0)
+    source = CArray.float64(4).seq!(1.0)
     source[2] = UNDEF
     index = CArray.int32(4) { |i| i == 2 ? 99 : i }
-    result = CArray.double(4)
+    result = CArray.float64(4)
     CArray.jit_for(4) { |i|
       result[i] = source[i] * 0.0 + source[index[i]]
     }
@@ -132,8 +132,8 @@ class TestComputedSubscripts < Minitest::Test
   # reason about an inner loop's range.  The same sum in a local is a
   # subscript the kernel works out, and it runs.
   def test_an_index_as_an_offset_says_what_to_write_instead
-    a = CArray.double(8).seq!(1.0)
-    out = CArray.double(6)
+    a = CArray.float64(8).seq!(1.0)
+    out = CArray.float64(6)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(6) { |i| s = 0.0; 3.times { |r| s += a[i + r] }; out[i] = s }
     end

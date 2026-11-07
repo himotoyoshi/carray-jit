@@ -28,19 +28,19 @@ random = CArray::Rng.new(seed: 20260913)
 
 # Stations of very different sizes: the square of a uniform draw lands most
 # of the readings on the low-numbered ones.
-station = CArray.double(READINGS)
+station = CArray.float64(READINGS)
 station.random!(rng: random)
 station = ((station ** 2) * STATIONS).int32
 
-value = CArray.double(READINGS)
+value = CArray.float64(READINGS)
 value.random!(rng: random)
 value = value * 40.0
 
 LIMIT = 35.0
 
 count = CArray.int64(STATIONS)
-total = CArray.double(STATIONS)
-peak = CArray.double(STATIONS).fill(-Float::INFINITY)
+total = CArray.float64(STATIONS)
+peak = CArray.float64(STATIONS).fill(-Float::INFINITY)
 peak_at = CArray.int64(STATIONS).fill(-1)
 exceed = CArray.int64(STATIONS)
 

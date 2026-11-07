@@ -130,13 +130,13 @@ The aliases are CArray's too, and two of them are worth reading twice: **`CArray
 
 `CArray.empty(data_type, dim)` is carray 3.0.2's spelling. A block is read rather than run, so a kernel takes it whatever version of CArray is loaded -- but calling it outside a kernel needs 3.0.2.
 
-The shape is **written out**: an integer, or integers joined by `+`, `-` and `*`, so `CArray.double(2 * 4 + 1)` is a nine-cell array. A length worked out from the integers the block captured is computed when the kernel starts, and that array is allocated on the heap (see below). A length from an index, a local or a cell is refused -- there would be no C array to declare and no bound to check against -- and so is a length of zero or less.
+The shape is **written out**: an integer, or integers joined by `+`, `-` and `*`, so `CArray.float64(2 * 4 + 1)` is a nine-cell array. A length worked out from the integers the block captured is computed when the kernel starts, and that array is allocated on the heap (see below). A length from an index, a local or a cell is refused -- there would be no C array to declare and no bound to check against -- and so is a length of zero or less.
 
 **More than one axis** is written the way CArray writes it, and each axis is checked against its own extent:
 
 ```ruby
 CArray.jit_for(ny, nx) { |i, j|
-  m = CArray.double(3, 4)                 # double m[12]; packed row-major
+  m = CArray.float64(3, 4)                 # double m[12]; packed row-major
   3.times { |r| 4.times { |c| m[r, c] = coef[i, j, r, c] } }
   ...
 }
@@ -147,7 +147,7 @@ The shape is literal, so the strides are constants the compiler can see: `m[r, c
 Per-axis checking is the thing this buys, and the reason to write `m[r, c]` rather than flattening by hand. Write `m[r * 4 + c]` yourself and a `c` of 4 is a cell of the next row -- a real read, of the wrong number, saying nothing. Write `m[r, c]` and the column is held to four:
 
 ```ruby
-m = CArray.double(3, 4)
+m = CArray.float64(3, 4)
 3.times { |r| 5.times { |c| m[r, c] = 1.0 } }
 #=> the subscript `c` on axis 1 of `m`, which is 3 x 4, reaches cell 4 of that
 #   axis's 4 cells, whose cells are 0 to 3: `c` runs 0 to 4 here.
@@ -155,7 +155,7 @@ m = CArray.double(3, 4)
 
 A column the kernel works out is checked where it is reached, per axis as well, so a write past one axis raises rather than landing in the next row.
 
-The size counts cells rather than axes: `CArray.double(32, 32)` is 8 KiB, past what a frame holds, so it is allocated at the kernel's entry instead (see "Larger, and lengths the kernel works out").
+The size counts cells rather than axes: `CArray.float64(32, 32)` is 8 KiB, past what a frame holds, so it is allocated at the kernel's entry instead (see "Larger, and lengths the kernel works out").
 
 To a C function a local array goes as what it is -- one flat run of cells, row after row -- so a `double[3][4]` is handed to `const double a[12]`, and the length is matched over every cell.
 
@@ -164,7 +164,7 @@ The compatibility layer is not taken. `CArray.zeros(4)`, `CArray.ones(4)`, `CArr
 **A subscript is checked, and where depends on what it is made of.** Where the position is an inner loop's index at a literal offset and that loop states its range in literals, the reach is known as the block is read, and the C carries no test:
 
 ```ruby
-t = CArray.double(4)
+t = CArray.float64(4)
 (0...4).each { |k| t[k + 1] = 0.0 }
 #=> `t[k + 1]` reaches cell 4 of a local array of 4 cells, where the cells are
 #   0 to 3: `k` runs 0 to 3 here.
@@ -178,7 +178,7 @@ Every other position -- a plain local, a value read out of an array, an index wh
 out = CArray.int64(1)
 
 CArray.jit_for(1) { |i|
-  w = CArray.double(4)
+  w = CArray.float64(4)
   j = 0
   while w[j] == 0.0     # reads off the end on the fifth pass
     j += 1
@@ -191,7 +191,7 @@ CArray.jit_for(1) { |i|
 **A local array is a workspace and not a value.** It has no methods and is not read bare:
 
 ```ruby
-w = CArray.double(4)
+w = CArray.float64(4)
 x = w                #=> `w` is a local array; index it, as in `w[0]`
 x = w.sum            #=> `sum` is a method CArray answers outside a kernel
 ```
@@ -215,8 +215,8 @@ Two kinds of local array do not stand in the frame: one whose cells come to more
 ```ruby
 # n is an Integer the block closed over; 4096 doubles is 32 KiB
 CArray.jit_for(rows) { |i|
-  w = CArray.double(n)          # allocated at the entry, freed at the exit
-  big = CArray.double(4096)     # the same, for its size alone
+  w = CArray.float64(n)          # allocated at the entry, freed at the exit
+  big = CArray.float64(4096)     # the same, for its size alone
   ...
 }
 ```
@@ -240,12 +240,12 @@ A `jit_function` body allocates nothing. It is called once per cell, so an alloc
 A kernel that carries masks gives every local array a **shadow** of one byte a cell, declared beside the cells, and a cell of the array carries a mask the way a plain local carries one beside its value: what the expression written into it carried, and the masks of the branches the write stands in. So a window copied into a workspace keeps its holes, and reading a cell back is reading what it was made of.
 
 ```ruby
-field = CArray.double(8).seq!(1.0)
+field = CArray.float64(8).seq!(1.0)
 field[2] = UNDEF
-out = CArray.double(8)
+out = CArray.float64(8)
 
 CArray.jit_for(1...7) { |i|
-  w = CArray.double(3)
+  w = CArray.float64(3)
   w[0] = field[i-1]; w[1] = field[i]; w[2] = field[i+1]
   out[i] = w[0] + w[1] + w[2]
 }
@@ -290,7 +290,7 @@ The name does not collide with anything the block writes. `sum = 0.0` beside `su
 **`min` and `max`** answer what CArray's own `min` and `max` answer. A NaN never displaces the accumulator, so it is skipped wherever it stands -- first, middle or last:
 
 ```ruby
-CArray.double(3) { [Float::NAN, 1.0, 2.0] }.min   #=> 1.0
+CArray.float64(3) { [Float::NAN, 1.0, 2.0] }.min   #=> 1.0
 ```
 
 and an array of nothing but NaN comes back `NaN`, there being no number left to win, which is again CArray's answer. Of two cells that compare equal the first is kept, so `0.0` and `-0.0` come back in whichever order they stood, as they do from CArray -- which is why the fold is a comparison rather than C99 `fmin` / `fmax`, whose NaN rule is the same but which leave the choice between two zeros to the library. Over an integer array, which has no NaN, it is a comparison against the limit of the type. `sort` does not skip a NaN, for the reason the fold does: skipping drops a cell -- right for a fold, wrong for a sort. A Complex array is refused, Ruby not ordering Complex numbers either, and so is a boolean one.
@@ -538,9 +538,9 @@ A masked cell means "no value here". A plain CArray has no mask at all -- one co
 When some array does carry one, the mask propagates the way CArray's own operators propagate it: any cell that fed a result masks that result, and an array that is written gets a mask if it did not have one.
 
 ```ruby
-source = CArray.double(7).seq!(1.0)
+source = CArray.float64(7).seq!(1.0)
 source[2] = UNDEF
-result = CArray.double(7)
+result = CArray.float64(7)
 
 CArray.jit_for(1...6) { |i| result[i] = source[i-1] + source[i+1] }
 #=> result[1] and result[3] are UNDEF; they are the cells that read source[2]
@@ -559,7 +559,7 @@ Where a kernel leaves the masking implicit, the reference is CArray's operators 
 **A compare-exchange spreads a mask further than anything else does.** A branch decided by a missing cell masks what it writes, which is the rule everywhere; a swap writes two cells rather than one, and a sort runs compare-exchange over every cell again and again. So one missing cell does not stay one:
 
 ```ruby
-row = CA_DOUBLE([[5, 1, 4, 2, 3]])
+row = CA_FLOAT64([[5, 1, 4, 2, 3]])
 row[0, 2] = UNDEF
 
 CArray.jit_for(1) { |i|                       # a bubble sort over the row
@@ -738,7 +738,7 @@ Neville's interpolation is the shape that wants it. It walks a workspace of the 
 NEVILLE = CArray.jit_function(
   "double neville(double x, const double xs[4], const double ys[4])"
 ) { |x, xs, ys|
-  t = CArray.double(4)
+  t = CArray.float64(4)
   4.times { |k| t[k] = ys[k] }
   (1...4).each { |m|
     (0...4-m).each { |k|
@@ -777,13 +777,13 @@ DOT4 = CArray.jit_function("double dot4(const double x[4], const double y[4])") 
 }
 
 CArray.jit_for(0...(n - 3)) { |i|
-  w = CArray.double(4)
+  w = CArray.float64(4)
   w[0] = signal[i]; w[1] = signal[i+1]; w[2] = signal[i+2]; w[3] = signal[i+3]
   smoothed[i] = DOT4.call(w, weights)
 }
 ```
 
-**What the declaration says is matched as the block is read**, not at the call. Both halves are written in the block -- the element type is the constructor and the length is a literal -- so `CArray.float32(4)` against `const double x[4]`, or `CArray.double(3)` against it, is refused before anything is compiled. A captured array is matched at the call instead (there is no array to look at until then), and the rules are the same ones: the element type exactly, and at least as many cells as a sized declarator asks for. More cells than it asks for is fine, as it is for a captured array -- the callee reads the four it was promised.
+**What the declaration says is matched as the block is read**, not at the call. Both halves are written in the block -- the element type is the constructor and the length is a literal -- so `CArray.float32(4)` against `const double x[4]`, or `CArray.float64(3)` against it, is refused before anything is compiled. A captured array is matched at the call instead (there is no array to look at until then), and the rules are the same ones: the element type exactly, and at least as many cells as a sized declarator asks for. More cells than it asks for is fine, as it is for a captured array -- the callee reads the four it was promised.
 
 The length check is doing real work here rather than tidying up. A subscript on a pointer parameter is unchecked by design, and a local array is on the stack: a declaration that read more cells than the array holds would walk over the frame the return address is in.
 
@@ -793,8 +793,8 @@ A parameter that is not `const` may be written through, and the line after the c
 SOLVE3 = CArray.jit_function("void solve3(const double a[12], double x[3])") { |a, x| ... }
 
 CArray.jit_for(ny, nx) { |i, j|
-  rhs = CArray.double(12)
-  sol = CArray.double(3)
+  rhs = CArray.float64(12)
+  sol = CArray.float64(3)
   ...
   SOLVE3.call(rhs, sol)
   out[i, j] = sol[0]
@@ -810,8 +810,8 @@ Passing the same local array to two parameters -- `DOT4.call(w, w)` -- is well-f
 In `jit_each`, `jit_map` and `jit_stencil` the block names no index, so a bare array name is the cell the loop is on and every operand has to line up with every other. An array handed to a C function is not one of those: it goes over whole, so its own length is nobody else's business.
 
 ```ruby
-weights = CArray.double(4).seq        # four coefficients
-a       = CArray.double(1000).seq     # a thousand cells to compute
+weights = CArray.float64(4).seq        # four coefficients
+a       = CArray.float64(1000).seq     # a thousand cells to compute
 
 CArray.jit_each { out = a + DOT4.call(weights, weights) }
 ```
@@ -1046,7 +1046,7 @@ A pointer that points at numbers is indexed, and takes a CArray:
 poly = CArray.jit_function("double (*)(double x, const double coef[3])") { |x, c|
   c[0] + c[1] * x + c[2] * x * x
 }
-poly.call(2.0, CArray.double(3) { |i| [1.0, 2.0, 3.0][i] })   # => 17.0
+poly.call(2.0, CArray.float64(3) { |i| [1.0, 2.0, 3.0][i] })   # => 17.0
 ```
 
 Nothing about the spelling had to be settled: C settled it long ago. `const` says a parameter may only be read, so `dydt[0] = ...` compiles and `coef[0] = ...` is refused; a declarator carries a length where there is one, so `coef[3]` is checked against the array it is given and `coef[]` is the caller's business, as it is in C. The whole ODE signature is therefore sayable, with no half of it invented here:
@@ -1139,7 +1139,7 @@ The other side of that: the address has to arrive with the call rather than with
 ```ruby
 def moving_average (values, window)
   n = values.elements
-  out = CArray.double(n)
+  out = CArray.float64(n)
   CArray.jit_call("void (*)(double *out, const double *values, " \
                   "size_t n, size_t window)") {
     n.times { |i|

@@ -28,8 +28,8 @@ def timed (samples) = median(samples.times.map { Benchmark.realtime { yield } })
 
 # A matrix product, which the convention finds on its own, written both ways.
 n, k, m = 400, 400, 400
-left = CArray.double(n, k).seq!(1)
-right = CArray.double(k, m).seq!(1)
+left = CArray.float64(n, k).seq!(1)
+right = CArray.float64(k, m).seq!(1)
 
 CArray.jit_contract { |i, j, t| left[i,t] * right[t,j] }
 CArray.jit_contract(:i, :j) { |t| left[i,t] * right[t,j] }
@@ -41,7 +41,7 @@ named = timed(SAMPLES) { CArray.jit_contract(:i, :j) { |t| left[i,t] * right[t,j
 # this one is not, so it says what the notation costs against writing the
 # loop -- which, since a contraction's sum is split into partial ones as this
 # loop's is, is nothing.
-product = CArray.double(n, m)
+product = CArray.float64(n, m)
 CArray.jit_for(n, m) { |i, j|
   accumulator = 0.0
   (0...k).each { |t| accumulator = accumulator + left[i,t] * right[t,j] }
@@ -68,8 +68,8 @@ puts format("the same as jit_for %5.1f ms   %5.2f ns per multiply-add   %.2fx",
 # The per-call cost, where the work is small enough that only the call is
 # left: whatever the naming costs, it is paid here or nowhere.
 puts
-small_left = CArray.double(4, 4).seq!(1)
-small_right = CArray.double(4, 4).seq!(1)
+small_left = CArray.float64(4, 4).seq!(1)
+small_right = CArray.float64(4, 4).seq!(1)
 rounds = 20_000
 CArray.jit_contract { |i, j, t| small_left[i,t] * small_right[t,j] }
 CArray.jit_contract(:i, :j) { |t| small_left[i,t] * small_right[t,j] }
@@ -90,8 +90,8 @@ puts format("the axes named   %8.2f us per call   %.2fx",
 # replaces.
 puts
 count, width = 200_000, 3
-points = CArray.double(count, width).seq!(1)
-squared = CArray.double(count)
+points = CArray.float64(count, width).seq!(1)
+squared = CArray.float64(count)
 
 CArray.jit_contract(:p) { |t| points[p,t] * points[p,t] }
 contracted = timed(SAMPLES) { CArray.jit_contract(:p) { |t| points[p,t] * points[p,t] } }
@@ -114,7 +114,7 @@ looped = timed(SAMPLES) {
   }
 }
 
-plain = CArray.double(count)
+plain = CArray.float64(count)
 ruby = timed(SAMPLES) {
   (0...count).each do |p|
     accumulator = 0.0
@@ -142,8 +142,8 @@ puts format("(x ** 2).sum(axis: 1) %3.1f ms   %5.2f ns/cell   %.2fx",
 # it is the kernel's rather than Ruby's.
 puts
 batch, bn, bk, bm = 200, 32, 32, 32
-stack = CArray.double(batch, bn, bk).seq!(1)
-other = CArray.double(batch, bk, bm).seq!(1)
+stack = CArray.float64(batch, bn, bk).seq!(1)
+other = CArray.float64(batch, bk, bm).seq!(1)
 
 CArray.jit_contract(:b, :i, :j) { |t| stack[b,i,t] * other[b,t,j] }
 batched = timed(SAMPLES) {

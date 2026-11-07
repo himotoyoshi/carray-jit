@@ -19,7 +19,7 @@ ROWS, COLUMNS = 120, 160
 SWEEPS = 1200
 
 def fresh_plate
-  plate = CArray.double(ROWS, COLUMNS)
+  plate = CArray.float64(ROWS, COLUMNS)
   plate[nil, 0] = 25.0             # the sides, somewhere in between
   plate[nil, -1] = 25.0
   plate[0, nil] = 100.0            # the top edge is hot, corners included

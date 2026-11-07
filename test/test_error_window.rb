@@ -97,7 +97,7 @@ class TestErrorWindow < Minitest::Test
       out[0] = x * 2.0
     }
     raw = foreign(f)
-    box = CArray.double(1)
+    box = CArray.float64(1)
     box[0] = 99.0
 
     f.clear_error
@@ -175,8 +175,8 @@ class TestErrorWindow < Minitest::Test
   def test_a_kernel_run_inside_a_window_leaves_it_armed
     f = raising_below_zero
     raw = foreign(f)
-    a = CArray.double(4).seq!
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!
+    out = CArray.float64(4)
     error = assert_raises(RuntimeError) do
       f.watching do
         raw.call(-1.0)

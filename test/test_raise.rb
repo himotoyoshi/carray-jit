@@ -159,8 +159,8 @@ class TestRaise < Minitest::Test
 
   def test_a_compiled_function_raises_from_a_kernel
     f = root
-    a = CArray.double(4) { |i| i - 1.0 }
-    out = CArray.double(4)
+    a = CArray.float64(4) { |i| i - 1.0 }
+    out = CArray.float64(4)
     error = assert_raises(RuntimeError) do
       CArray.jit_for(4) { |i| out[i] = f.call(a[i]) }
     end
@@ -172,8 +172,8 @@ class TestRaise < Minitest::Test
   # the codes agree because they are taken from the messages.
   def test_the_kernel_answers_for_what_it_pasted
     f = root
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     kernel = CArray.jit_for(4) { |i| out[i] = f.call(a[i]) }
     assert_equal([1.0, Math.sqrt(2.0), Math.sqrt(3.0), 2.0], out.to_a)
     assert_equal(f.raise_messages, kernel.raise_messages)
@@ -184,14 +184,14 @@ class TestRaise < Minitest::Test
   # reached.
   def test_the_kernels_own_raise_and_the_functions_stay_apart
     f = root
-    a = CArray.double(4).seq!(1.0)
-    out = CArray.double(4)
+    a = CArray.float64(4).seq!(1.0)
+    out = CArray.float64(4)
     error = assert_raises(RuntimeError) do
       CArray.jit_for(4) { |i| raise "i reached 3" if i == 3; out[i] = f.call(a[i]) }
     end
     assert_equal("i reached 3", error.message)
 
-    b = CArray.double(4) { |i| -i.to_f }
+    b = CArray.float64(4) { |i| -i.to_f }
     error = assert_raises(RuntimeError) do
       CArray.jit_for(4) { |i| raise "i reached 3" if i == 3; out[i] = f.call(b[i]) }
     end

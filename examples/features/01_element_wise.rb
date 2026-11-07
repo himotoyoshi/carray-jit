@@ -14,10 +14,10 @@ $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
 require "carray/jit"
 
 n = 100_000
-a = CArray.double(n).seq!(1.0)
-b = CArray.double(n).seq!(0.5, 0.5)
-c = CArray.double(n).seq!(2.0, -0.25)
-out = CArray.double(n)
+a = CArray.float64(n).seq!(1.0)
+b = CArray.float64(n).seq!(0.5, 0.5)
+c = CArray.float64(n).seq!(2.0, -0.25)
+out = CArray.float64(n)
 
 CArray.jit_each { out = (a + b) * (c - a) + b * c - a }
 
@@ -32,9 +32,9 @@ puts "  matches CArray      #{out.to_a == expected.to_a}"
 # The rank comes from the arrays rather than from the block, so the same
 # expression serves whatever shape it is given, and broadcasting costs nothing
 # -- a stretched axis arrives as a stride of zero.
-matrix = CArray.double(3, 4).seq!(1.0)
-row = CArray.double(1, 4).seq!(10.0, 10.0)
-scaled = CArray.double(3, 4)
+matrix = CArray.float64(3, 4).seq!(1.0)
+row = CArray.float64(1, 4).seq!(10.0, 10.0)
+scaled = CArray.float64(3, 4)
 
 CArray.jit_each { scaled = matrix * row }
 
@@ -64,6 +64,6 @@ puts "  closing over a value #{blended[0..2].to_a.inspect}"
 # An assignment is a statement with a value -- Ruby's rule, not a special
 # case here -- so a block may write an array of yours and hand the same value
 # back.  Which is jit_each's block, asked a different question.
-kept = CArray.double(n)
+kept = CArray.float64(n)
 also = CArray.jit_map { kept = a - b }
 puts "  written and returned #{kept[0..2].to_a == also[0..2].to_a}"

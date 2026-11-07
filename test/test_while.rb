@@ -10,7 +10,7 @@ class TestWhile < Minitest::Test
   include KernelCompilation
 
   def test_it_runs_until_the_condition_goes_false
-    values = CArray.double(8).seq!(1.0)
+    values = CArray.float64(8).seq!(1.0)
     out = CArray.int64(8)
     CArray.jit_for(8) { |i|
       v = values[i]
@@ -36,8 +36,8 @@ class TestWhile < Minitest::Test
   # Newton's method: the loop nobody can put a bound on without solving the
   # problem first, which is the case `while` is for.
   def test_a_convergence_loop_agrees_with_ruby
-    values = CArray.double(6).seq!(1.0)
-    roots = CArray.double(6)
+    values = CArray.float64(6).seq!(1.0)
+    roots = CArray.float64(6)
     CArray.jit_for(6) { |i|
       guess = values[i]
       while (guess * guess - values[i]).abs > 1e-12
@@ -140,7 +140,7 @@ class TestWhile < Minitest::Test
   end
 
   def test_a_raise_inside_a_while_stops_the_kernel
-    out = CArray.double(4)
+    out = CArray.float64(4)
     error = assert_raises(RuntimeError) do
       CArray.jit_for(4) { |i|
         c = 0
@@ -181,8 +181,8 @@ class TestWhile < Minitest::Test
 
   # The whole-array spelling has statements in it too.
   def test_it_works_in_the_whole_array_spelling
-    limit = CArray.double(5).seq!(1.0)
-    out = CArray.double(5)
+    limit = CArray.float64(5).seq!(1.0)
+    out = CArray.float64(5)
     CArray.jit_each {
       c = 0.0
       while c < limit
@@ -197,9 +197,9 @@ class TestWhile < Minitest::Test
   # that mean nothing, which is the position a branch taken on one is in --
   # so what it writes is masked, by the same rule and the same machinery.
   def test_a_masked_condition_masks_what_the_body_writes
-    values = CArray.double(4).seq!(1.0)
+    values = CArray.float64(4).seq!(1.0)
     values[2] = UNDEF
-    out = CArray.double(4)
+    out = CArray.float64(4)
     CArray.jit_for(4) { |i|
       c = 0.0
       while c < values[i]

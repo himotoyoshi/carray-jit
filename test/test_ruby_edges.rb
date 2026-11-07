@@ -41,8 +41,8 @@ class TestRubyEdges < Minitest::Test
 
   # An Integer has no sign of zero.
   def test_rounding_into_a_float_cell_gives_no_negative_zero
-    x = CArray.double(1) { -0.3 }
-    out = CArray.double(4)
+    x = CArray.float64(1) { -0.3 }
+    out = CArray.float64(4)
     CArray.jit_for(1) { |i|
       out[0] = x[i].ceil; out[1] = x[i].round; out[2] = x[i].truncate; out[3] = x[i].to_i
     }
@@ -51,8 +51,8 @@ class TestRubyEdges < Minitest::Test
 
   # Ruby's Float#% keeps the dividend's sign on a zero remainder.
   def test_a_zero_float_remainder_keeps_the_dividends_sign
-    x = CArray.double(2) { |i| [-4.0, 4.0][i] }
-    out = CArray.double(4)
+    x = CArray.float64(2) { |i| [-4.0, 4.0][i] }
+    out = CArray.float64(4)
     CArray.jit_for(2) { |i| out[i] = x[i] % 2.0; out[i + 2] = x[i] % -2.0 }
     signs = out.to_a.map { |v| (1.0 / v).infinite? }
     assert_equal [-1, 1, -1, 1], signs
@@ -60,7 +60,7 @@ class TestRubyEdges < Minitest::Test
 
   def test_a_negative_integer_meeting_a_uint64_is_refused
     w = CArray.uint64(2) { |i| [3, 2**64 - 1][i] }
-    f = CArray.double(2)
+    f = CArray.float64(2)
     assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i| f[i] = w[i] > -1 ? 1.0 : 0.0 }
     end
@@ -92,13 +92,13 @@ class TestRubyEdges < Minitest::Test
   end
 
   def test_a_literal_past_a_double_is_an_infinity
-    out = CArray.double(1)
+    out = CArray.float64(1)
     CArray.jit_for(1) { |i| out[i] = 1e400 }
     assert_equal [Float::INFINITY], out.to_a
   end
 
   def test_a_literal_past_any_integer_width_is_refused
-    out = CArray.double(1)
+    out = CArray.float64(1)
     assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(1) { |i| out[i] = 1180591620717411303424 * 1.0 }
     end
@@ -121,7 +121,7 @@ class TestRubyEdges < Minitest::Test
     w = CArray.cmplx128(n)
     CArray.jit_for(n) { |i| w[i] = x[i] ** y[i] + 1i }
     assert_equal expected.map { |v| v + 1i }, w.to_a
-    r = CArray.double(n)
+    r = CArray.float64(n)
     CArray.jit_for(n) { |i| r[i] = x[i] ** y[i] }
     assert_equal [true, true, false, false, true, true, true, false],
                  r.to_a.map(&:nan?)
@@ -147,7 +147,7 @@ class TestRubyEdges < Minitest::Test
     ua = CA_UINT64([1, 2])
     CArray.jit_for(2) { |i| u[i] = ua[i] + 9223372036854775808 }
     assert_equal [2**63 + 1, 2**63 + 2], u.to_a
-    d = CArray.double(2)
+    d = CArray.float64(2)
     CArray.jit_for(2) { |i| d[i] = 9223372036854775808 }
     assert_equal [2.0**63, 2.0**63], d.to_a
   end

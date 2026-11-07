@@ -592,7 +592,7 @@ class TestComplex < Minitest::Test
     complexes = [Complex(inf, 0.0), Complex(0.0, 1.0), Complex(inf, nan),
                  Complex(1.0, -0.0), Complex(-0.0, inf)]
     pairs = reals.product(complexes)
-    x = CArray.double(pairs.size) { |k| pairs[k][0] }
+    x = CArray.float64(pairs.size) { |k| pairs[k][0] }
     z = CArray.cmplx128(pairs.size) { |k| pairs[k][1] }
     w = CArray.cmplx128(pairs.size) { |k| complexes[(k * 3) % complexes.size] }
     real_left = CArray.cmplx128(pairs.size)

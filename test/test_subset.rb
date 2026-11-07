@@ -24,7 +24,7 @@ class TestSubset < Minitest::Test
   # position it always was; in value position it came back as this
   # compiler's reading of it -- "unsupported expression Unless".
   def test_a_keyword_in_value_position_is_named_as_written
-    values = CArray.double(3).seq!(1.0)
+    values = CArray.float64(3).seq!(1.0)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_map { unless values > 1.0 then 1.0 else 2.0 end }
     end
@@ -59,7 +59,7 @@ class TestSubset < Minitest::Test
   # the rest.  Every outer iteration lands on the same four cells here, which
   # is what the same Ruby loop does.
   def test_writing_through_an_inner_index
-    values = CArray.double(4)
+    values = CArray.float64(4)
     CArray.jit_for(3) { |i| 4.times { |j| values[j] = j + 1.0 } }
     assert_equal([1.0, 2.0, 3.0, 4.0], values.to_a)
   end
@@ -68,7 +68,7 @@ class TestSubset < Minitest::Test
   # displaced one and a scatter -- there is no single reach to check that in
   # advance.
   def test_writing_at_a_displaced_index_and_a_computed_one
-    work = CArray.double(3, 4)
+    work = CArray.float64(3, 4)
     where = CArray.int32(3) { |i| i }
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| work[i+1, where[i]] = 1.0 }
@@ -80,15 +80,15 @@ class TestSubset < Minitest::Test
   # distinct cell for each i, and the extent it needs is checked before the
   # first one.
   def test_a_displaced_write
-    source = CArray.double(4).seq!(1)
-    out = CArray.double(5)
+    source = CArray.float64(4).seq!(1)
+    out = CArray.float64(5)
     CArray.jit_for(4) { |i| out[i+1] = source[i] }
     assert_equal([0.0, 1.0, 2.0, 3.0, 4.0], out.to_a)
   end
 
   def test_a_displaced_write_is_bounds_checked_in_advance
-    source = CArray.double(4).seq!(1)
-    out = CArray.double(4)
+    source = CArray.float64(4).seq!(1)
+    out = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| out[i+1] = source[i] }
     end
@@ -99,15 +99,15 @@ class TestSubset < Minitest::Test
   # A recurrence written forwards: the cell iteration i writes is the one
   # iteration i+1 reads, which is what the same Ruby loop does.
   def test_a_recurrence_through_a_displaced_write
-    values = CArray.double(5)
+    values = CArray.float64(5)
     values[0] = 1.0
     CArray.jit_for(4) { |i| values[i+1] = values[i] + 1.0 }
     assert_equal([1.0, 2.0, 3.0, 4.0, 5.0], values.to_a)
   end
 
   def test_a_pinned_axis_may_be_written
-    source = CArray.double(3, 4).seq!(1)
-    out = CArray.double(3, 4)
+    source = CArray.float64(3, 4).seq!(1)
+    out = CArray.float64(3, 4)
     CArray.jit_for(3) { |i| out[i, 0] = source[i, 0] * 10.0 }
     assert_equal([[10.0, 0, 0, 0], [50.0, 0, 0, 0], [90.0, 0, 0, 0]], out.to_a)
   end
@@ -116,8 +116,8 @@ class TestSubset < Minitest::Test
   # left behind is the last iteration's -- which is what the Ruby loop the
   # kernel stands for leaves behind too.
   def test_a_wholly_pinned_write_keeps_the_last_iteration
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(1)
     CArray.jit_for(5) { |i| box[0] = values[i] }
     assert_equal(5.0, box[0])
   end
@@ -125,8 +125,8 @@ class TestSubset < Minitest::Test
   # Which is how a reduction reaches a scalar without an outer loop to hang
   # the answer on.
   def test_a_reduction_into_a_pinned_cell
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(1)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(1)
     CArray.jit_for(1) { |i|
       accumulator = 0.0
       5.times { |j| accumulator = accumulator + values[j] }
@@ -136,9 +136,9 @@ class TestSubset < Minitest::Test
   end
 
   def test_a_captured_integer_may_pin_a_written_axis
-    values = CArray.double(5).seq!(1)
+    values = CArray.float64(5).seq!(1)
     where = 2
-    box = CArray.double(4)
+    box = CArray.float64(4)
     CArray.jit_for(5) { |i| box[where] = values[i] }
     assert_equal([0.0, 0.0, 5.0, 0.0], box.to_a)
   end
@@ -146,8 +146,8 @@ class TestSubset < Minitest::Test
   # A pinned write is checked where a pinned read is: before the first cell,
   # so reaching outside is a message rather than a store past the end.
   def test_a_pinned_write_is_bounds_checked_in_advance
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(3)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(5) { |i| box[7] = values[i] }
     end
@@ -157,8 +157,8 @@ class TestSubset < Minitest::Test
   end
 
   def test_a_negative_pinned_write_is_refused
-    values = CArray.double(5).seq!(1)
-    box = CArray.double(3)
+    values = CArray.float64(5).seq!(1)
+    box = CArray.float64(3)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(5) { |i| box[-1] = values[i] }
     end
@@ -169,10 +169,10 @@ class TestSubset < Minitest::Test
   # scatter.  Now the two spellings agree, and the pinned one is the cheaper:
   # its check happens once, not at every cell.
   def test_a_pinned_write_and_the_local_it_was_written_around_agree
-    source = CArray.double(3, 4).seq!(1)
-    pinned = CArray.double(3, 4)
+    source = CArray.float64(3, 4).seq!(1)
+    pinned = CArray.float64(3, 4)
     CArray.jit_for(3) { |i| pinned[i, 0] = source[i, 0] * 10.0 }
-    scattered = CArray.double(3, 4)
+    scattered = CArray.float64(3, 4)
     CArray.jit_for(3) { |i| z = 0; scattered[i, z] = source[i, 0] * 10.0 }
     assert_equal(scattered.to_a, pinned.to_a)
   end
@@ -182,7 +182,7 @@ class TestSubset < Minitest::Test
   # The extent states which is which, so this means what the Ruby loop it
   # stands for means, and there is nothing here to refuse.
   def test_offsets_on_both_sides_of_the_written_cell
-    values = CArray.double(8).seq!
+    values = CArray.float64(8).seq!
     CArray.jit_for(1...7) { |i| values[i] = values[i-1] + values[i+1] }
 
     expected = (0...8).map(&:to_f)
@@ -219,7 +219,7 @@ class TestSubset < Minitest::Test
   # diagonal.  What is wrong with it below is the arity, and that is answered
   # against the array itself, where the rank is known.
   def test_wrong_number_of_indices
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| values[i, i] = 1.0 }
     end
@@ -228,13 +228,13 @@ class TestSubset < Minitest::Test
   end
 
   def test_a_diagonal_may_be_written
-    out = CArray.double(3, 3)
+    out = CArray.float64(3, 3)
     CArray.jit_for(3) { |i| out[i, i] = 1.0 }
     assert_equal([[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]], out.to_a)
   end
 
   def test_a_diagonal_write_is_bounds_checked_on_both_axes
-    out = CArray.double(3, 2)
+    out = CArray.float64(3, 2)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(3) { |i| out[i, i] = 1.0 }
     end
@@ -307,7 +307,7 @@ class TestSubset < Minitest::Test
 
   # The message has to say what to do instead, because there is no fallback.
   def test_a_rejected_block_raises_from_jit_for
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(0...4) { |i| values[i] = values[i].to_r }
     end
@@ -317,7 +317,7 @@ class TestSubset < Minitest::Test
   # `rand` is Kernel's, so "not defined where the block was written" would be
   # a lie; and the reason it is not here says what to do instead.
   def test_a_draw_is_refused_by_name
-    values = CArray.double(4)
+    values = CArray.float64(4)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| values[i] = rand }
     end
@@ -326,7 +326,7 @@ class TestSubset < Minitest::Test
   end
 
   def test_a_captured_generator_is_refused_by_name
-    values = CArray.double(4)
+    values = CArray.float64(4)
     generator = Random.new(1)
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(4) { |i| values[i] = generator.rand }
@@ -341,19 +341,19 @@ class TestSubset < Minitest::Test
   # back as input.  A gather is copied before the loop and keeps the meaning;
   # a strided view is addressed in place, which is what left these wrong.
   def test_overlapping_views_read_the_values_the_pass_started_with
-    values = CArray.double(8).seq!(0.0)
+    values = CArray.float64(8).seq!(0.0)
     low = values[0..6]
     high = values[1..7]
-    reference = CArray.double(8).seq!(0.0)
+    reference = CArray.float64(8).seq!(0.0)
     reference[1..7] = reference[0..6] * 2.0
     CArray.jit_each { high = low * 2.0 }
     assert_equal(reference.to_a, values.to_a)
   end
 
   def test_a_transpose_written_over_itself
-    square = CArray.double(3, 3).seq!(1.0)
+    square = CArray.float64(3, 3).seq!(1.0)
     transposed = square.transpose
-    reference = CArray.double(3, 3).seq!(1.0)
+    reference = CArray.float64(3, 3).seq!(1.0)
     reference[] = reference.transpose * 1.0
     CArray.jit_each { square = transposed * 1.0 }
     assert_equal(reference.to_a, square.to_a)
@@ -362,8 +362,8 @@ class TestSubset < Minitest::Test
   # A cell read that is the cell written is Ruby's own reading, and is not
   # copied: `a = a + 1.0` means what it says.
   def test_an_array_read_and_written_as_itself_is_not_copied
-    values = CArray.double(5).seq!(1.0)
-    reference = CArray.double(5).seq!(1.0)
+    values = CArray.float64(5).seq!(1.0)
+    reference = CArray.float64(5).seq!(1.0)
     reference[] = reference + 1.0
     CArray.jit_each { values = values + 1.0 }
     assert_equal(reference.to_a, values.to_a)
@@ -373,10 +373,10 @@ class TestSubset < Minitest::Test
   # place: what is copied is decided by the root, and what is right is
   # decided by the answer.
   def test_disjoint_views_of_one_array
-    grid = CArray.double(8, 8).seq!(0.0)
+    grid = CArray.float64(8, 8).seq!(0.0)
     first = grid[nil, 0]
     second = grid[nil, 1]
-    reference = CArray.double(8, 8).seq!(0.0)
+    reference = CArray.float64(8, 8).seq!(0.0)
     reference[nil, 0] = reference[nil, 1] + 1.0
     CArray.jit_each { first = second + 1.0 }
     assert_equal(reference.to_a, grid.to_a)
@@ -388,7 +388,7 @@ class TestSubset < Minitest::Test
   # reaches it -- so where the copy is of an array the loop also writes, the
   # copy is a photograph of cells that go on changing.
   def test_a_gather_of_an_array_the_loop_writes_is_refused
-    values = CArray.double(8).seq!(1.0)
+    values = CArray.float64(8).seq!(1.0)
     reversed = values[CArray.int32(8) { |i| 7 - i }]
     error = assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(8) { |i| values[i] = reversed[i] + 1.0 }
@@ -406,8 +406,8 @@ class TestSubset < Minitest::Test
   end
 
   def test_a_gather_is_refused_after_the_block_ran_over_plain_arrays
-    add_one_from(CArray.double(8), CArray.double(8).seq!(1.0))
-    values = CArray.double(8).seq!(1.0)
+    add_one_from(CArray.float64(8), CArray.float64(8).seq!(1.0))
+    values = CArray.float64(8).seq!(1.0)
     reversed = values[CArray.int32(8) { |i| 7 - i }]
     assert_raises(CArray::JIT::Unsupported) { add_one_from(values, reversed) }
     assert_equal((1..8).map(&:to_f), values.to_a, "nothing ran")
@@ -416,18 +416,18 @@ class TestSubset < Minitest::Test
   # Both calls transfer a gather, so they agree on everything but which
   # storage the gather is of -- and that is the whole question.
   def test_a_gather_is_refused_after_the_block_ran_over_a_gather_of_another_array
-    elsewhere = CArray.double(8).seq!(1.0)
-    add_one_from(CArray.double(8), elsewhere[CArray.int32(8) { |i| 7 - i }])
-    values = CArray.double(8).seq!(1.0)
+    elsewhere = CArray.float64(8).seq!(1.0)
+    add_one_from(CArray.float64(8), elsewhere[CArray.int32(8) { |i| 7 - i }])
+    values = CArray.float64(8).seq!(1.0)
     reversed = values[CArray.int32(8) { |i| 7 - i }]
     assert_raises(CArray::JIT::Unsupported) { add_one_from(values, reversed) }
     assert_equal((1..8).map(&:to_f), values.to_a, "nothing ran")
   end
 
   def test_a_gather_written_beside_its_own_root_is_refused
-    values = CArray.double(6) { |i| i.to_f }
-    gathered = values[CArray.int(6) { |i| i }]
-    where = CArray.int(2) { |i| i }
+    values = CArray.float64(6) { |i| i.to_f }
+    gathered = values[CArray.int32(6) { |i| i }]
+    where = CArray.int32(2) { |i| i }
     assert_raises(CArray::JIT::Unsupported) do
       CArray.jit_for(2) { |i| gathered[where[i]] = 100.0; values[4] = 7.0 }
     end
@@ -436,7 +436,7 @@ class TestSubset < Minitest::Test
   # A gather alone on its storage is not that case: what it scatters back at
   # the end, nothing in the loop was reading.
   def test_a_gather_written_alone_still_runs
-    values = CArray.double(6).seq!(1.0)
+    values = CArray.float64(6).seq!(1.0)
     gathered = values[CArray.int32(6) { |i| 5 - i }]
     CArray.jit_for(6) { |i| gathered[i] = i * 1.0 }
     assert_equal([5.0, 4.0, 3.0, 2.0, 1.0, 0.0], values.to_a)
@@ -444,9 +444,9 @@ class TestSubset < Minitest::Test
 
   # And a gather of another array reads as it always did.
   def test_a_gather_of_another_array_still_runs
-    source = CArray.double(6).seq!(1.0)
+    source = CArray.float64(6).seq!(1.0)
     gathered = source[CArray.int32(6) { |i| 5 - i }]
-    out = CArray.double(6)
+    out = CArray.float64(6)
     CArray.jit_for(6) { |i| out[i] = gathered[i] + 1.0 }
     assert_equal([7.0, 6.0, 5.0, 4.0, 3.0, 2.0], out.to_a)
   end
