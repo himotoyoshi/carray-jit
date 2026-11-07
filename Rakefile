@@ -44,6 +44,9 @@ end
 # a constant was missing that the tree had had all along.
 unless carray_tree_libs.empty?
   flags = carray_tree_libs.map { |path| "-I#{path}" }.join(" ")
+  # And the command, which does not load CArray, asks RubyGems for its
+  # version; this makes RubyGems answer with the tree's (see the file).
+  flags += " -r#{File.expand_path('test/carray_tree_version.rb', __dir__)}"
   ENV["RUBYOPT"] = [flags, ENV["RUBYOPT"]].compact.reject(&:empty?).join(" ")
 end
 
