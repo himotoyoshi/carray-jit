@@ -159,7 +159,7 @@ The size counts cells rather than axes: `CArray.float64(32, 32)` is 8 KiB, past 
 
 To a C function a local array goes as what it is -- one flat run of cells, row after row -- so a `double[3][4]` is handed to `const double a[12]`, and the length is matched over every cell.
 
-The compatibility layer is not taken. `CArray.zeros(4)`, `CArray.ones(4)`, `CArray.full(4, 1.0)`, `CArray.empty(4)` and the Numo spellings `CArray::Int64.zeros(4)` / `CArray::Int64.empty(4)` are all refused, each naming the carray spelling it stands for. `data_type_extension.rb` opens by calling itself "Numo / NumPy-style" and "not the 'main' carray API"; the words inside a block are carray's own.
+The compatibility layer is not taken. `CArray.zeros(4)`, `CArray.ones(4)`, `CArray.full(4, 1.0)`, and `CArray.empty(4)` are all refused, each naming the carray spelling it stands for. `factories.rb` opens by calling itself "Numo / NumPy-style" and "not the 'main' carray API"; the words inside a block are carray's own.
 
 **A subscript is checked, and where depends on what it is made of.** Where the position is an inner loop's index at a literal offset and that loop states its range in literals, the reach is known as the block is read, and the C carries no test:
 

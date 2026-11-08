@@ -629,9 +629,6 @@ class TestLocalArrays < Minitest::Test
       "CArray.ones(4)"         => /CArray\.new/,
       "CArray.full(4, 1.0)"    => /CArray\.new/,
       "CArray.empty(4)"        => /CArray\.new/,
-      "CArray::Int64.empty(4)" => /CArray\.new\(:int64, \[4\]\)/,
-      "CArray::Int64.zeros(4)" => /CArray\.new\(:int64, \[4\]\)/,
-      "CArray::DComplex.zeros(4)" => /CArray\.new\(:cmplx128, \[4\]\)/,
     }.each do |spelling, pattern|
       refuse(<<~RUBY, pattern, arrays: { :out => "float64" })
         proc { |i|

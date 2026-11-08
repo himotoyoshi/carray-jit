@@ -70,7 +70,7 @@ class CArray
       }.freeze
       LOCAL_ARRAY_REFUSED_TYPES = LOCAL_ARRAY_REFUSED_TYPES_HOLD.keys.freeze
 
-      # CArray's compatibility layer, which `data_type_extension.rb` opens by
+      # CArray's compatibility layer, which `factories.rb` opens by
       # calling itself "Numo / NumPy-style" and "not the 'main' carray API".
       # The words inside a block are carray's own, so these are sent to the
       # spelling they stand for rather than taken.
@@ -83,16 +83,14 @@ class CArray
          LOCAL_ARRAY_REFUSED_TYPES +
          LOCAL_ARRAY_COMPATIBILITY_NAMES + [:new, :empty]).freeze
 
-      # `CArray`, `::CArray`, or one of the type classes under either.  A
-      # constructor is written on one of these and on nothing else.
+      # `CArray` or `::CArray`.  A constructor is written on one of these
+      # and on nothing else.
       def self.carray_receiver? (node)
         case node
         when Prism::ConstantReadNode
           node.name == :CArray
         when Prism::ConstantPathNode
-          text = node.slice
-          text == "::CArray" ||
-            text.start_with?("CArray::") || text.start_with?("::CArray::")
+          node.slice == "::CArray"
         else
           false
         end
@@ -2089,10 +2087,6 @@ class CArray
             "`#{node.slice}` passes a keyword, and a local array is the " \
             "type and the shape only", node.location)
         end
-        if node.receiver.is_a?(Prism::ConstantPathNode) &&
-           node.receiver.slice != "::CArray"
-          return refuse_a_type_class_constructor(node, arguments)
-        end
         case node.name
         when :new   then read_carray_new(node, arguments, true)
         when :empty then read_carray_empty(node, arguments)
@@ -2269,7 +2263,7 @@ class CArray
       end
 
       # `CArray.zeros(4)`, `CArray.empty(4)`, `CArray.ones(4)`: the
-      # compatibility layer, which `data_type_extension.rb` opens by calling
+      # compatibility layer, which `factories.rb` opens by calling
       # itself "Numo / NumPy-style" and "not the 'main' carray API".  The
       # words inside a block are carray's own.
       def refuse_a_compatibility_constructor (node, arguments, type)
@@ -2283,15 +2277,6 @@ class CArray
           "or `CArray.empty(:#{storage}, #{shape})` where every cell is " \
           "written before it is read",
           node.location)
-      end
-
-      # `CArray::Int64.empty(4)` and `CArray::Int64.zeros(4)`: the same layer
-      # reached through a type class, which is the Numo spelling of it.
-      def refuse_a_type_class_constructor (node, arguments)
-        tail = node.receiver.slice.split("::").last.to_s
-        name = tail.downcase.to_sym
-        type = LOCAL_ARRAY_TYPES[name] || LOCAL_ARRAY_C_TYPE_NAMES[name]
-        refuse_a_compatibility_constructor(node, arguments, type)
       end
 
       # Which entry points take one, and which release takes the rest.  The
