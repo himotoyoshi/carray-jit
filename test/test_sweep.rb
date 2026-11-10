@@ -73,7 +73,7 @@ class TestSweep < Minitest::Test
   def test_a_gather_view_agrees_too
     n = 1000
     src = CArray.float64(n).seq!
-    gather = src[CArray.int32(n).seq.reverse]
+    gather = src[CArray.int32(n).seq.flip]
     b = CArray.float64(n).seq!(0.5, 0.5)
     out = CArray.float64(n)
     kernel = CArray.jit_each { out = gather + b * 2.0 }
@@ -205,7 +205,7 @@ class TestSweep < Minitest::Test
     n = 8
     entity = CArray.float64(n).seq!
     strided = CArray.float64(2 * n).seq![(0...(2 * n)).step(2)]
-    gathered = entity[CArray.int32(n).seq.reverse]
+    gathered = entity[CArray.int32(n).seq.flip]
 
     assert(CArray::JIT.send(:sweepable_pass?, { :a => entity }, [n], false),
            "an entity is walked the same way either side")

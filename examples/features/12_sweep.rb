@@ -65,7 +65,7 @@ n = 2_000_000
 src = CArray.float64(n).seq!
 b = CArray.float64(n).seq!(0.5, 0.5)
 out = CArray.float64(n)
-gather = src[CArray.int32(n).seq.reverse]
+gather = src[CArray.int32(n).seq.flip]
 
 def timed
   2.times { yield }

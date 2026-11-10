@@ -372,7 +372,7 @@ class TestExpression < Minitest::Test
     g = grid
     across = CArray.float64(COLUMNS, ROWS) { |i, j| (i * 5 + j) % 17 }
     assert_same_answer { CArray.fuse { across.transpose + g } }
-    assert_same_answer { CArray.fuse { g.reverse * 2.0 - g } }
+    assert_same_answer { CArray.fuse { g.flip * 2.0 - g } }
   end
 
   def test_a_gathered_operand
