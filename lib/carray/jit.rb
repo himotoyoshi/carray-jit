@@ -1356,9 +1356,8 @@ class CArray
       # and keying on it would miss on every call of the loop this is for.
       #
       # Values only, never an operand: a block's plans live as long as the
-      # process, and holding an array would hold its memory as long.  Shapes
-      # from `ndim`, `elements` and `dim0`.. rather than `dim`, which builds
-      # an Array on every call.
+      # process, and holding an array would hold its memory as long.  A 1-D
+      # shape is its `elements`, which builds no Array.
       #
       # nil where a scalar is not one a kernel takes, so that the call is
       # refused where and as it always was rather than here.
@@ -1368,11 +1367,10 @@ class CArray
           rank = array.ndim
           key << name << array.data_type << rank << array.is_a?(CScalar) <<
                  array.has_mask? << Access.tier(array)
-          case rank
-          when 1 then key << array.elements
-          when 2 then key << array.dim0 << array.dim1
-          when 3 then key << array.dim0 << array.dim1 << array.dim2
-          else        key.concat(array.dim)
+          if rank == 1
+            key << array.elements
+          else
+            key.concat(array.shape)
           end
         end
         key << scalars.size
