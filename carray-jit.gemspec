@@ -32,8 +32,10 @@ Gem::Specification.new do |spec|
   spec.bindir        = "bin"
   spec.executables   = ["carray-jit"]
 
-  # A kernel reaches CArray's C by address, so the ceiling is the next minor.
-  spec.add_dependency "carray", ">= 3.0.9", "< 3.1"
+  # The floor is the first CArray whose surface this release uses.  There is
+  # no ceiling: a kernel is compiled against the CArray it runs with, and the
+  # cache keeps the kernels of each CArray version apart.
+  spec.add_dependency "carray", ">= 3.0.9"
   # fiddle ships as a bundled gem; depend on it explicitly so Ruby 3.5+ resolves it.
   # 1.1.1, which Ruby 3.2 ships, is the first with TYPE_UCHAR and the other
   # unsigned types.
