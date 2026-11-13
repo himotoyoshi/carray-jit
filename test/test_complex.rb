@@ -230,6 +230,23 @@ class TestComplex < Minitest::Test
     assert_cells((0...COUNT).map { |i| @left[i] * @right[i] - @right[i] })
   end
 
+  # A Complex beside a float32 array takes the array's width, as a Float
+  # does: cmplx64, as CArray gives it.  Beside a float64 or an integer array
+  # it stays cmplx128.
+  def test_a_complex_scalar_takes_the_width_of_a_float32_array
+    f32 = CArray.float32(4).seq!(1) / 3
+    f64 = CArray.float64(4).seq!(1) / 3
+    i32 = CArray.int32(4).seq!(1)
+    z = Complex(0.25, 0.5)
+    [[f32 * 1i, CArray.jit_map { f32 * 1i }],
+     [f32 * z, CArray.jit_map { f32 * z }],
+     [f64 * 1i, CArray.jit_map { f64 * 1i }],
+     [i32 * 1i, CArray.jit_map { i32 * 1i }]].each do |expected, got|
+      assert_equal(expected.data_type_name, got.data_type_name)
+      assert_equal(expected, got)
+    end
+  end
+
   # Smith's method, in the order complex.c writes it.  The C library's own
   # __divdc3 answers differently in the last bit.
   def test_division_follows_rubys_own_method

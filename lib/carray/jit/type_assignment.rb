@@ -869,10 +869,11 @@ class CArray
       # scalar takes the array's dtype rather than the array widening to meet
       # it, so `f32 * 2.0` is float32 where the order alone would say double.
       #
-      # What the array gives the scalar is a width, never a kind, so the two
-      # have to be the same kind for anything to be given.  `i32 * 2.0` is a
-      # float64 and `f32 * 1i` a cmplx128 -- the scalar\'s own Ruby type, since
-      # the array has no narrower one of that kind to offer.  And a real
+      # What the array gives the scalar is a width.  `i32 * 2.0` is a float64,
+      # the scalar\'s own Ruby type, since an integer array has no width of
+      # a float to offer.  A float array has one for a Complex: `f32 * 1i`
+      # is a cmplx64, the complex type made of the array\'s float, as it is
+      # in CArray from 3.0.9 (it was a cmplx128 before).  And a real
       # scalar against a complex array stays real, which is not a width
       # question at all: Ruby\'s `z + x` adds to the real part and leaves the
       # imaginary one alone, sign included, and that is a different operation
@@ -887,6 +888,10 @@ class CArray
         # The wider kind wins, as it does between two arrays.  What absorption
         # settles is the tie: at the same kind the scalar takes the other
         # side's width rather than the other side widening to Ruby's.
+        if scalar_kind == :complex && typed.type == :float
+          scalar.type = :float_complex
+          return scalar.type
+        end
         return scalar.type if KIND_RANK[scalar_kind] > KIND_RANK[typed_kind]
         if scalar_kind == typed_kind
           refuse_wide_capture(scalar, typed)

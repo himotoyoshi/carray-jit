@@ -27,7 +27,7 @@ Narrowing them was tried and dropped, because it would change the answer and buy
 
 `uint64` is neither: it is the width that cannot fold into `int64_t` at all, since the values it holds above 2^63 are the ones `int64_t` cannot carry, so it computes in a `uint64_t` of its own. See [Types](03_SupportedFeatures.md#unsigned-64-bit).
 
-**A value with no data type follows Ruby.** A literal and a captured Numeric have no width of their own, so `2.0` is a double and `2` an Integer -- until they meet an array of their own kind, which lends them its width: `f32 * 2.0` is float32. What an array can lend is a width, never a kind, so `i32 * 2.0` is a float64 and `f32 * 1i` a cmplx128. A local that wants a particular type is seeded from a `CScalar`, which is a value with a data type. See [Locals](03_SupportedFeatures.md#locals-types-and-postfix-math).
+**A value with no data type follows Ruby.** A literal and a captured Numeric have no width of their own, so `2.0` is a double and `2` an Integer -- until they meet an array of their own kind, which lends them its width: `f32 * 2.0` is float32. What an array can lend is a width: an integer array has no width of a float to lend, so `i32 * 2.0` is a float64, and a float32 array lends its width to a Complex, so `f32 * 1i` is a cmplx64, as in CArray. A local that wants a particular type is seeded from a `CScalar`, which is a value with a data type. See [Locals](03_SupportedFeatures.md#locals-types-and-postfix-math).
 
 ## `-ffp-contract=off` is mandatory
 
